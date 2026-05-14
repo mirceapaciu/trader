@@ -1,0 +1,30 @@
+# Shared Configuration
+
+Cross-cutting settings used by multiple components.
+
+## Environment Variables
+
+```bash
+# Database (PostgreSQL)
+DB_BACKEND=postgres
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=trader
+POSTGRES_USER=trader
+POSTGRES_PASSWORD=
+POSTGRES_SSLMODE=disable      # "disable" for local, "require" in managed environments
+POSTGRES_POOL_SIZE=10
+SHARED_DB_SCHEMA=shared
+
+# Queue (external, cross-process)
+QUEUE_BACKEND=redis_streams  # "redis_streams" | "rabbitmq"
+QUEUE_URL=redis://127.0.0.1:6379/0
+NEWS_RAW_QUEUE=news_raw_queue
+SIGNAL_QUEUE=signal_queue
+FAILED_MESSAGES_DLQ=failed_messages_dlq
+QUEUE_MAX_RETRIES=3
+
+# Operational
+LOG_LEVEL=INFO
+PAPER_TRADING=true           # Set to false for live trading
+```
