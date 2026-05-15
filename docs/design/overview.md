@@ -178,6 +178,20 @@ Default recommendation: Redis Streams in a dedicated Docker container, with `app
 | Utilities       | `src/utils`        | Rate limiting, retry logic, logging helpers             |
 | Config          | `src/config.py`    | Environment variables, API keys, thresholds             |
 
+### 3.3 Tech Stack
+
+The system uses the following baseline stack:
+
+- **Language/runtime (services):** Python 3.13+
+- **UI framework:** React + TypeScript
+- **UI build tooling:** Vite
+- **Service/API layer:** Python service processes (process-based architecture)
+- **Message broker:** Redis Streams
+- **Database:** PostgreSQL 16+
+- **Trading integration:** Interactive Brokers TWS/Gateway via `ib_insync`
+- **LLM providers:** OpenAI gpt-4o-mini (primary), Groq/Gemini (fallback)
+- **Local infrastructure/runtime:** Docker for broker and database, local process execution for services
+
 ---
 
 ## 4. Core Components

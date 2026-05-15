@@ -24,7 +24,7 @@ For authoritative module ownership and boundaries, use the design docs instead o
 
 Architecture boundaries and detailed ownership are maintained in
 
-- docs/design
+- [docs/design/overview](./docs/design/overview.md)
 
 ## Prerequisites
 
