@@ -13,9 +13,9 @@
 ## Design Documentation Map
 - System overview and architecture decisions: `docs/design/overview.md`
 - Data model index: `docs/design/data-model.md`
-- Component-owned data model specs: `docs/design/news-fetcher/data-model.md`, `docs/design/analyzer-worker/data-model.md`, `docs/design/decision-executor/data-model.md`, `docs/design/shared/data-model.md`
+- Component-owned data model specs: `docs/design/product-components/news-fetcher/data-model.md`, `docs/design/product-components/analyzer-worker/data-model.md`, `docs/design/product-components/trade-executor/data-model.md`, `docs/design/shared/data-model.md`
 - Configuration index: `docs/design/configuration.md`
-- Component-owned configuration specs: `docs/design/news-fetcher/configuration.md`, `docs/design/analyzer-worker/configuration.md`, `docs/design/decision-executor/configuration.md`, `docs/design/shared/configuration.md`
+- Component-owned configuration specs: `docs/design/product-components/news-fetcher/configuration.md`, `docs/design/product-components/analyzer-worker/configuration.md`, `docs/design/product-components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
 
 When implementing features, prefer updating the smallest relevant design file above instead of adding implementation details to the overview.
 

@@ -6,9 +6,9 @@ Configuration is split by ownership boundary so each process can evolve independ
 ## Configuration Map
 
 - Shared settings: `docs/design/shared/configuration.md`
-- NewsFetcher settings: `docs/design/news-fetcher/configuration.md`
-- AnalyzerWorker settings: `docs/design/analyzer-worker/configuration.md`
-- TradeExecutor settings: `docs/design/trade-executor/configuration.md`
+- NewsFetcher settings: `docs/design/product-components/news-fetcher/configuration.md`
+- AnalyzerWorker settings: `docs/design/product-components/analyzer-worker/configuration.md`
+- TradeExecutor settings: `docs/design/product-components/trade-executor/configuration.md`
 
 ## Separation Rules
 

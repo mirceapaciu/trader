@@ -15,6 +15,7 @@ POSTGRES_PASSWORD=
 POSTGRES_SSLMODE=disable      # "disable" for local, "require" in managed environments
 POSTGRES_POOL_SIZE=10
 SHARED_DB_SCHEMA=shared
+WATCHLIST_TABLE=t_watchlist_tickers
 
 # Queue (external, cross-process)
 QUEUE_BACKEND=redis_streams  # "redis_streams" | "rabbitmq"

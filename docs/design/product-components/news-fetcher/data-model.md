@@ -8,7 +8,7 @@ PostgreSQL schema: `news_fetcher`.
 ```sql
 CREATE SCHEMA IF NOT EXISTS news_fetcher;
 
-CREATE TABLE IF NOT EXISTS news_fetcher.news_articles (
+CREATE TABLE IF NOT EXISTS news_fetcher.t_news_articles (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL,
     headline TEXT NOT NULL,

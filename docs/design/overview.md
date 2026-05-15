@@ -5,10 +5,11 @@
 This documentation is split into a system overview and implementation specs:
 
 - This file (`docs/design/overview.md`): system goals, architecture, component boundaries, and lifecycle.
+- Core technology specification: `docs/design/core-components/event-ingestion-engine/event-ingestion-engine.md`.
 - Data model index and component-owned schema specs: `docs/design/data-model.md`.
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
 - Deployment specs: `docs/design/deployment/`.
-- Component folders (owner-based): `docs/design/news-fetcher/`, `docs/design/analyzer-worker/`, `docs/design/trade-executor/`, `docs/design/shared/`.
+- Component folders (owner-based): `docs/design/product-components/news-fetcher/`, `docs/design/product-components/analyzer-worker/`, `docs/design/product-components/trade-executor/`, `docs/design/shared/`.
 
 Implementation code and coding agents should follow this map and avoid adding implementation-level detail directly in this overview unless it changes architecture-level behavior.
 
@@ -40,6 +41,12 @@ How this principle applies in this project:
 - Keep domain logic separable from product-specific orchestration and presentation.
 - Prefer stable, generic interfaces for components that may be reused by future products.
 - During feature design and coding, reject solutions that only solve one product path without contributing reusable capability.
+
+### 1.2 Named Core Asset
+
+This project's named core asset is the **Real-time Event Ingestion and Signal Preprocessing Engine**.
+
+The core-technology definition, interfaces, portability constraints, and non-trading reuse scenarios are specified in `docs/design/core-components/event-ingestion-engine/event-ingestion-engine.md`.
 
 ---
 
@@ -310,11 +317,13 @@ Coordinates process startup, health checks, and queue-level flow control.
 
 The system persists audit-grade records for the end-to-end pipeline in five PostgreSQL tables across component-owned schemas:
 
-- `news_fetcher.news_articles`
-- `analyzer_worker.news_analyses`
-- `trade_executor.trade_decisions`
-- `trade_executor.trade_executions`
-- `shared.api_usage`
+- `news_fetcher.t_news_articles`
+- `analyzer_worker.t_news_analyses`
+- `trade_executor.t_trade_decisions`
+- `trade_executor.t_trade_executions`
+- `shared.t_api_usage`
+
+Table naming convention: all physical table names use prefix `t_`.
 
 For full table definitions and constraints, see `docs/design/data-model.md`.
 
@@ -425,4 +434,4 @@ The UI (`src/ui`) provides:
 - Queue deployment spec: `docs/design/deployment/redis-queue-container.md`
 - Data model details: `docs/design/data-model.md`
 - Configuration index: `docs/design/configuration.md`
-- Component configuration specs: `docs/design/news-fetcher/configuration.md`, `docs/design/analyzer-worker/configuration.md`, `docs/design/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
+- Component configuration specs: `docs/design/product-components/news-fetcher/configuration.md`, `docs/design/product-components/analyzer-worker/configuration.md`, `docs/design/product-components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
