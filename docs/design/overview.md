@@ -435,3 +435,35 @@ The UI (`src/ui`) provides:
 - Data model details: `docs/design/data-model.md`
 - Configuration index: `docs/design/configuration.md`
 - Component configuration specs: `docs/design/product-components/news-fetcher/configuration.md`, `docs/design/product-components/analyzer-worker/configuration.md`, `docs/design/product-components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
+
+## 13. Source Code Organization and Core vs Product Boundary
+
+To ensure the separation between reusable core technology and product-specific logic is maintained in the source code, the following rules and structure must be followed:
+
+### 13.1 Source Directory Structure
+
+- All domain-agnostic, reusable logic must be placed in `src/core_components/` (or `src/core/`).
+- All trading/product-specific logic, orchestration, and business rules must be placed in `src/product_components/` (or `src/product/`.
+
+### 13.2 Boundary Enforcement Rules
+
+- **Core components** must not import or depend on any product-specific (trading) modules, APIs, or data models.
+- **Product components** may depend on core components, but not vice versa.
+- New code and refactors must follow this split.
+
+#### Examples
+
+| Belongs in core_components           | Belongs in product_components           |
+|--------------------------------------|-----------------------------------------|
+| Event normalization pipeline         | NewsFetcher orchestration logic         |
+| Generic deduplication algorithms     | Watchlist-driven relevance filter       |
+| Canonical event schema (domain-free) | Trading signal generation               |
+| Pluggable source adapter interfaces  | IBKR order execution logic              |
+
+### 13.3 Code Review and Code Generation Checklist
+
+- Does this module depend on trading-specific APIs or business rules? If yes, it belongs in product_components.
+- Does this module implement a generic interface (e.g., event normalization, deduplication, persistence abstraction)? If yes, it belongs in core_components.
+- Are new files and refactors placed in the correct directory according to these rules?
+
+This boundary must be enforced during both manual development and automated code generation. Any code generation or review process should explicitly check for and maintain this separation.
