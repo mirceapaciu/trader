@@ -4,7 +4,7 @@
 
 **Real-time Event Ingestion and Signal Preprocessing Engine**
 
-This core asset is a reusable, domain-agnostic engine that ingests external events, normalizes them into canonical records, performs relevance filtering and deduplication, persists an audit trail, and publishes idempotent events for downstream processing.
+This core asset is a reusable, domain-agnostic engine that ingests external events, normalizes them into canonical records, performs relevance filtering and deduplication, requires persistence of an audit trail through a storage adapter, and publishes idempotent events for downstream processing.
 
 ## 2. Generic Problem Statement
 
@@ -127,12 +127,26 @@ Contract:
 ### 3.4 Persistence Interface
 
 Responsibility:
-- Store accepted canonical events durably.
+- Define the contract for durably storing accepted canonical events via an owning component's storage adapter.
 
 Contract:
-- Input: canonical event.
-- Output: persisted record identity and status.
-- Guarantees: idempotent upsert semantics and preserved first-seen timestamp.
+- Input: accepted canonical event and storage metadata.
+- Output: persisted record identity, status, and storage checkpoint outcome.
+- Guarantees:
+	- idempotent upsert semantics,
+	- preserved first-seen timestamp,
+	- no duplicate side effects on replay,
+	- durable acknowledgement only after the owning adapter confirms the write.
+
+Ownership rules:
+- The core engine defines what must be persisted and when persistence is considered complete.
+- The product component owns the concrete repository/table implementation and database schema.
+- The core engine must not depend on any specific product component table name or SQL DDL.
+
+Failure semantics:
+- If persistence fails transiently, the owning adapter may retry according to configured policy.
+- If persistence cannot be completed, the batch must not be marked successful and the checkpoint must not advance.
+- Persistence failures must be surfaced as non-success outcomes to the orchestration layer.
 
 ### 3.5 Event Publication Interface
 
