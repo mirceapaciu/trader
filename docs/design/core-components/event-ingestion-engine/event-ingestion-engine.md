@@ -32,6 +32,41 @@ Contract:
 - Output: list of source events with source metadata and timestamps.
 - Error model: transient vs non-transient classification.
 
+### 3.1.1 Checkpoint Persistence Contract (v1)
+
+Checkpoints define replay-safe progress for each inbound source adapter.
+
+Checkpoint storage location:
+- Checkpoints must be stored in a durable owner table in the component schema using the engine (for example `news_fetcher.t_source_checkpoints`).
+- In-memory-only checkpoints are not valid for production.
+
+Logical checkpoint record fields:
+- `source_key` (TEXT): stable adapter identifier (for example `finnhub`, `marketaux`, `rss:reuters`).
+- `cursor_value` (JSON): provider-specific incremental cursor (timestamp, id, page token, offset, or composite).
+- `cursor_updated_at` (TIMESTAMPTZ): UTC time when cursor was last advanced.
+- `version` (BIGINT): optimistic concurrency version.
+- `updated_at` (TIMESTAMPTZ): UTC row update timestamp.
+
+Uniqueness and ownership rules:
+- Exactly one active checkpoint row must exist per `source_key`.
+- `source_key` must be unique in the checkpoint table.
+- Only the owning ingestion process may mutate its checkpoint rows.
+
+Update rules:
+- Checkpoint advancement must be atomic with optimistic concurrency (`version` compare-and-set).
+- A checkpoint may advance only after the batch is durably persisted and publication obligations are completed (published successfully or explicitly dead-lettered).
+- Failed batches must not advance the checkpoint.
+- Retried batches must reuse the previous checkpoint input.
+
+Replay semantics:
+- Re-processing from an older checkpoint is supported and expected during recovery/backfill.
+- Replays must be safe because persistence and publication are idempotent.
+- Manual checkpoint rewind is allowed as an operational action and must be auditable.
+
+Recovery semantics:
+- On restart, adapters must resume from stored checkpoint; if none exists, use configured bootstrap policy (for example `latest`, `lookback_window`, or `from_start`).
+- If checkpoint data is malformed, processing must stop for that source and emit a non-transient configuration/data error.
+
 ### 3.2 Canonicalization Interface
 
 Responsibility:
@@ -41,6 +76,43 @@ Contract:
 - Input: source event.
 - Output: canonical event with deterministic id.
 - Guarantees: normalized fields, UTC timestamps, deterministic identity.
+
+### 3.2.1 Canonical Core Event Schema (v1)
+
+The canonical core event schema is domain-neutral and must be used by all source adapters before filtering, deduplication, persistence, and publication.
+
+Required fields:
+- `id` (TEXT): deterministic identifier for the canonical event.
+- `source` (TEXT): logical source name (for example provider or feed name).
+- `source_event_id` (TEXT): original source identifier when available; otherwise a deterministic fallback derived from source payload.
+- `canonical_locator` (TEXT): normalized source locator (for example canonical URL or stable resource path).
+- `title` (TEXT): normalized primary headline or event title.
+- `occurred_at` (TIMESTAMPTZ): source event time normalized to UTC.
+- `ingested_at` (TIMESTAMPTZ): ingest processing time normalized to UTC.
+- `payload_version` (TEXT): canonical schema version, default `1.0`.
+
+Optional fields:
+- `summary` (TEXT): short normalized summary text.
+- `content_text` (TEXT): full content text.
+- `entities` (JSON): normalized list of extracted entities or tags.
+- `attributes` (JSON): domain-neutral key-value attributes.
+- `extensions` (JSON): product-specific optional extensions that must not change core-field semantics.
+
+Deterministic identity rules:
+- `id` must be stable for equivalent input events across retries.
+- `id` generation must use normalized inputs only.
+- Any non-semantic source variations (for example tracking query parameters or whitespace differences) must not change `id`.
+
+Normalization rules:
+- All timestamps must be UTC.
+- Text fields must be trimmed.
+- Empty strings in optional fields must be converted to null.
+- `canonical_locator` must be normalized before dedupe and id generation.
+
+Portability rules:
+- Core processing logic may depend only on required and optional core fields above.
+- Product-specific processing must read custom data from `extensions` only.
+- New schema versions must preserve backward compatibility for required fields or publish with an explicit major version increment.
 
 ### 3.3 Filtering and Deduplication Interface
 
@@ -71,6 +143,87 @@ Contract:
 - Input: persisted canonical event.
 - Output: event envelope published to broker.
 - Guarantees: at-least-once delivery with dedupe key for consumer idempotency.
+
+### 3.5.1 Event Envelope Contract (v1)
+
+All published events must use this envelope shape.
+
+Required metadata fields:
+- `event_id` (TEXT): unique envelope id for this published event. (message instance identity)
+- `event_type` (TEXT): semantic type name, for example `news.article.created`.
+- `event_version` (TEXT): envelope schema version, default `1.0`.
+- `occurred_at` (TIMESTAMPTZ): time when the domain event occurred, UTC.
+- `published_at` (TIMESTAMPTZ): time when the envelope was published, UTC.
+- `producer` (TEXT): logical producer name, for example `news_fetcher`.
+- `dedupe_key` (TEXT): deterministic idempotency key for consumer dedupe. (semantic idempotency identity)
+- `payload` (JSON): event payload object.
+
+Optional metadata fields:
+- `correlation_id` (TEXT): trace id for multi-step workflows.
+- `causation_id` (TEXT): parent event id that caused this event.
+- `partition_key` (TEXT): stable key for ordered routing where supported.
+- `retry_count` (INTEGER): number of publish retries already attempted.
+- `headers` (JSON): transport-independent extension metadata.
+
+Field constraints:
+- `event_id` must be globally unique per published envelope.
+- `event_type` must be stable and lowercase dot-separated (`domain.entity.action`).
+- `event_version` must follow semantic version format `MAJOR.MINOR`.
+- `occurred_at` and `published_at` must be UTC RFC 3339 timestamps.
+- `published_at` must be greater than or equal to `occurred_at`.
+- `dedupe_key` must be deterministic for semantically identical events.
+- `payload` must be valid JSON object (not array or scalar).
+
+Serialization and transport rules:
+- Envelope body must be UTF-8 JSON.
+- Metadata must be carried in the envelope body, not broker-specific headers only.
+- Transport-specific headers are allowed but must not redefine core metadata semantics.
+- Unknown metadata fields must be ignored by consumers unless explicitly configured as required.
+
+Versioning policy:
+- Minor version (`1.x`) may add optional fields only.
+- Major version (`2.0+`) may change required fields or semantics.
+- Producers must not remove or repurpose required fields within the same major version.
+- Consumers must reject envelopes with unsupported major versions.
+
+Compatibility rules:
+- Backward compatibility target: a newer producer in the same major version must remain consumable by older consumers.
+- Forward compatibility target: consumers must ignore unknown optional fields in the same major version.
+- Required-field validation failure must route the envelope to dead-letter handling with structured reason codes.
+
+Validation and failure handling:
+- Envelopes missing any required field are invalid.
+- Envelopes with invalid timestamp format or non-JSON payload are invalid.
+- Invalid envelopes must not be retried indefinitely; they must be classified as non-transient and dead-lettered.
+- Validation failures must include `event_id` when available, `event_type` when available, and a machine-readable `error_code`.
+
+Idempotency rules:
+- Producer must set `dedupe_key` using deterministic canonical-event identity.
+- Consumer idempotency must be based on `dedupe_key`, not transient broker delivery metadata.
+- Replays must preserve `dedupe_key` and `event_type` semantics.
+
+Reference envelope example:
+
+```json
+{
+	"event_id": "evt_01J7V7V8V9W0X1Y2Z3A4B5C6D",
+	"event_type": "news.article.created",
+	"event_version": "1.0",
+	"occurred_at": "2026-05-17T09:30:10Z",
+	"published_at": "2026-05-17T09:30:12Z",
+	"producer": "news_fetcher",
+	"dedupe_key": "art_4f8c8b9d0c6e...",
+	"correlation_id": "run_20260517_0930",
+	"payload": {
+		"id": "art_4f8c8b9d0c6e...",
+		"source": "finnhub",
+		"title": "Company X beats expectations",
+		"summary": "Revenue and guidance were above consensus.",
+		"occurred_at": "2026-05-17T09:29:50Z",
+		"ingested_at": "2026-05-17T09:30:10Z"
+	}
+}
+```
 
 ### 3.6 Usage Accounting Interface
 

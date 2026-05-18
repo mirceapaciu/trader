@@ -83,6 +83,30 @@ Non-transient failures include:
 - Use last successful checkpoint for incremental fetch.
 - On quota exhaustion, skip until next interval and continue with other sources.
 
+### 4.5 Checkpoint Lifecycle
+
+Checkpoint table:
+- `news_fetcher.t_source_checkpoints`
+
+Source key examples:
+- `finnhub`
+- `marketaux`
+- `rss:<feed-name>`
+
+Bootstrap policy:
+- If checkpoint exists, start from stored `cursor_value`.
+- If checkpoint does not exist, initialize from configured bootstrap mode.
+
+Advance policy:
+- Advance checkpoint only after the processed batch is durably persisted and publish obligations are completed.
+- If persistence or publish fails for the batch, do not advance checkpoint.
+- Use optimistic concurrency on checkpoint `version` to prevent lost updates.
+
+Replay policy:
+- Reprocessing from older checkpoints is supported for recovery and backfill.
+- Replays rely on idempotent article upsert and idempotent event handling.
+- Manual checkpoint rewind operations must be logged with operator identity and reason.
+
 ### 4.3 RSS
 
 - Parse configured feed URLs.
@@ -169,6 +193,12 @@ Recommended indexes:
 - published_at descending.
 - source and published_at.
 - GIN index on tickers.
+
+Checkpoint persistence rules:
+- Store one durable checkpoint row per `source_key` in `t_source_checkpoints`.
+- `cursor_value` must contain the provider-specific incremental cursor as JSON.
+- `cursor_updated_at` must reflect the latest event boundary included by the checkpoint.
+- Update checkpoint row atomically using `version` compare-and-set.
 
 ## 9. Queue Publish Contract
 
