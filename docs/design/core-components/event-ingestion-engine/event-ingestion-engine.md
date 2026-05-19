@@ -124,6 +124,52 @@ Contract:
 - Output: accepted or rejected decision with reason code.
 - Guarantees: deterministic strong dedupe and configurable soft dedupe.
 
+### 3.3.1 Soft Deduplication Contract (v1)
+
+This contract defines the minimum core-level behavior for soft duplicate suppression.
+
+Algorithm family requirements:
+- Soft dedupe must use a configurable similarity-based algorithm family (for example token/character similarity, fuzzy text matching, or locality-sensitive hashing candidates with deterministic re-ranking).
+- The selected algorithm and parameters must be policy-driven and replaceable without changing the core interface.
+- Strong dedupe (exact identity match) remains mandatory and is evaluated before soft dedupe.
+
+Normalization inputs (required):
+- Soft dedupe must compare canonicalized fields only.
+- Required normalization before similarity scoring:
+	- lowercase and trim text fields,
+	- collapse repeated internal whitespace,
+	- remove known non-semantic URL variations from `canonical_locator` (for example tracking query parameters),
+	- normalize Unicode to a consistent form,
+	- treat missing/empty optional text values as null.
+- Required minimum comparison inputs:
+	- `title`,
+	- `canonical_locator`,
+	- `source`,
+	- optionally `summary` when present.
+- Non-semantic or runtime fields (for example `ingested_at`, retry counters, transient transport metadata) must not participate in similarity decisions.
+
+Determinism requirements:
+- For identical normalized inputs, policy configuration, and lookback set, the soft dedupe decision must be identical across retries and replays.
+- Threshold comparison, tie-breaking, and winner selection must be deterministic.
+- If multiple prior candidates have equal score, tie-break order must be fixed (for example earliest `occurred_at`, then lexical `id`).
+- Randomness, wall-clock time, and non-deterministic iteration order must not affect outcomes.
+
+Decision contract:
+- Input:
+	- canonical event,
+	- soft dedupe policy (`enabled`, `algorithm`, `threshold`, `lookback_window`, optional source-scoped overrides),
+	- lookback candidate set derived from persisted canonical events.
+- Output:
+	- `accepted` boolean,
+	- `reason_code` in `{accepted_unique, rejected_strong_duplicate, rejected_soft_duplicate}`,
+	- optional `matched_event_id`,
+	- optional `similarity_score`.
+
+Replay and auditability requirements:
+- The engine must emit structured audit data for soft dedupe decisions including algorithm id/version, threshold, compared fields, score, and matched candidate id when rejected.
+- Reprocessing the same event under unchanged policy must reproduce the same decision and reason code.
+- Policy changes are allowed to change future outcomes but must be versioned and auditable.
+
 ### 3.4 Persistence Interface
 
 Responsibility:
