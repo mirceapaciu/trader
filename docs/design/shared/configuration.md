@@ -28,4 +28,9 @@ QUEUE_MAX_RETRIES=3
 # Operational
 LOG_LEVEL=INFO
 PAPER_TRADING=true           # Set to false for live trading
+
+# Product constraint: no thesis card, no trade
+THESIS_CARD_ENFORCEMENT=true
+THESIS_CARD_REQUIRED_EVIDENCE_COUNT=3
+THESIS_CARD_MAX_AGE_MINUTES=360
 ```

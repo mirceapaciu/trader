@@ -12,7 +12,9 @@ Purpose:
 
 Logical fields:
 - `id` (primary key): decision record identity.
+- `thesis_card_id`: required reference to analyzer thesis card identity.
 - `ticker`: target instrument symbol.
+- `exchange_code`: target exchange identifier used for market-data and broker routing.
 - `action`: intended action (`buy`, `sell`, `hold`).
 - `quantity`: intended order quantity.
 - `order_type`: order type (`market`, `limit`, or policy-defined extension).
@@ -26,6 +28,9 @@ Logical fields:
 Behavioral constraints:
 - Decision records are append-oriented for auditability.
 - Decisions must capture risk gate outcome before execution attempt.
+- Instrument identity is the pair (`ticker`, `exchange_code`) for execution routing.
+- `thesis_card_id` is mandatory for all non-hold actions.
+- Decision is executable only when shared review state for `thesis_card_id` is `approved` and not expired.
 
 ### `t_trade_executions`
 
@@ -46,6 +51,7 @@ Logical fields:
 Behavioral constraints:
 - `decision_id` must reference an existing trade decision.
 - Execution status transitions must be captured as durable updates or append events according to implementation policy.
+- Every execution attempt must remain traceable to exactly one thesis card through its decision row.
 
 ## Notes
 

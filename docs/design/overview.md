@@ -8,6 +8,7 @@ This documentation is split into a system overview and implementation specs:
 - Core technology specification: `docs/design/core-components/event-ingestion-engine/event-ingestion-engine.md`.
 - Data model index and component-owned schema specs: `docs/design/data-model.md`.
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
+- Product identity constraint and thesis-card contract: `docs/design/shared/product-constraint.md`.
 - Deployment specs: `docs/design/deployment/`.
 - Component folders (owner-based): `docs/design/product-components/news-fetcher/`, `docs/design/product-components/analyzer-worker/`, `docs/design/product-components/trade-executor/`, `docs/design/shared/`.
 
@@ -47,6 +48,14 @@ How this principle applies in this project:
 This project's named core asset is the **Real-time Event Ingestion and Signal Preprocessing Engine**.
 
 The core-technology definition, interfaces, portability constraints, and non-trading reuse scenarios are specified in `docs/design/core-components/event-ingestion-engine/event-ingestion-engine.md`.
+
+### 1.3 Product Identity Constraint (Mandatory)
+
+The product-wide constraint is **No Thesis Card, No Trade**.
+
+Every trade candidate must be represented as one thesis card with a fixed shape and a deterministic validation policy before execution can be attempted. This constraint is mandatory across UI, analyzer, and trade execution flows.
+
+The canonical contract, validation rules, and acceptance criteria are defined in `docs/design/shared/product-constraint.md`.
 
 ---
 

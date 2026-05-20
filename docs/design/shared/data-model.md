@@ -5,6 +5,23 @@ PostgreSQL schema: `shared`.
 
 ## Logical Model
 
+### `t_thesis_card_reviews`
+
+Purpose:
+- Durable review state for thesis cards as approved/rejected by user or policy.
+
+Logical fields:
+- `card_id` (primary key): thesis card identity from AnalyzerWorker.
+- `decision_state`: `approved` or `rejected`.
+- `reviewed_by`: user id or system policy actor.
+- `review_reason`: optional explanation for approval/rejection.
+- `reviewed_at`: review timestamp.
+
+Behavioral constraints:
+- Only one active review state per `card_id`.
+- Transition from `rejected` to `approved` requires a new `reviewed_at` and reason.
+- TradeExecutor must treat missing review state as `rejected`.
+
 ### `t_api_usage`
 
 Purpose:

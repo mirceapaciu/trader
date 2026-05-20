@@ -11,6 +11,7 @@ NewsFetcher responsibilities:
 - Persist canonical articles in schema news_fetcher.
 - Publish canonical events to queue news_raw_queue.
 - Record provider usage in schema shared. (For measuring the external API consumption)
+- Preserve stable article identifiers for thesis-card evidence linkage.
 
 Out of scope:
 - LLM analysis and sentiment inference beyond provider-supplied fields.
@@ -131,6 +132,9 @@ Each fetched item is normalized to this canonical article object before further 
 - published_at: required UTC timestamp.
 - fetched_at: required UTC timestamp at ingest.
 - sentiment_source: optional provider score when available.
+
+Constraint-facing requirement:
+- The article contract must preserve enough context quality for AnalyzerWorker to produce exactly three thesis-card evidence bullets with article references.
 
 Normalization rules:
 - Trim whitespace for headline and summary.

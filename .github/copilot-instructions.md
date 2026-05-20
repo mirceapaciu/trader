@@ -4,9 +4,9 @@
 - This repository contains an AI-powered Trading Bot.
 - Core domains:
   - Fetch news
-  - Infere trading recommendations
+  - Infer thesis cards from news
   - Execute trades via IBKR API
-  - UI for monitoring and manual overrides
+  - UI for thesis-card review, monitoring, and manual overrides
 - Main source directory: src
 - Tests directory: tests
 
