@@ -331,6 +331,59 @@ Reference envelope example:
 }
 ```
 
+### 3.5.2 Transactional Boundary Contract: Persist -> Publish -> Checkpoint (v1)
+
+This section is normative and defines the required consistency boundary between storage, broker publication, and source checkpoint advancement.
+
+Required implementation pattern:
+- Engine implementations must use a durable publication obligation record (transactional outbox pattern or an equivalent mechanism with the same guarantees).
+- Persistence of accepted canonical events and creation of publication obligations must occur in one local storage transaction.
+- Broker publication and checkpoint advancement must occur outside that local transaction.
+- Two-phase commit across database and broker is not required and must not be assumed.
+
+Logical publication obligation fields (minimum):
+- `obligation_id` (TEXT): stable unique id for one publish obligation.
+- `canonical_event_id` (TEXT): canonical event identity being published.
+- `event_type` (TEXT): semantic event type.
+- `dedupe_key` (TEXT): deterministic idempotency key for downstream consumers.
+- `envelope_json` (JSON): full envelope body to publish.
+- `status` (TEXT): `{pending, publishing, published, dead_lettered}`.
+- `attempt_count` (INTEGER): publish attempt counter.
+- `last_error_code` (TEXT nullable): last machine-readable publish error.
+- `updated_at` (TIMESTAMPTZ): status update time.
+
+Required processing sequence per batch:
+1. Read input events from one source cursor.
+2. Canonicalize, filter, dedupe, and build accepted canonical events.
+3. In one storage transaction:
+	- idempotently upsert accepted canonical events,
+	- idempotently upsert corresponding publication obligations with `status = pending`,
+	- commit.
+4. Publish each pending obligation to the broker with retry policy.
+5. Mark each obligation terminally as `published` or `dead_lettered`.
+6. Advance source checkpoint only if every obligation created by this batch is in terminal success state (`published` or explicitly `dead_lettered` according to policy).
+
+Batch-success and checkpoint gate:
+- A batch is successful only when all accepted events are durably persisted and all their publish obligations are terminally resolved.
+- Checkpoint compare-and-set (`version`) must execute only after batch success.
+- Any non-terminal obligation (`pending` or `publishing`) blocks checkpoint advancement.
+
+Failure matrix:
+- Persist fails before transaction commit: no new obligations exist; do not publish; do not advance checkpoint.
+- Persist commit succeeds but publish not attempted (crash/restart): obligations remain `pending`; on recovery resume publication; do not advance checkpoint before terminal resolution.
+- Publish transient failure: obligation remains non-terminal until retry succeeds or retry policy exhausts; checkpoint blocked.
+- Publish non-transient envelope failure: obligation must be marked `dead_lettered` with reason code; checkpoint may proceed only if policy allows dead-letter as completion.
+- Checkpoint compare-and-set failure: treat as concurrency conflict, reload checkpoint, re-evaluate batch completion, retry compare-and-set without re-persisting duplicate rows.
+
+Recovery requirements:
+- On restart, engine must scan unresolved obligations (`pending`, `publishing`) and continue publication before processing newer cursor ranges for the same source.
+- Re-publication of the same obligation must preserve envelope semantics (`event_type`, `dedupe_key`, payload identity).
+- Recovery must be replay-safe through idempotent persistence and consumer dedupe.
+
+Observability requirements:
+- Emit counters for obligations created, published, dead-lettered, retried, and checkpoint-blocked.
+- Emit structured logs containing `source_key`, batch identifier, checkpoint input cursor, terminal obligation counts, and checkpoint CAS result.
+
 ### 3.6 Usage Accounting Interface
 
 Responsibility:
