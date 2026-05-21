@@ -126,48 +126,94 @@ Contract:
 
 ### 3.3.1 Soft Deduplication Contract (v1)
 
-This contract defines the minimum core-level behavior for soft duplicate suppression.
+This contract defines the normative default implementation for soft duplicate suppression. Implementations may add alternative algorithms later, but `weighted_text_locator_v1` is the required baseline and must be supported by every engine build.
 
-Algorithm family requirements:
-- Soft dedupe must use a configurable similarity-based algorithm family (for example token/character similarity, fuzzy text matching, or locality-sensitive hashing candidates with deterministic re-ranking).
-- The selected algorithm and parameters must be policy-driven and replaceable without changing the core interface.
-- Strong dedupe (exact identity match) remains mandatory and is evaluated before soft dedupe.
+Required default algorithm:
+- `algorithm`: `weighted_text_locator_v1`
+- Purpose: reject near-duplicate canonical events that are not caught by strong dedupe.
+- Evaluation order:
+	1. run strong dedupe first,
+	2. build a bounded lookback candidate set,
+	3. gate candidates using deterministic hard filters,
+	4. compute weighted similarity score,
+	5. reject when best score is greater than or equal to threshold.
 
-Normalization inputs (required):
-- Soft dedupe must compare canonicalized fields only.
-- Required normalization before similarity scoring:
-	- lowercase and trim text fields,
-	- collapse repeated internal whitespace,
-	- remove known non-semantic URL variations from `canonical_locator` (for example tracking query parameters),
-	- normalize Unicode to a consistent form,
-	- treat missing/empty optional text values as null.
-- Required minimum comparison inputs:
-	- `title`,
-	- `canonical_locator`,
-	- `source`,
-	- optionally `summary` when present.
-- Non-semantic or runtime fields (for example `ingested_at`, retry counters, transient transport metadata) must not participate in similarity decisions.
+Required normalization pipeline:
+- Soft dedupe must compare canonicalized core fields only.
+- For `title` and `summary`:
+	- normalize Unicode to NFKC,
+	- lowercase,
+	- trim leading and trailing whitespace,
+	- collapse internal whitespace to a single ASCII space,
+	- replace punctuation runs with a single space,
+	- tokenize on spaces,
+	- drop empty tokens.
+- For `canonical_locator`:
+	- lowercase scheme and host,
+	- remove URL fragment,
+	- remove known tracking query parameters (`utm_*`, `gclid`, `fbclid`),
+	- remove default ports,
+	- normalize repeated slashes in path,
+	- remove trailing slash except for root path.
+- Missing optional text values must be treated as null and scored as empty token sets.
+- `ingested_at`, retry metadata, transport headers, and any product-specific extension fields must not participate in scoring.
 
-Determinism requirements:
-- For identical normalized inputs, policy configuration, and lookback set, the soft dedupe decision must be identical across retries and replays.
-- Threshold comparison, tie-breaking, and winner selection must be deterministic.
-- If multiple prior candidates have equal score, tie-break order must be fixed (for example earliest `occurred_at`, then lexical `id`).
-- Randomness, wall-clock time, and non-deterministic iteration order must not affect outcomes.
+Required lookback candidate set:
+- Lookback candidates must be taken from persisted canonical events only.
+- Default `lookback_window`: 72 hours measured backward from the candidate event `occurred_at`.
+- Candidate set must be restricted to rows where `source` matches exactly.
+- Candidate set must be ordered deterministically before scoring by `occurred_at` ascending, then `id` ascending.
+
+Required hard filters before scoring:
+- Exact `canonical_locator` match alone must not be treated as strong dedupe unless it also satisfies the strong dedupe identity contract for the canonical event.
+- Reject candidate from comparison if absolute `occurred_at` difference exceeds the configured `max_time_delta_hours` (default `72`).
+- Reject candidate from comparison if the title token overlap count is `0`.
+- Only candidates surviving all hard filters may enter similarity scoring.
+
+Required score function:
+- Title similarity `title_score`: Jaccard similarity of normalized `title` token sets.
+- Summary similarity `summary_score`: Jaccard similarity of normalized `summary` token sets. If either summary is null, use `0.0`.
+- Locator similarity `locator_score`: `1.0` when normalized `canonical_locator` matches exactly, otherwise `0.0`.
+- Final score:
+
+$$
+score = 0.70 \cdot title\_score + 0.20 \cdot summary\_score + 0.10 \cdot locator\_score
+$$
+
+- Default rejection threshold: `0.85`.
+- Score must be rounded only for reporting. Threshold comparison must use full internal precision.
+
+Required winner selection and tie-breaks:
+- Compute score for every surviving candidate and choose the highest score.
+- If multiple candidates share the same highest score, choose the candidate with:
+	1. exact locator match first,
+	2. higher `title_score`,
+	3. earlier `occurred_at`,
+	4. lexical lowest `id`.
+- Tie-break sequence must be applied exactly in the order above.
 
 Decision contract:
 - Input:
 	- canonical event,
-	- soft dedupe policy (`enabled`, `algorithm`, `threshold`, `lookback_window`, optional source-scoped overrides),
+	- soft dedupe policy (`enabled`, `algorithm`, `threshold`, `lookback_window`, `max_time_delta_hours`),
 	- lookback candidate set derived from persisted canonical events.
 - Output:
 	- `accepted` boolean,
 	- `reason_code` in `{accepted_unique, rejected_strong_duplicate, rejected_soft_duplicate}`,
 	- optional `matched_event_id`,
-	- optional `similarity_score`.
+	- optional `similarity_score`,
+	- optional `algorithm_version`.
+- If no candidate survives hard filters, the event must be accepted as `accepted_unique`.
+- If best score is greater than or equal to threshold, the event must be rejected as `rejected_soft_duplicate`.
+- If best score is below threshold, the event must be accepted as `accepted_unique`.
+
+Determinism requirements:
+- For identical normalized inputs, policy configuration, and persisted lookback data, the soft dedupe decision must be identical across retries and replays.
+- Randomness, wall-clock time, non-deterministic iteration order, and storage retrieval order must not affect outcomes.
+- Reprocessing the same event under unchanged policy must reproduce the same matched candidate, score, and reason code.
 
 Replay and auditability requirements:
-- The engine must emit structured audit data for soft dedupe decisions including algorithm id/version, threshold, compared fields, score, and matched candidate id when rejected.
-- Reprocessing the same event under unchanged policy must reproduce the same decision and reason code.
+- The engine must emit structured audit data for every scored decision including `algorithm`, `algorithm_version`, `threshold`, `lookback_window`, `max_time_delta_hours`, `matched_event_id`, `title_score`, `summary_score`, `locator_score`, and final `score`.
 - Policy changes are allowed to change future outcomes but must be versioned and auditable.
 
 ### 3.4 Persistence Interface
