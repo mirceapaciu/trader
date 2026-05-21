@@ -71,7 +71,7 @@ All components must enforce these invariants:
 1. Instrument identity is the pair (`ticker`, `exchange_code`), not `ticker` alone.
 2. `evidence` length must equal 3.
 3. Each evidence bullet must reference an existing article id.
-4. Evidence must contain exactly 3 unique `article_id` values (prevents duplicate coverage).
+4. Evidence must contain at least 2 unique `article_id` values (prevents total rewrite coverage).
 5. Confidence must be in range [0, 1].
 6. `risk_box` fields are all mandatory.
 7. `decision_state` must be either `approved` or `rejected`.
@@ -80,7 +80,8 @@ All components must enforce these invariants:
 
 Article-diversity rationale:
 
-- Three unique articles force evidence rigor; rewrites of one story do not count.
+- Two or more unique articles prevent total rewrite attacks (all three bullets from one story).
+- Three bullets from two sources provide coverage breadth without requiring artificial multiplicity in sparse-news environments.
 - `event_id` is optional and retained for audit trail and future event clustering.
 - Single-event trades are allowed when backed by multiple independent source perspectives.
 
