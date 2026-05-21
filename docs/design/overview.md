@@ -24,6 +24,9 @@ An automated trading bot for a small private trader that:
 4. Executes trades via the Interactive Brokers (IBKR) API
 5. Provides a UI for monitoring and manual overrides
 
+The project one-pager is here: [Project one-pager](docs/one-pager.md) It contains the north star and the non-negotiables of the product.
+
+
 **Target monthly budget: ≤ 100 EUR** for all external API costs.
 
 ### 1.1 Design Principle: The Core Tech Must Be Separable From The Product

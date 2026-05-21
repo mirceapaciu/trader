@@ -7,6 +7,8 @@ AI-powered trading bot platform that:
 - Executes trades through Interactive Brokers (IBKR) integrations
 - Provides a UI for monitoring and manual overrides
 
+The project one-pager is here: [Project one-pager](docs/one-pager.md)
+
 ## Project Status
 
 Active development.
