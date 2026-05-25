@@ -546,6 +546,42 @@ Required configuration keys and defaults:
 - `outbox.claim.heartbeat_interval_ms=10000`
 - `outbox.claim.reclaim_grace_ms=0`
 
+### 3.5.5 Publication Routing Contract (v1)
+
+This section is normative and defines the minimum routing rules required for deterministic publishing while preserving publisher-consumer decoupling.
+
+Decoupling rule:
+- Producers must route by event metadata (`event_type`, optional `partition_key`) and environment configuration only.
+- Producers must not encode knowledge of specific consumer names, deployments, or subscriptions.
+
+Destination mapping rule:
+- For every emitted `event_type`, exactly one routing target must be resolved at publish time.
+- Routing target resolution must be deterministic for identical inputs.
+- Unknown or unmapped `event_type` is a non-transient publish configuration error and must not be silently dropped.
+
+Partition/routing-key rule:
+- If `partition_key` is present in the envelope, producer must pass it through unchanged to broker routing metadata.
+- If `partition_key` is absent, producer must derive routing metadata from `dedupe_key`.
+- Retries and replays must preserve the same effective routing metadata.
+
+Environment override rule:
+- Destination mapping may vary by deployment environment (`dev`, `staging`, `prod`) through configuration only.
+- Environment overrides must not change envelope semantics (`event_type`, `dedupe_key`, payload identity).
+
+Dead-letter routing rule:
+- Non-transient publish validation failures must route to dead-letter handling with reason code.
+- Transient publish failures that exhaust retry policy must route to dead-letter handling with exhaustion metadata.
+
+Observability rule:
+- Producer must log resolved routing target, effective routing metadata, and publish disposition per obligation.
+
+Required configuration keys and defaults:
+- `routing.default_target=news-events`
+- `routing.event_type.news.article.created.target=${routing.default_target}`
+- `routing.partition_key.mode=partition_key_or_dedupe_key`
+- `routing.unmapped_event_type_action=error`
+- `routing.environment_override_enabled=true`
+
 ### 3.6 Usage Accounting Interface
 
 Responsibility:
