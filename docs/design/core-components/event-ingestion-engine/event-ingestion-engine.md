@@ -372,7 +372,7 @@ Failure matrix:
 - Persist fails before transaction commit: no new obligations exist; do not publish; do not advance checkpoint.
 - Persist commit succeeds but publish not attempted (crash/restart): obligations remain `pending`; on recovery resume publication; do not advance checkpoint before terminal resolution.
 - Publish transient failure: obligation remains non-terminal until retry succeeds or retry policy exhausts; checkpoint blocked.
-- Publish non-transient envelope failure: obligation must be marked `dead_lettered` with reason code; checkpoint may proceed only if policy allows dead-letter as completion.
+- Publish non-transient envelope failure: obligation must be marked `dead_lettered` with reason code; checkpoint may proceed only if `dead_letter_completes_obligation=true`.
 - Checkpoint compare-and-set failure: treat as concurrency conflict, reload checkpoint, re-evaluate batch completion, retry compare-and-set without re-persisting duplicate rows.
 
 Recovery requirements:
@@ -383,6 +383,92 @@ Recovery requirements:
 Observability requirements:
 - Emit counters for obligations created, published, dead-lettered, retried, and checkpoint-blocked.
 - Emit structured logs containing `source_key`, batch identifier, checkpoint input cursor, terminal obligation counts, and checkpoint CAS result.
+
+### 3.5.3 Failure Taxonomy (v1)
+
+Every engine implementation must classify failures using the codes below and emit the code in logs/metrics (`error_code`) and publication obligation state (`last_error_code`) when applicable.
+
+| Error Code | Stage | Class | Detection Signal | Retryable | Terminal Action | Checkpoint Impact | Owner |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `SRC_TIMEOUT` | Source fetch | transient | source request timeout or socket timeout | yes | retry by `source_fetch_transient` policy | checkpoint unchanged | source adapter |
+| `SRC_RATE_LIMIT` | Source fetch | transient | HTTP `429` or explicit provider quota signal | yes | retry by `source_fetch_transient` policy | checkpoint unchanged | source adapter |
+| `SRC_UNAVAILABLE` | Source fetch | transient | HTTP `500/502/503/504` or connection reset | yes | retry by `source_fetch_transient` policy | checkpoint unchanged | source adapter |
+| `SRC_AUTH_INVALID` | Source fetch | non_transient | HTTP `401/403` or invalid credentials response | no | fail source cycle, raise configuration/auth alert | checkpoint unchanged | source adapter + ops |
+| `SRC_REQUEST_INVALID` | Source fetch | non_transient | HTTP `400/404` from stable endpoint usage | no | fail source cycle, require configuration fix | checkpoint unchanged | source adapter |
+| `PAYLOAD_SCHEMA_INVALID` | Canonicalization | non_transient | required source payload fields missing or malformed | no | reject item and continue batch; emit structured validation log | checkpoint may still advance if all publish obligations for accepted items are terminally resolved | canonicalization layer |
+| `CANONICAL_CONTRACT_INVALID` | Canonicalization | non_transient | canonical required field missing or invalid after normalization | no | reject item and continue batch; emit structured validation log | checkpoint may still advance if all publish obligations for accepted items are terminally resolved | canonicalization layer |
+| `PERSIST_TRANSIENT` | Persistence | transient | transient database connection/session/timeout error | yes | retry by `persist_transient` policy | checkpoint blocked until persistence succeeds | storage adapter |
+| `PERSIST_CONSTRAINT` | Persistence | non_transient | non-retriable integrity or schema contract violation | no | fail batch and mark non-success outcome | checkpoint blocked | storage adapter + schema owner |
+| `PUBLISH_TRANSIENT` | Publication | transient | broker unavailable, publish timeout, temporary transport error | yes | retry by `publish_transient` policy | checkpoint blocked until obligation terminally resolved | publisher |
+| `ENVELOPE_INVALID` | Publication | non_transient | required envelope field missing or invalid format | no | mark obligation `dead_lettered` with reason code | treated as terminal only when `dead_letter_completes_obligation=true` | publisher |
+| `PUBLISH_RETRY_EXHAUSTED` | Publication | terminal_exhausted | transient publish retries exhausted | no | mark obligation `dead_lettered` with exhaustion metadata | treated as terminal only when `dead_letter_completes_obligation=true` | publisher |
+| `CHECKPOINT_CAS_CONFLICT` | Checkpoint | transient | optimistic concurrency compare-and-set mismatch | yes | retry by `checkpoint_cas_conflict` policy without re-persisting | checkpoint not advanced until CAS succeeds | checkpoint manager |
+| `CHECKPOINT_DATA_INVALID` | Checkpoint | non_transient | malformed or unsupported checkpoint cursor format | no | stop processing for source and raise operator action required alert | checkpoint blocked | source adapter + ops |
+
+Classification precedence rules:
+- If multiple errors are observed for one operation, classify using the most specific stage-local code above.
+- `ENVELOPE_INVALID` always takes precedence over transport-level publish errors.
+- `PERSIST_CONSTRAINT` is non-retriable even if retried by driver-level middleware.
+- `CHECKPOINT_DATA_INVALID` is always non-transient.
+
+### 3.5.4 Retry Policy Matrix (v1)
+
+This matrix is normative and defines required default retry parameters. Implementations may override via configuration per environment, but must preserve policy ids, formulas, and exhaustion actions.
+
+Backoff formula used by exponential policies:
+
+$$
+delay_n = min(cap,\; base \cdot 2^{(n-1)}) \cdot jitter
+$$
+
+where `n` is the retry attempt number starting at `1`, and `jitter` is sampled from the policy jitter range.
+
+| Policy ID | Applies To | Retries Error Codes | Max Attempts | Backoff | Jitter | Per-Attempt Timeout | Max Elapsed | On Exhaustion |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `source_fetch_transient` | inbound source adapter fetch operations | `SRC_TIMEOUT`, `SRC_RATE_LIMIT`, `SRC_UNAVAILABLE` | `5` | exponential (`base=1s`, `cap=30s`) | random in `[0.80, 1.20]` | `15s` | `120s` | mark source cycle failed, emit alert-level event, continue other sources |
+| `persist_transient` | canonical-event and outbox transaction writes | `PERSIST_TRANSIENT` | `4` | exponential (`base=500ms`, `cap=8s`) | random in `[0.85, 1.15]` | `5s` | `30s` | fail batch as non-success, do not advance checkpoint |
+| `publish_transient` | broker publish for one obligation | `PUBLISH_TRANSIENT` | `8` | exponential (`base=1s`, `cap=60s`) | random in `[0.80, 1.20]` | `10s` | `600s` | set `last_error_code=PUBLISH_RETRY_EXHAUSTED`, mark obligation `dead_lettered` |
+| `checkpoint_cas_conflict` | checkpoint compare-and-set update | `CHECKPOINT_CAS_CONFLICT` | `6` | exponential (`base=100ms`, `cap=2s`) | random in `[0.90, 1.10]` | `2s` | `15s` | fail checkpoint update for batch, keep batch unresolved for recovery retry |
+| `usage_accounting_transient` | optional usage-record write path | transient storage/network errors in usage accounting adapter | `3` | exponential (`base=1s`, `cap=10s`) | random in `[0.90, 1.10]` | `3s` | `20s` | drop usage write, increment `usage_write_drop_count`, continue pipeline |
+
+Normative retry semantics:
+- `Max Attempts` includes the initial attempt.
+- A retry must not begin when `Max Elapsed` would be exceeded by waiting plus `Per-Attempt Timeout`.
+- Retries must preserve idempotency inputs (`canonical_event_id`, `dedupe_key`, checkpoint cursor input).
+- Retry state must be observable: attempt number, delay, timeout, and final disposition.
+
+Dead-letter completion policy:
+- Required configuration key: `dead_letter_completes_obligation`.
+- Default value: `true`.
+- When `true`, obligations terminally marked `dead_lettered` satisfy checkpoint gate conditions.
+- When `false`, any `dead_lettered` obligation keeps the batch non-success and blocks checkpoint advancement.
+
+Required configuration keys and defaults:
+- `retry.source_fetch_transient.max_attempts=5`
+- `retry.source_fetch_transient.base_delay_ms=1000`
+- `retry.source_fetch_transient.max_delay_ms=30000`
+- `retry.source_fetch_transient.attempt_timeout_ms=15000`
+- `retry.source_fetch_transient.max_elapsed_ms=120000`
+- `retry.persist_transient.max_attempts=4`
+- `retry.persist_transient.base_delay_ms=500`
+- `retry.persist_transient.max_delay_ms=8000`
+- `retry.persist_transient.attempt_timeout_ms=5000`
+- `retry.persist_transient.max_elapsed_ms=30000`
+- `retry.publish_transient.max_attempts=8`
+- `retry.publish_transient.base_delay_ms=1000`
+- `retry.publish_transient.max_delay_ms=60000`
+- `retry.publish_transient.attempt_timeout_ms=10000`
+- `retry.publish_transient.max_elapsed_ms=600000`
+- `retry.checkpoint_cas_conflict.max_attempts=6`
+- `retry.checkpoint_cas_conflict.base_delay_ms=100`
+- `retry.checkpoint_cas_conflict.max_delay_ms=2000`
+- `retry.checkpoint_cas_conflict.attempt_timeout_ms=2000`
+- `retry.checkpoint_cas_conflict.max_elapsed_ms=15000`
+- `retry.usage_accounting_transient.max_attempts=3`
+- `retry.usage_accounting_transient.base_delay_ms=1000`
+- `retry.usage_accounting_transient.max_delay_ms=10000`
+- `retry.usage_accounting_transient.attempt_timeout_ms=3000`
+- `retry.usage_accounting_transient.max_elapsed_ms=20000`
 
 ### 3.6 Usage Accounting Interface
 
