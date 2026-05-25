@@ -1,0 +1,25 @@
+[project]
+name = "trader"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "exchange-calendars>=4.13.2",
+    "feedparser>=6.0.12",
+    "ib-insync>=0.9.86",
+    "openai>=2.38.0",
+    "psycopg[binary]>=3.3.4",
+    "redis>=7.4.0",
+    "requests>=2.34.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "integration: marks tests as integration tests",
+]

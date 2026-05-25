@@ -35,7 +35,7 @@ When making changes, keep logic in the correct layer:
 - SQLite
 
 ## Coding Guidelines
-- Use Python 3.13 compatible code.
+- Use Python 3.14 compatible code.
 - Prefer small, focused functions with clear names.
 - Reuse existing utilities and services before adding new abstractions.
 - Avoid introducing global mutable state.
