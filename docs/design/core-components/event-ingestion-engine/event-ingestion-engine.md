@@ -114,6 +114,28 @@ Portability rules:
 - Product-specific processing must read custom data from `extensions` only.
 - New schema versions must preserve backward compatibility for required fields or publish with an explicit major version increment.
 
+### 3.2.2 Deterministic Id Generation Contract (v1)
+
+This contract defines the required algorithm for canonical event `id` generation.
+
+Required algorithm:
+- `algorithm`: `sha256_canonical_identity_v1`
+- Build `id_input` by joining the normalized values below using ASCII `|` in this exact order:
+	1. `source`
+	2. `source_event_id`
+	3. `canonical_locator`
+	4. `occurred_at` formatted as UTC RFC 3339 seconds (`YYYY-MM-DDTHH:MM:SSZ`)
+	5. `payload_version`
+- Compute `hex = SHA-256(UTF-8(id_input))` as lowercase hexadecimal.
+- Set canonical `id = "cev_" + hex`.
+
+Normalization and stability rules:
+- Inputs must be normalized per section `3.2.1` before hash computation.
+- The delimiter `|` inside field values must be escaped as `\|` before joining.
+- Null values are encoded as an empty string.
+- `ingested_at`, retry metadata, transport headers, and `extensions` must not affect `id`.
+- For equivalent normalized inputs, generated `id` must be identical across retries, replays, and nodes.
+
 ### 3.3 Filtering and Deduplication Interface
 
 Responsibility:
