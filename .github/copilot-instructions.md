@@ -74,6 +74,8 @@ For non-trivial bug fixes or features, create an entry in docs/issues/issues-ind
 - acceptance criteria
 - test plan
 
+The issue ID is YYMMDD-XX, where YYMMDD is the creation date and XX is a sequential number for the day. For example, the first issue created on June 10, 2024 would be 240610-01. 
+
 ### Fixing the issue
 
 When fixing an issue, update the corresponding detail file with:
