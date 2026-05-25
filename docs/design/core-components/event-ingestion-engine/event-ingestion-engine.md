@@ -372,6 +372,8 @@ Logical publication obligation fields (minimum):
 - `status` (TEXT): `{pending, publishing, published, dead_lettered}`.
 - `attempt_count` (INTEGER): publish attempt counter.
 - `last_error_code` (TEXT nullable): last machine-readable publish error.
+- `claimed_by` (TEXT nullable): current publishing worker identity when claimed.
+- `claim_expires_at` (TIMESTAMPTZ nullable): UTC lease-expiration timestamp for current claim.
 - `updated_at` (TIMESTAMPTZ): status update time.
 
 Required processing sequence per batch:
@@ -405,6 +407,54 @@ Recovery requirements:
 Observability requirements:
 - Emit counters for obligations created, published, dead-lettered, retried, and checkpoint-blocked.
 - Emit structured logs containing `source_key`, batch identifier, checkpoint input cursor, terminal obligation counts, and checkpoint CAS result.
+
+### 3.5.2.1 Outbox Worker Concurrency and Claim Semantics (v1)
+
+This section is normative and defines how one or more workers may safely publish obligations concurrently.
+
+Worker identity and lease model:
+- Every publisher process must have a stable runtime `worker_id` for its lifetime.
+- Publishing ownership is lease-based and stored on each obligation (`claimed_by`, `claim_expires_at`).
+- A claim grants exclusive publish rights only until `claim_expires_at`.
+
+Required claim eligibility:
+- A worker may claim an obligation only when either:
+	1. `status = pending`, or
+	2. `status = publishing` and `claim_expires_at < now_utc` (stale lease takeover).
+- Terminal rows (`published`, `dead_lettered`) are never claimable.
+
+Required atomic claim operation:
+- Claiming must be one atomic compare-and-set database operation.
+- Claim operation must set:
+	- `status = publishing`,
+	- `claimed_by = worker_id`,
+	- `claim_expires_at = now_utc + outbox.claim.lease_ms`,
+	- `updated_at = now_utc`.
+- Claim selection order must be deterministic: `updated_at` ascending, then `obligation_id` ascending.
+- Implementations may use SQL `FOR UPDATE SKIP LOCKED` or an equivalent mechanism, but equivalent single-row ownership guarantees are required.
+
+Publish-attempt ownership rules:
+- Only the worker currently owning the claim (`claimed_by = worker_id` and `claim_expires_at >= now_utc`) may attempt broker publish.
+- `attempt_count` must increment exactly once per broker publish attempt.
+- Long-running publish attempts must renew lease before expiry using atomic heartbeat update of `claim_expires_at`.
+
+Terminal transition rules:
+- Transition to `published` or `dead_lettered` must be conditional on active ownership (`claimed_by = worker_id`).
+- Terminal transition must clear lease fields (`claimed_by = null`, `claim_expires_at = null`).
+- If terminal update affects `0` rows, worker must treat the claim as lost and must not emit a second terminal update.
+
+Lease expiry and takeover semantics:
+- If a worker crashes or stalls past lease expiry, another worker may take over using stale-lease claim eligibility.
+- Re-publication after takeover is allowed and expected; downstream idempotency is preserved by `dedupe_key`.
+- A worker that detects claim loss must stop work on that obligation and continue with new claims.
+
+Checkpoint and recovery interaction:
+- Obligations in `publishing` with unexpired lease are non-terminal and block checkpoint advancement.
+- Obligations in `publishing` with expired lease must be reclaimable during recovery scans.
+- On restart, workers must prioritize reclaimable unresolved obligations before claiming newer obligations for the same source.
+
+Single-instance compatibility:
+- Single-worker deployments must follow the same claim and lease rules; behavior must remain correct if additional workers are later introduced.
 
 ### 3.5.3 Failure Taxonomy (v1)
 
@@ -491,6 +541,10 @@ Required configuration keys and defaults:
 - `retry.usage_accounting_transient.max_delay_ms=10000`
 - `retry.usage_accounting_transient.attempt_timeout_ms=3000`
 - `retry.usage_accounting_transient.max_elapsed_ms=20000`
+- `outbox.claim.batch_size=100`
+- `outbox.claim.lease_ms=30000`
+- `outbox.claim.heartbeat_interval_ms=10000`
+- `outbox.claim.reclaim_grace_ms=0`
 
 ### 3.6 Usage Accounting Interface
 
