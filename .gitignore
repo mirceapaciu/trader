@@ -1,4 +1,11 @@
 .pytest_cache/
 __pycache__/
 .venv*/
+
+# Local environment files
 .env
+.env.*
+
+# Keep committed templates
+!.env.example
+!*.env.*example
