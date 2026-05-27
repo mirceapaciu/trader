@@ -1,28 +1,31 @@
 from __future__ import annotations
 
-import os
-
 import psycopg
 import pytest
+
+from tests.integration._db_test_helper import (
+    bootstrap_newsfetcher_schema,
+    db_config,
+    ensure_postgres_access,
+    ensure_safe_test_database,
+    ensure_test_database_exists,
+)
 
 
 pytestmark = pytest.mark.integration
 
 
-def _db_config() -> dict[str, object]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-        "port": int(os.getenv("POSTGRES_PORT", "5432")),
-        "dbname": os.getenv("POSTGRES_DATABASE", os.getenv("POSTGRES_DB", "trader")),
-        "user": os.getenv("POSTGRES_USER", "trader"),
-        "password": os.getenv("POSTGRES_PASSWORD", "change_me"),
-        "sslmode": os.getenv("POSTGRES_SSLMODE", "disable"),
-        "connect_timeout": int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "5")),
-    }
+@pytest.fixture(scope="module", autouse=True)
+def _enforce_test_db() -> None:
+    config = db_config()
+    ensure_postgres_access(config)
+    ensure_safe_test_database(config)
+    ensure_test_database_exists(config)
+    bootstrap_newsfetcher_schema(config)
 
 
 def test_postgres_connection_roundtrip() -> None:
-    config = _db_config()
+    config = db_config()
 
     with psycopg.connect(**config) as conn:
         with conn.cursor() as cur:
@@ -33,7 +36,7 @@ def test_postgres_connection_roundtrip() -> None:
 
 
 def test_expected_component_schemas_exist() -> None:
-    config = _db_config()
+    config = db_config()
 
     with psycopg.connect(**config) as conn:
         with conn.cursor() as cur:

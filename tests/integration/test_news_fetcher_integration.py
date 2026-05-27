@@ -9,6 +9,13 @@ import psycopg
 import pytest
 import redis
 
+from tests.integration._db_test_helper import (
+    bootstrap_newsfetcher_schema,
+    db_config,
+    ensure_postgres_access,
+    ensure_safe_test_database,
+    ensure_test_database_exists,
+)
 from src.core_components.event_ingestion_engine.errors import (
     NonTransientPublishError,
     TransientPublishError,
@@ -26,16 +33,13 @@ from src.product_components.news_fetcher.storage_adapter import PostgresNewsStor
 pytestmark = pytest.mark.integration
 
 
-def _db_config() -> dict[str, object]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-        "port": int(os.getenv("POSTGRES_PORT", "5432")),
-        "dbname": os.getenv("POSTGRES_DATABASE", os.getenv("POSTGRES_DB", "trader")),
-        "user": os.getenv("POSTGRES_USER", "trader"),
-        "password": os.getenv("POSTGRES_PASSWORD", "change_me"),
-        "sslmode": os.getenv("POSTGRES_SSLMODE", "disable"),
-        "connect_timeout": int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "5")),
-    }
+@pytest.fixture(scope="module", autouse=True)
+def _prepare_test_database() -> None:
+    config = db_config()
+    ensure_postgres_access(config)
+    ensure_safe_test_database(config)
+    ensure_test_database_exists(config)
+    bootstrap_newsfetcher_schema(config)
 
 
 def _redis_client() -> redis.Redis:
@@ -114,7 +118,7 @@ class _AlwaysFailPublisher:
 
 
 def _seed_watchlist_ticker(settings: NewsFetcherSettings, ticker: str = "AAPL") -> None:
-    with psycopg.connect(**_db_config()) as conn:
+    with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -130,8 +134,7 @@ def _seed_watchlist_ticker(settings: NewsFetcherSettings, ticker: str = "AAPL") 
 
 
 def _cleanup_news_fetcher_rows(settings: NewsFetcherSettings) -> None:
-    _require_newsfetcher_tables(settings)
-    with psycopg.connect(**_db_config()) as conn:
+    with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_publication_obligations")
             cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_news_articles")
@@ -140,16 +143,14 @@ def _cleanup_news_fetcher_rows(settings: NewsFetcherSettings) -> None:
 
 
 def _count_rows(settings: NewsFetcherSettings, table_name: str) -> int:
-    _require_newsfetcher_tables(settings)
-    with psycopg.connect(**_db_config()) as conn:
+    with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {settings.newsfetcher_db_schema}.{table_name}")
             return int(cur.fetchone()[0])
 
 
 def _obligation_statuses(settings: NewsFetcherSettings) -> list[str]:
-    _require_newsfetcher_tables(settings)
-    with psycopg.connect(**_db_config()) as conn:
+    with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT status FROM {settings.newsfetcher_db_schema}.t_publication_obligations ORDER BY obligation_id"
@@ -159,8 +160,7 @@ def _obligation_statuses(settings: NewsFetcherSettings) -> list[str]:
 
 
 def _latest_checkpoint_version(settings: NewsFetcherSettings, source_key: str) -> int | None:
-    _require_newsfetcher_tables(settings)
-    with psycopg.connect(**_db_config()) as conn:
+    with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT version FROM {settings.newsfetcher_db_schema}.t_source_checkpoints WHERE source_key = %s",
@@ -168,33 +168,6 @@ def _latest_checkpoint_version(settings: NewsFetcherSettings, source_key: str) -
             )
             row = cur.fetchone()
     return int(row[0]) if row else None
-
-
-def _require_newsfetcher_tables(settings: NewsFetcherSettings) -> None:
-    required = {
-        "t_news_articles",
-        "t_publication_obligations",
-        "t_source_checkpoints",
-    }
-    with psycopg.connect(**_db_config()) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = %s
-                  AND table_name = ANY(%s)
-                """,
-                (settings.newsfetcher_db_schema, list(required)),
-            )
-            rows = cur.fetchall()
-    found = {str(row[0]) for row in rows}
-    missing = sorted(required - found)
-    if missing:
-        pytest.skip(
-            "NewsFetcher integration tables are not initialized: "
-            + ", ".join(f"{settings.newsfetcher_db_schema}.{name}" for name in missing)
-        )
 
 
 def _batch_with_one_article(provider_event_id: str) -> ProviderBatch:
