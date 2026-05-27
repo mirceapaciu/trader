@@ -39,14 +39,25 @@ Delivery semantics:
 ## 3. Scheduling and Runtime Windows
 
 Default scheduler rules:
-- Finnhub poll interval: 120 seconds.
-- RSS poll interval: 200 seconds.
-- Marketaux poll interval: 300 seconds when enabled.
+- Finnhub poll interval is controlled by `NEWS_POLL_INTERVAL`.
+- RSS poll interval is controlled by `RSS_POLL_INTERVAL`.
+- Marketaux poll interval is controlled by `MARKETAUX_POLL_INTERVAL` when enabled.
+- Recommended defaults are documented in the NewsFetcher configuration spec.
 
 Market-hour behavior:
-- During market hours, run default intervals.
-- During pre and post market, use slower intervals if configured.
-- On weekends and exchange holidays, do not poll unless override is enabled.
+- If `MARKET_HOURS_ONLY=true`:
+  - During market hours, run default intervals.
+  - During pre and post market, use slower intervals if configured.
+  - On weekends and exchange holidays, do not poll.
+- If `MARKET_HOURS_ONLY=false`:
+  - Ignore market session gating and run configured provider intervals continuously.
+  - `PREPOST_POLL_INTERVAL` is ignored.
+
+Market calendar and timezone contract:
+- This contract applies only when `MARKET_HOURS_ONLY=true`.
+- Market-hours evaluation must use the exchange timezone from `MARKET_TIMEZONE`.
+- Holidays and trading sessions must be evaluated using `MARKET_CALENDAR`.
+- If calendar resolution fails, process must log warning and use default intervals for safety.
 
 Startup behavior:
 - Validate required configuration.
@@ -97,6 +108,11 @@ Source key examples:
 Bootstrap policy:
 - If checkpoint exists, start from stored `cursor_value`.
 - If checkpoint does not exist, initialize from configured bootstrap mode.
+
+Bootstrap mode contract:
+- `CHECKPOINT_BOOTSTRAP_MODE=latest`: start from provider latest cursor and ingest only new arrivals after startup.
+- `CHECKPOINT_BOOTSTRAP_MODE=lookback`: initialize cursor from `CHECKPOINT_BOOTSTRAP_LOOKBACK_HOURS` window and ingest recent history.
+- Default mode is `latest`.
 
 Advance policy:
 - Advance checkpoint only after the processed batch is durably persisted and publish obligations are completed.
@@ -190,8 +206,12 @@ Write policy:
 - Always preserve first seen fetched_at.
 
 Transaction policy:
-- For each accepted article, persist first then publish event.
-- If publish fails, retry publish without duplicating row.
+- For each accepted article, persist article row and create publication obligation in one database transaction.
+- Publisher worker claims pending obligations and publishes envelope to queue.
+- On successful publish, obligation transitions to `published`.
+- If publish fails, retry by incrementing `attempt_count` and preserving idempotent `dedupe_key`.
+- If retries are exhausted, obligation transitions to `dead_lettered` and envelope is routed to `failed_messages_dlq` when available.
+- Checkpoint can advance only when all obligations for the processed batch are terminal (`published` or `dead_lettered`).
 
 Recommended indexes:
 - published_at descending.
@@ -228,7 +248,7 @@ Published event schema:
   - sentiment_source
 
 Publish rules:
-- Publish only after successful persistence.
+- Publish only from durable obligations created after successful persistence.
 - Use dedupe_key so consumers can enforce idempotency.
 - Retry publish using queue retry policy.
 - On retry exhaustion, send event envelope to failed_messages_dlq.
@@ -293,6 +313,7 @@ Required additions for complete behavior control:
 - RSS_FEED_URLS
 - NEWS_INCLUDE_KEYWORDS
 - NEWS_EXCLUDE_KEYWORDS
+- MARKETAUX_POLL_INTERVAL
 - PROVIDER_TIMEOUT_SECONDS
 - PROVIDER_MAX_RETRIES
 - PROVIDER_BACKOFF_BASE_SECONDS
@@ -301,6 +322,10 @@ Required additions for complete behavior control:
 - DEDUPE_ALGORITHM
 - MARKET_HOURS_ONLY
 - PREPOST_POLL_INTERVAL
+- MARKET_TIMEZONE (required only when `MARKET_HOURS_ONLY=true`)
+- MARKET_CALENDAR (required only when `MARKET_HOURS_ONLY=true`)
+- CHECKPOINT_BOOTSTRAP_MODE
+- CHECKPOINT_BOOTSTRAP_LOOKBACK_HOURS
 
 ## 13. Health and Readiness
 
