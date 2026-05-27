@@ -49,6 +49,7 @@ Application settings should match the design configuration:
 - Health check using `redis-cli ping`
 - Persistent volume: `redis_data`
 - Config file mounted with append-only persistence enabled
+- If `REDIS_PASSWORD` is set, container starts Redis with `--requirepass`
 
 ## Stream and Consumer Group Model
 
@@ -78,7 +79,8 @@ This model ensures each group receives every relevant stream message independent
 4. Verify container health:
    - `docker compose -f scripts/deployment/redis/docker-compose.yml ps`
 5. Validate Redis access:
-   - `docker exec -it trader-redis redis-cli PING`
+  - Without auth: `docker exec -it trader-redis redis-cli PING`
+  - With auth: `docker exec -it trader-redis redis-cli -a <REDIS_PASSWORD> PING`
 6. Validate stream creation (after app bootstrap):
    - `docker exec -it trader-redis redis-cli XINFO STREAM news_raw_queue`
 
@@ -100,3 +102,5 @@ This model ensures each group receives every relevant stream message independent
 - Keep secrets out of committed files.
 - Use `.env` locally and secret management for non-local environments.
 - If Redis authentication is enabled, clients must use `REDIS_PASSWORD` consistently.
+- App queue URL should include password when auth is enabled, for example:
+  - `QUEUE_URL=redis://:<REDIS_PASSWORD>@127.0.0.1:6379/0`

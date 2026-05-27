@@ -6,8 +6,15 @@ import time
 import pytest
 import redis
 
+from tests.integration._redis_test_helper import ensure_safe_test_redis, redis_config
+
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _enforce_redis_test_isolation() -> None:
+    ensure_safe_test_redis(redis_config())
 
 
 def _redis_client() -> redis.Redis:

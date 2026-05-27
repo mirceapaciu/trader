@@ -16,6 +16,7 @@ from tests.integration._db_test_helper import (
     ensure_safe_test_database,
     ensure_test_database_exists,
 )
+from tests.integration._redis_test_helper import ensure_safe_test_redis, redis_config
 from src.core_components.event_ingestion_engine.errors import (
     NonTransientPublishError,
     TransientPublishError,
@@ -40,6 +41,11 @@ def _prepare_test_database() -> None:
     ensure_safe_test_database(config)
     ensure_test_database_exists(config)
     bootstrap_newsfetcher_schema(config)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _prepare_test_redis() -> None:
+    ensure_safe_test_redis(redis_config())
 
 
 def _redis_client() -> redis.Redis:
