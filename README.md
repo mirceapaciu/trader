@@ -51,6 +51,39 @@ Architecture boundaries and detailed ownership are maintained in
 - Integration tests: uv run pytest -m integration
 - Full suite: uv run pytest
 
+## Environment Separation
+
+Use separate database configuration for test and production-like runs.
+
+- Shared defaults: `.env.shared`
+- Test overrides: `.env.test` (or `.env.test.example` as template)
+- Production overrides: `.env.prod` (or `.env.prod.example` as template)
+
+Integration tests enforce safety checks and must run against a test DB that differs from production DB.
+
+PowerShell example for integration tests:
+
+```powershell
+Get-Content .env.shared | ForEach-Object {
+   if ($_ -match '^[A-Za-z_][A-Za-z0-9_]*=') {
+      $name, $value = $_ -split '=', 2
+      Set-Item -Path "Env:$name" -Value $value
+   }
+}
+Get-Content .env.test | ForEach-Object {
+   if ($_ -match '^[A-Za-z_][A-Za-z0-9_]*=') {
+      $name, $value = $_ -split '=', 2
+      Set-Item -Path "Env:$name" -Value $value
+   }
+}
+uv run pytest -m integration -q
+```
+
+Minimum required DB separation:
+
+- `POSTGRES_DATABASE=trader_test`
+- `POSTGRES_PROD_DATABASE=trader`
+
 ## Licensing
 
 This project uses a dual-license model:

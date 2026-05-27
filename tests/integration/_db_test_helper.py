@@ -8,7 +8,37 @@ import pytest
 from psycopg import sql
 
 
+_ENV_LOADED = False
+
+
+def _ensure_integration_env_loaded() -> None:
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+
+    repo_root = Path(__file__).resolve().parents[2]
+    _load_env_file(repo_root / ".env.shared")
+    _load_env_file(repo_root / ".env.test")
+    _ENV_LOADED = True
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ[key] = value
+
+
 def db_config() -> dict[str, object]:
+    _ensure_integration_env_loaded()
     return {
         "host": os.getenv("POSTGRES_HOST", "127.0.0.1"),
         "port": int(os.getenv("POSTGRES_PORT", "5432")),

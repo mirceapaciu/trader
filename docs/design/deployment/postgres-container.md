@@ -19,7 +19,7 @@ It does not cover production managed PostgreSQL operations.
 
 - Compose file: `scripts/deployment/postgres/docker-compose.yml`
 - Environment template: `scripts/deployment/postgres/.env.example`
-- Schema init script: `scripts/deployment/postgres/init/01-create-schemas.sql`
+- Multi-database init script: `scripts/deployment/postgres/init/00-init-multi-db.sh`
 - Start helper (PowerShell): `scripts/deployment/postgres/start.ps1`
 - Stop helper (PowerShell): `scripts/deployment/postgres/stop.ps1`
 - Start helper (Bash): `scripts/deployment/postgres/start.sh`
@@ -30,6 +30,7 @@ It does not cover production managed PostgreSQL operations.
 Environment variables required by the compose service:
 
 - `POSTGRES_DB`
+- `POSTGRES_TEST_DB`
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 - `POSTGRES_PORT`
@@ -40,6 +41,8 @@ Application settings should match the design configuration:
 - `POSTGRES_HOST=127.0.0.1`
 - `POSTGRES_PORT=5432` (or overridden value)
 - `POSTGRES_DATABASE=trader`
+- Integration tests: `POSTGRES_DATABASE=trader_test`
+- Test/prod safety guard: `POSTGRES_PROD_DATABASE=trader`
 - `POSTGRES_USER=trader`
 - `POSTGRES_SSLMODE=disable` for local
 
@@ -53,7 +56,7 @@ Application settings should match the design configuration:
 
 ## Database Schemas
 
-The init script creates these schemas:
+The init script creates these schemas in both `POSTGRES_DB` and `POSTGRES_TEST_DB`:
 
 - `news_fetcher`
 - `analyzer_worker`
@@ -71,6 +74,7 @@ The init script creates these schemas:
    - `docker compose -f scripts/deployment/postgres/docker-compose.yml ps`
 5. Validate DB access:
    - `docker exec -it trader-postgres psql -U trader -d trader -c "\dn"`
+   - `docker exec -it trader-postgres psql -U trader -d trader_test -c "\dn"`
 
 ## Shutdown Procedure
 
