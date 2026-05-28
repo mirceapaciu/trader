@@ -3,8 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from .env_loader import load_env_files
 from .providers import FinnhubProvider, MarketauxProvider, RssProvider
@@ -20,6 +23,19 @@ LOGGER = logging.getLogger("news_fetcher_runner")
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _bootstrap_database_schema(settings: NewsFetcherSettings) -> None:
+    schema_files = (
+        _repo_root() / "src" / "product-components" / "shared" / "db" / "schema.sql",
+        _repo_root() / "src" / "product-components" / "news-fetcher" / "db" / "schema.sql",
+    )
+
+    with closing(psycopg.connect(settings.postgres_dsn)) as connection:
+        connection.autocommit = True
+        with connection.cursor() as cursor:
+            for schema_file in schema_files:
+                cursor.execute(schema_file.read_text(encoding="utf-8"))
 
 
 def _build_providers() -> dict[str, Any]:
@@ -48,6 +64,7 @@ def main() -> None:
     load_env_files(_repo_root(), override_existing=False)
 
     settings = NewsFetcherSettings.from_env()
+    _bootstrap_database_schema(settings)
     providers = _build_providers()
 
     if not providers:

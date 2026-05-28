@@ -49,6 +49,8 @@ Architecture boundaries and detailed ownership are maintained in
    - Bash: scripts/deployment/news-fetcher/start.sh
    - Module entrypoint: uv run python -m src.product_components.news_fetcher
 
+The news-fetcher startup path applies the shared and news-fetcher schema SQL files on startup, so local runs can create missing tables such as `shared.t_watchlist_tickers` automatically.
+
 ## Test Commands
 
 - Unit tests: uv run pytest -m "not integration"
