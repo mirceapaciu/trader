@@ -115,7 +115,7 @@ The canonical contract, validation rules, and acceptance criteria are defined in
 ```
 ┌─────────────────────────────────────────────────────┐
 │                     UI Layer                        │
-│              src/ui (monitoring dashboard)          │
+│ src/product_components/monitoring_ui/frontend       │
 └──────────────────────┬──────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────┐
@@ -191,7 +191,7 @@ Default recommendation: Redis Streams in a dedicated Docker container, with `app
 
 | Layer           | Directory          | Responsibility                                         |
 |-----------------|--------------------|---------------------------------------------------------|
-| UI              | `src/ui`           | Dashboard, alerts, manual override controls             |
+| UI              | `src/product_components/monitoring_ui/frontend` | Dashboard, alerts, manual override controls             |
 | Services        | `src/services`     | Business logic: news fetching, LLM analysis, trading    |
 | Repositories    | `src/repositories` | PostgreSQL persistence with schema-per-component ownership |
 | Utilities       | `src/utils`        | Rate limiting, retry logic, logging helpers             |
@@ -390,7 +390,7 @@ Enforced in `RiskManager` (part of the service layer) before any trade execution
 
 ## 9. Monitoring & UI
 
-The UI (`src/ui`) provides:
+The UI (`src/product_components/monitoring_ui/frontend`) provides:
 
 - **Dashboard:** current positions, P&L, recent trades, bot status
 - **News feed:** latest fetched articles with sentiment scores

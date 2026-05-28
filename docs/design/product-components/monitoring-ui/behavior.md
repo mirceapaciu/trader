@@ -91,10 +91,60 @@ Must display:
 - Count of dead-lettered envelopes.
 - Recent dead-letter items with source, reason, and first failure time.
 
+## 5. Implementation Stack
+
+The Monitoring UI frontend stack is:
+- React for dashboard composition and interactive controls.
+- TypeScript for typed API contracts and state models.
+- Vite for frontend build tooling and local development.
+- TanStack Query for server-state caching, polling, retries, and stale-data handling.
+- React Router for dashboard navigation.
+- Recharts for standard dashboard charts.
+- uPlot for dense time-series charts when Recharts cannot meet performance needs.
+- Radix primitives or a thin component layer such as shadcn/ui for accessible tabs, dialogs, menus, and controls.
+
+The Monitoring UI backend adapter stack is:
+- FastAPI for HTTP endpoints consumed by the frontend.
+- Pydantic models for request and response contracts.
+
+The UI must not connect directly to PostgreSQL or Redis from browser code. Browser code reads and mutates state only through the Monitoring UI HTTP API.
+
+## 6. Source Organization
+
+Default implementation placement:
+- Frontend source: `src/product_components/monitoring_ui/frontend`.
+- Backend adapter source: `src/product_components/monitoring_ui/backend`.
+
+The Monitoring UI is a product-owned component. Both browser code and its backend API adapter live under the same product component boundary.
+
+## 7. HTTP API Contract
+
+The Monitoring UI HTTP API is a thin read-mostly adapter over component telemetry, persistence projections, and queue health. It must not embed NewsFetcher normalization, deduplication, publishing, analyzer, or trade execution logic.
+
+Required read endpoints:
+- `GET /api/health` returns global readiness, liveness, dependency state, and stale-data status.
+- `GET /api/providers` returns provider-level cycle summaries and last error state.
+- `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics.
+- `GET /api/backlog` returns pending, retrying, and dead-letter counts.
+- `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
+
+Optional operator-action endpoints:
+- `POST /api/actions/refresh` triggers a non-blocking refresh of UI projections when supported.
+- `POST /api/actions/alert-test` sends a test alert when alert webhooks are enabled.
+
+All response timestamps must be UTC ISO 8601 strings. Endpoint responses must include enough metadata for the frontend to render degraded panels without treating one failed source as a full dashboard failure.
+
+## 8. Live Update Policy
+
+The first implementation uses HTTP polling through TanStack Query. Poll intervals follow the `UI_*_REFRESH_INTERVAL_SECONDS` settings.
+
+Server-sent events or WebSockets may be added later only for workflows that need lower-latency updates, such as live order status, incident notifications, or queue-drain progress. Polling remains the baseline because the Monitoring UI state is read-mostly and eventually consistent.
+
 ## 9. Configuration Requirements
 
 Required variables:
 - UI_PORT
+- UI_API_BASE_URL
 - UI_REFRESH_INTERVAL_SECONDS
 - UI_PROVIDER_REFRESH_INTERVAL_SECONDS
 - UI_ALERTS_REFRESH_INTERVAL_SECONDS
@@ -114,6 +164,7 @@ Implementation is acceptable when all are true:
 - Throughput and error metrics are visible for required windows.
 - Degraded data-source conditions are explicit and non-blocking.
 - UI never mutates NewsFetcher article or checkpoint state.
+- Browser code communicates through the Monitoring UI HTTP API and does not connect directly to PostgreSQL or Redis.
 - Required tests pass.
 
 ## 11. Minimum Test Plan
