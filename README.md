@@ -44,6 +44,10 @@ Architecture boundaries and detailed ownership are maintained in
    - Bash: scripts/deployment/redis/start.sh
 3. Install dependencies with your preferred Python workflow (uv recommended).
 4. Run tests.
+5. Start news-fetcher:
+   - PowerShell: scripts/deployment/news-fetcher/start.ps1
+   - Bash: scripts/deployment/news-fetcher/start.sh
+   - Module entrypoint: uv run python -m src.product_components.news_fetcher
 
 ## Test Commands
 
