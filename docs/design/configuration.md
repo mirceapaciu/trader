@@ -9,6 +9,7 @@ Configuration is split by ownership boundary so each process can evolve independ
 - NewsFetcher settings: `docs/design/product-components/news-fetcher/configuration.md`
 - AnalyzerWorker settings: `docs/design/product-components/analyzer-worker/configuration.md`
 - TradeExecutor settings: `docs/design/product-components/trade-executor/configuration.md`
+- Monitoring UI settings: `docs/design/product-components/monitoring-ui/configuration.md`
 
 ## Separation Rules
 
