@@ -1,0 +1,1 @@
+"""Monitoring UI product component."""

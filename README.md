@@ -48,6 +48,13 @@ Architecture boundaries and detailed ownership are maintained in
    - PowerShell: scripts/deployment/news-fetcher/start.ps1
    - Bash: scripts/deployment/news-fetcher/start.sh
    - Module entrypoint: uv run python -m src.product_components.news_fetcher
+6. Start monitoring UI backend:
+   - Module entrypoint: uv run python -m src.product_components.monitoring_ui.backend
+7. Start monitoring UI frontend:
+   - Directory: src/product_components/monitoring_ui/frontend
+   - First run: npm install
+   - Dev server: npm run dev -- --host 127.0.0.1
+   - URL: http://127.0.0.1:5173
 
 News-fetcher source toggles are configured in `.env.news-fetcher` (see `.env.news-fetcher.example`):
 - `NEWS_SOURCE_FINNHUB_ENABLED=true|false`
@@ -61,6 +68,7 @@ The news-fetcher startup path applies the shared and news-fetcher schema SQL fil
 - Unit tests: uv run pytest -m "not integration"
 - Integration tests: uv run pytest -m integration
 - Full suite: uv run pytest
+- Monitoring UI frontend build: cd src/product_components/monitoring_ui/frontend; npm run build
 
 ## Environment Separation
 
