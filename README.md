@@ -49,6 +49,11 @@ Architecture boundaries and detailed ownership are maintained in
    - Bash: scripts/deployment/news-fetcher/start.sh
    - Module entrypoint: uv run python -m src.product_components.news_fetcher
 
+News-fetcher source toggles are configured in `.env.news-fetcher` (see `.env.news-fetcher.example`):
+- `NEWS_SOURCE_FINNHUB_ENABLED=true|false`
+- `NEWS_SOURCE_MARKETAUX_ENABLED=true|false`
+- `NEWS_SOURCE_RSS_ENABLED=true|false`
+
 The news-fetcher startup path applies the shared and news-fetcher schema SQL files on startup, so local runs can create missing tables such as `shared.t_watchlist_tickers` automatically.
 
 ## Test Commands
