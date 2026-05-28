@@ -41,23 +41,38 @@ def _bootstrap_database_schema(settings: NewsFetcherSettings) -> None:
 def _build_providers() -> dict[str, Any]:
     providers: dict[str, Any] = {}
 
+    finnhub_enabled = _bool_env("NEWS_SOURCE_FINNHUB_ENABLED", default=True)
     finnhub_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
-    if finnhub_key:
+    if finnhub_enabled and finnhub_key:
         providers["finnhub"] = FinnhubProvider(api_key=finnhub_key)
 
+    rss_enabled = _bool_env("NEWS_SOURCE_RSS_ENABLED", default=True)
     rss_urls = [
         url.strip()
         for url in (os.getenv("RSS_FEED_URLS") or "").split(",")
         if url.strip()
     ]
-    if rss_urls:
+    if rss_enabled and rss_urls:
         providers["rss"] = RssProvider(feed_urls=rss_urls)
 
+    marketaux_enabled = _bool_env("NEWS_SOURCE_MARKETAUX_ENABLED", default=True)
     marketaux_key = (os.getenv("MARKETAUX_API_KEY") or "").strip()
-    if marketaux_key:
+    if marketaux_enabled and marketaux_key:
         providers["marketaux"] = MarketauxProvider(api_key=marketaux_key)
 
     return providers
+
+
+def _bool_env(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def main() -> None:
