@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +9,10 @@ from .models import BacklogResponse, DeadLetterResponse, HealthResponse, Provide
 from .repository import PostgresRedisMonitoringDataSource
 from .service import MonitoringService
 from .settings import MonitoringUiSettings
+
+
+def _local_dev_origin_regex() -> str:
+    return r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
 def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
@@ -23,7 +29,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     app = FastAPI(title="Trader Monitoring UI API")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origin_regex=_local_dev_origin_regex(),
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],

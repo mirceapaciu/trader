@@ -135,8 +135,9 @@ class PostgresRedisMonitoringDataSource:
             f"COUNT(*) FILTER (WHERE status = 'pending') AS pending_count, "
             f"COUNT(*) FILTER (WHERE status = 'publishing') AS retrying_count, "
             f"COUNT(*) FILTER (WHERE status = 'dead_lettered') AS dead_letter_count, "
-            f"EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) FILTER (WHERE status IN ('pending', 'publishing')) "
-            f"AS max_attempt_age_seconds "
+            f"EXTRACT(EPOCH FROM ("
+            f"NOW() - MIN(CASE WHEN status IN ('pending', 'publishing') THEN created_at END)"
+            f")) AS max_attempt_age_seconds "
             f"FROM {self._news_schema}.t_publication_obligations"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:

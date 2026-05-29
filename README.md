@@ -48,13 +48,16 @@ Architecture boundaries and detailed ownership are maintained in
    - PowerShell: scripts/deployment/news-fetcher/start.ps1
    - Bash: scripts/deployment/news-fetcher/start.sh
    - Module entrypoint: uv run python -m src.product_components.news_fetcher
-6. Start monitoring UI backend:
-   - Module entrypoint: uv run python -m src.product_components.monitoring_ui.backend
-7. Start monitoring UI frontend:
-   - Directory: src/product_components/monitoring_ui/frontend
-   - First run: npm install
-   - Dev server: npm run dev -- --host 127.0.0.1
-   - URL: http://127.0.0.1:5173
+6. Start monitoring UI:
+   - PowerShell: scripts/deployment/monitoring-ui/start.ps1
+   - Bash: scripts/deployment/monitoring-ui/start.sh
+   - Stop PowerShell: scripts/deployment/monitoring-ui/stop.ps1
+   - Stop Bash: scripts/deployment/monitoring-ui/stop.sh
+   - Default URLs: backend `http://127.0.0.1:8090`, frontend `http://127.0.0.1:5174`
+   - Logs: `logs/monitoring-ui-backend.log`, `logs/monitoring-ui-frontend.log`
+   - PID files: `logs/monitoring-ui-backend.pid`, `logs/monitoring-ui-frontend.pid`
+   - Optional PowerShell ports: `scripts/deployment/monitoring-ui/start.ps1 -BackendPort 8091 -FrontendPort 5175`
+   - Optional Bash ports: `scripts/deployment/monitoring-ui/start.sh 8091 5175`
 
 News-fetcher source toggles are configured in `.env.news-fetcher` (see `.env.news-fetcher.example`):
 - `NEWS_SOURCE_FINNHUB_ENABLED=true|false`
