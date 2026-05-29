@@ -16,7 +16,7 @@ def _repo_root():
 def main() -> None:
     load_env_files(
         _repo_root(),
-        filenames=(".env.shared", ".env.prod"),
+        filenames=(".env.shared", ".env.prod", ".env.monitoring-ui"),
         override_existing=False,
     )
     settings = MonitoringUiSettings.from_env()

@@ -51,6 +51,7 @@ Architecture boundaries and detailed ownership are maintained in
 6. Start monitoring UI:
    - PowerShell: scripts/deployment/monitoring-ui/start.ps1
    - Bash: scripts/deployment/monitoring-ui/start.sh
+   - Config: `.env.monitoring-ui` (see `.env.monitoring-ui.example`)
    - Stop PowerShell: scripts/deployment/monitoring-ui/stop.ps1
    - Stop Bash: scripts/deployment/monitoring-ui/stop.sh
    - Default URLs: backend `http://127.0.0.1:8090`, frontend `http://127.0.0.1:5174`
@@ -78,6 +79,7 @@ The news-fetcher startup path applies the shared and news-fetcher schema SQL fil
 Use separate database configuration for test and production-like runs.
 
 - Shared defaults: `.env.shared`
+- Monitoring UI overrides: `.env.monitoring-ui` (or `.env.monitoring-ui.example` as template)
 - Test overrides: `.env.test` (or `.env.test.example` as template)
 - Production overrides: `.env.prod` (or `.env.prod.example` as template)
 
