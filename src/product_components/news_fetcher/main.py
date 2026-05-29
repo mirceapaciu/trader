@@ -53,7 +53,7 @@ def _build_providers() -> dict[str, Any]:
         if url.strip()
     ]
     if rss_enabled and rss_urls:
-        providers["rss"] = RssProvider(feed_urls=rss_urls)
+        providers["rss:static"] = RssProvider(feed_urls=rss_urls)
 
     marketaux_enabled = _bool_env("NEWS_SOURCE_MARKETAUX_ENABLED", default=True)
     marketaux_key = (os.getenv("MARKETAUX_API_KEY") or "").strip()
@@ -82,9 +82,9 @@ def main() -> None:
     _bootstrap_database_schema(settings)
     providers = _build_providers()
 
-    if not providers:
+    if not providers and not settings.rss_enabled:
         raise SystemExit(
-            "No providers configured. Set FINNHUB_API_KEY, RSS_FEED_URLS, or MARKETAUX_API_KEY."
+            "No providers configured. Set FINNHUB_API_KEY, RSS_FEED_URLS, MARKETAUX_API_KEY, or enable RSS DB sources."
         )
 
     service = build_service(settings=settings, providers=providers)

@@ -65,6 +65,52 @@ Behavioral constraints:
 - Row must update on every provider cycle, including empty cycles and provider failures.
 - Monitoring UI liveness must use `last_cycle_finished_at`, not checkpoint timestamps.
 
+### `t_rss_sources`
+
+Purpose:
+- Provider-level RSS URL generation rules.
+- Stores one source template per RSS provider, such as Yahoo Finance.
+
+Logical fields:
+- `source_key` (primary key): provider identifier, for example `yahoo_finance`.
+- `base_url`: RSS endpoint without ticker-specific query parameters.
+- `symbol_param`: query parameter name used for provider symbols, for example `s`.
+- `default_query_params`: provider default query parameters such as region and language.
+- `max_symbols_per_request`: maximum provider symbols to combine into one request.
+- `min_request_interval_seconds`: minimum interval between requests for generated feeds from this source.
+- `grouping_mode`: `grouped` or `single`.
+- `is_enabled`: controls whether this RSS source generates feed requests.
+- `created_at`: creation timestamp.
+- `updated_at`: update timestamp.
+
+Behavioral constraints:
+- Enabled grouped sources generate RSS feed specs by batching active watchlist rows.
+- Enabled single-symbol sources generate one RSS feed spec per active watchlist row.
+- Source defaults can be overridden per symbol rule.
+
+### `t_rss_symbol_rules`
+
+Purpose:
+- Maps app watchlist symbols to provider-specific RSS query symbols.
+- Handles cases where Yahoo Finance requires symbols such as `RHM.DE` or `6758.T`.
+
+Logical fields:
+- `source_key`: RSS source provider key.
+- `ticker`: app watchlist ticker.
+- `exchange_code`: app watchlist exchange code.
+- `provider_symbol`: provider-specific symbol to place in the RSS query.
+- `query_params`: optional provider query parameter overrides.
+- `match_terms`: optional strings used to attribute grouped RSS articles to this ticker.
+- `is_enabled`: controls whether the override is active.
+- `created_at`: creation timestamp.
+- `updated_at`: update timestamp.
+
+Behavioral constraints:
+- Primary key is (`source_key`, `ticker`, `exchange_code`).
+- Disabled rules are ignored and the source falls back to the app watchlist ticker.
+- Generated Yahoo grouped source keys use `rss:yahoo_finance:batch:<hash>`.
+- Generated Yahoo single-symbol source keys use `rss:yahoo_finance:<ticker>:<exchange_code>`.
+
 ### `t_publication_obligations`
 
 Purpose:

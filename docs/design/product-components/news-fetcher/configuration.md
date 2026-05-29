@@ -2,6 +2,8 @@
 
 Configuration owned by the NewsFetcher process.
 
+Provider-specific source guidance, including Yahoo Finance RSS URL rules, is documented in `docs/design/product-components/news-fetcher/news-sources.md`.
+
 ## Environment Variables
 
 ```bash
@@ -16,6 +18,7 @@ MARKETAUX_API_KEY=           # Optional
 NEWS_POLL_INTERVAL=120       # seconds
 RSS_POLL_INTERVAL=300        # seconds
 MARKETAUX_POLL_INTERVAL=300  # seconds (used only when Marketaux is enabled)
+RSS_RATE_LIMIT_BACKOFF_SECONDS=900  # seconds to suppress one RSS source after HTTP 429
 PREPOST_POLL_INTERVAL=600    # seconds
 MARKET_HOURS_ONLY=false      # when false, run continuous polling and ignore market session gating
 
@@ -26,7 +29,7 @@ PROVIDER_MAX_RETRIES=3
 PROVIDER_BACKOFF_BASE_SECONDS=1
 
 # Provider-specific inputs
-RSS_FEED_URLS=               # comma-separated URLs
+RSS_FEED_URLS=               # optional comma-separated static/broad RSS URLs; Yahoo ticker feeds are generated from DB rules
 
 # Relevance filtering
 NEWS_INCLUDE_KEYWORDS=       # comma-separated case-insensitive terms
@@ -47,3 +50,10 @@ CHECKPOINT_BOOTSTRAP_LOOKBACK_HOURS=24
 NewsFetcher also depends on shared PostgreSQL connection, operational, and queue settings defined in `docs/design/shared/configuration.md`.
 
 Watchlist source for relevance filtering is the shared schema table `shared.t_watchlist_tickers` (table name configurable via `WATCHLIST_TABLE`).
+
+Ticker-specific Yahoo RSS feeds are generated dynamically from active watchlist rows and NewsFetcher-owned DB tables:
+
+- `news_fetcher.t_rss_sources` stores provider base URLs, grouping mode, max symbols per request, request interval, and default query parameters.
+- `news_fetcher.t_rss_symbol_rules` stores provider-specific symbol overrides and ticker match terms such as `RHM/XETRA -> RHM.DE` plus `Rheinmetall`.
+
+`RSS_FEED_URLS` remains available for static broad feeds such as MarketWatch.

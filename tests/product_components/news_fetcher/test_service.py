@@ -14,9 +14,11 @@ from src.core_components.event_ingestion_engine.models import (
 )
 from src.product_components.news_fetcher.providers import (
     NewsProvider,
+    ProviderRateLimitError,
     ProviderArticle,
     ProviderBatch,
 )
+from src.product_components.news_fetcher.rss_feeds import RssFeedSpec
 from src.product_components.news_fetcher.service import NewsFetcherService
 from src.product_components.news_fetcher.settings import NewsFetcherSettings
 
@@ -29,6 +31,15 @@ class FakeProvider(NewsProvider):
         return self.batch
 
 
+class RateLimitedProvider(NewsProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch(self, *, source_key: str, cursor: Any | None, timeout_seconds: int) -> ProviderBatch:
+        self.calls += 1
+        raise ProviderRateLimitError("provider_rate_limited")
+
+
 class InMemoryStorage(StorageAdapter):
     def __init__(self) -> None:
         self.checkpoints: dict[str, Checkpoint] = {}
@@ -36,10 +47,14 @@ class InMemoryStorage(StorageAdapter):
         self.obligations: dict[str, PublicationObligation] = {}
         self.batch_to_ids: dict[str, list[str]] = {}
         self.watchlist = {"AAPL"}
+        self.rss_feed_specs: list[RssFeedSpec] = []
         self.cycle_statuses: list[dict[str, Any]] = []
 
     def load_active_watchlist_tickers(self) -> set[str]:
         return self.watchlist
+
+    def load_rss_feed_specs(self) -> list[RssFeedSpec]:
+        return self.rss_feed_specs
 
     def get_checkpoint(self, source_key: str) -> Checkpoint | None:
         return self.checkpoints.get(source_key)
@@ -139,6 +154,8 @@ def _settings() -> NewsFetcherSettings:
         provider_timeout_seconds=5,
         provider_max_retries=3,
         provider_backoff_base_seconds=1,
+        rss_enabled=True,
+        rss_rate_limit_backoff_seconds=900,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
         dedupe_lookback_hours=24,
@@ -239,3 +256,134 @@ def test_service_records_cycle_status_for_empty_batches() -> None:
     assert storage.cycle_statuses[0]["source_key"] == "finnhub"
     assert storage.cycle_statuses[0]["status"] == "success"
     assert storage.cycle_statuses[0]["fetched_count"] == 0
+
+
+def test_service_processes_dynamic_rss_feed_specs(monkeypatch) -> None:
+    parsed = type(
+        "ParsedFeed",
+        (),
+        {
+            "entries": [
+                type(
+                    "Entry",
+                    (),
+                    {
+                        "id": "rss-1",
+                        "title": "Apple raises guidance",
+                        "link": "https://example.com/rss/aapl",
+                        "summary": "Quarterly outlook improved",
+                        "published": "Wed, 28 May 2026 00:00:00 GMT",
+                    },
+                )()
+            ]
+        },
+    )()
+
+    def _fake_parse(feed_url, *, timeout_seconds):
+        return parsed
+
+    monkeypatch.setattr(
+        "src.product_components.news_fetcher.providers._parse_rss_feed",
+        _fake_parse,
+    )
+
+    storage = InMemoryStorage()
+    storage.rss_feed_specs = [
+        RssFeedSpec(
+            source_key="rss:yahoo_finance:AAPL:NASDAQ",
+            provider_name="yahoo_finance",
+            url="https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL&region=US&lang=en-US",
+            app_tickers=("AAPL",),
+            min_request_interval_seconds=0,
+        )
+    ]
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    results = service.run_once()
+
+    assert "rss:yahoo_finance:AAPL:NASDAQ" in results
+    assert results["rss:yahoo_finance:AAPL:NASDAQ"].accepted == 1
+    assert len(publisher.published) == 1
+    assert storage.cycle_statuses[0]["source_key"] == "rss:yahoo_finance:AAPL:NASDAQ"
+
+
+def test_service_backs_off_rate_limited_sources() -> None:
+    provider = RateLimitedProvider()
+    storage = InMemoryStorage()
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={"rss:yahoo_finance:AXA:PARIS": provider},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    first = service.run_once()
+    second = service.run_once()
+
+    assert first == {}
+    assert second == {}
+    assert provider.calls == 1
+    assert storage.cycle_statuses[0]["error_code"] == "provider_rate_limited"
+    assert storage.cycle_statuses[1]["error_code"] == "provider_rate_limit_backoff"
+
+
+def test_service_respects_generated_rss_min_request_interval(monkeypatch) -> None:
+    parsed = type(
+        "ParsedFeed",
+        (),
+        {
+            "entries": [
+                type(
+                    "Entry",
+                    (),
+                    {
+                        "id": "rss-1",
+                        "title": "Apple raises guidance",
+                        "link": "https://example.com/rss/aapl",
+                        "summary": "Quarterly outlook improved",
+                        "published": "Wed, 28 May 2026 00:00:00 GMT",
+                    },
+                )()
+            ]
+        },
+    )()
+    calls = []
+
+    def _fake_parse(feed_url, *, timeout_seconds):
+        calls.append(feed_url)
+        return parsed
+
+    monkeypatch.setattr(
+        "src.product_components.news_fetcher.providers._parse_rss_feed",
+        _fake_parse,
+    )
+
+    storage = InMemoryStorage()
+    storage.rss_feed_specs = [
+        RssFeedSpec(
+            source_key="rss:yahoo_finance:batch:abc",
+            provider_name="yahoo_finance",
+            url="https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL&region=US&lang=en-US",
+            app_tickers=("AAPL",),
+            min_request_interval_seconds=900,
+        )
+    ]
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={},
+        storage=storage,
+        publisher=FakePublisher(),
+    )
+
+    service.run_once()
+    service.run_once()
+
+    assert len(calls) == 1
+    assert storage.cycle_statuses[1]["error_code"] == "source_interval_wait"

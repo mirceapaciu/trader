@@ -43,6 +43,76 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_provider_cycle_status (
         )
 );
 
+CREATE TABLE IF NOT EXISTS news_fetcher.t_rss_sources (
+    source_key TEXT PRIMARY KEY,
+    base_url TEXT NOT NULL,
+    symbol_param TEXT NOT NULL DEFAULT 's',
+    default_query_params JSONB NOT NULL DEFAULT '{}'::jsonb,
+    max_symbols_per_request INTEGER NOT NULL DEFAULT 10,
+    min_request_interval_seconds INTEGER NOT NULL DEFAULT 900,
+    grouping_mode TEXT NOT NULL DEFAULT 'grouped',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_rss_sources_max_symbols
+        CHECK (max_symbols_per_request > 0),
+    CONSTRAINT ck_rss_sources_min_interval
+        CHECK (min_request_interval_seconds >= 0),
+    CONSTRAINT ck_rss_sources_grouping_mode
+        CHECK (grouping_mode IN ('grouped', 'single'))
+);
+
+ALTER TABLE news_fetcher.t_rss_sources
+    ADD COLUMN IF NOT EXISTS max_symbols_per_request INTEGER NOT NULL DEFAULT 10;
+
+ALTER TABLE news_fetcher.t_rss_sources
+    ADD COLUMN IF NOT EXISTS min_request_interval_seconds INTEGER NOT NULL DEFAULT 900;
+
+ALTER TABLE news_fetcher.t_rss_sources
+    ADD COLUMN IF NOT EXISTS grouping_mode TEXT NOT NULL DEFAULT 'grouped';
+
+CREATE TABLE IF NOT EXISTS news_fetcher.t_rss_symbol_rules (
+    source_key TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    exchange_code TEXT NOT NULL,
+    provider_symbol TEXT NOT NULL,
+    query_params JSONB NOT NULL DEFAULT '{}'::jsonb,
+    match_terms JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (source_key, ticker, exchange_code),
+    CONSTRAINT fk_rss_symbol_rules_source
+        FOREIGN KEY (source_key)
+        REFERENCES news_fetcher.t_rss_sources (source_key)
+        ON DELETE CASCADE
+);
+
+ALTER TABLE news_fetcher.t_rss_symbol_rules
+    ADD COLUMN IF NOT EXISTS match_terms JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+INSERT INTO news_fetcher.t_rss_sources (
+    source_key,
+    base_url,
+    symbol_param,
+    default_query_params,
+    max_symbols_per_request,
+    min_request_interval_seconds,
+    grouping_mode,
+    is_enabled
+)
+VALUES (
+    'yahoo_finance',
+    'https://feeds.finance.yahoo.com/rss/2.0/headline',
+    's',
+    '{"region": "US", "lang": "en-US"}'::jsonb,
+    10,
+    900,
+    'grouped',
+    TRUE
+)
+ON CONFLICT (source_key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS news_fetcher.t_publication_obligations (
     obligation_id TEXT PRIMARY KEY,
     source_key TEXT NOT NULL,

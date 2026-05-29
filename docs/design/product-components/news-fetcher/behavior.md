@@ -4,6 +4,8 @@
 
 This file defines the runtime behavior owned by the NewsFetcher process.
 
+Provider selection and source-specific rules are documented in `docs/design/product-components/news-fetcher/news-sources.md`.
+
 NewsFetcher responsibilities:
 - Fetch news from configured providers.
 - Normalize all provider payloads into one canonical article shape.
@@ -85,6 +87,12 @@ Transient failures include:
 - Socket timeout.
 - Connection reset.
 
+HTTP 429 handling:
+- Treat provider rate limits as source-local failures.
+- Record the provider cycle with error code `provider_rate_limited`.
+- Suppress that source until `RSS_RATE_LIMIT_BACKOFF_SECONDS` has elapsed.
+- During suppression, record cycle status with error code `provider_rate_limit_backoff`.
+
 Non-transient failures include:
 - 400, 401, 403, 404.
 - Schema validation errors for malformed payloads.
@@ -103,7 +111,9 @@ Checkpoint table:
 Source key examples:
 - `finnhub`
 - `marketaux`
-- `rss:<feed-name>`
+- `rss:static`
+- `rss:yahoo_finance:<ticker>:<exchange_code>` when an RSS source uses single-symbol grouping mode.
+- `rss:yahoo_finance:batch:<hash>` when an RSS source uses grouped-symbol mode.
 
 Bootstrap policy:
 - If checkpoint exists, start from stored `cursor_value`.
@@ -126,8 +136,11 @@ Replay policy:
 
 ### 4.3 RSS
 
-- Parse configured feed URLs.
+- Parse configured static feed URLs and dynamically generated RSS feed URLs.
+- Generate ticker-specific Yahoo Finance RSS URLs from active watchlist rows and DB-backed RSS rules.
+- Use grouped Yahoo RSS requests by default, with comma-separated provider symbols in one `s=` query parameter.
 - Normalize publication time to UTC.
+- Tag grouped-feed articles only when article text matches configured ticker terms.
 - If no ticker metadata is present, use keyword extraction and watchlist matching.
 
 ### 4.4 Marketaux

@@ -9,6 +9,7 @@ This documentation is split into a system overview and implementation specs:
 - Data model index and component-owned schema specs: `docs/design/data-model.md`.
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
 - Product identity constraint and thesis-card contract: `docs/design/shared/product-constraint.md`.
+- News source guidance: `docs/design/product-components/news-fetcher/news-sources.md`.
 - Deployment specs: `docs/design/deployment/`.
 - Component folders (owner-based): `docs/design/product-components/news-fetcher/`, `docs/design/product-components/analyzer-worker/`, `docs/design/product-components/trade-executor/`, `docs/design/product-components/monitoring-ui/`, `docs/design/shared/`.
 

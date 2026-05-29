@@ -7,7 +7,7 @@ from src.core_components.event_ingestion_engine.engine import EventIngestionEngi
 from src.core_components.event_ingestion_engine.interfaces import EventPublisher, StorageAdapter
 from src.core_components.event_ingestion_engine.models import ProcessResult, SoftDedupePolicy
 
-from .providers import NewsProvider
+from .providers import NewsProvider, ProviderRateLimitError, RssProvider
 from .publisher import RedisStreamPublisher
 from .settings import NewsFetcherSettings
 from .source_adapter import NewsSourceAdapter, SourceFilterConfig
@@ -31,13 +31,36 @@ class NewsFetcherService:
         self._providers = providers
         self._storage = storage
         self._publisher = publisher
+        self._source_backoff_until: dict[str, datetime] = {}
+        self._source_interval_until: dict[str, datetime] = {}
+        self._source_min_interval_seconds: dict[str, int] = {}
 
     def run_once(self) -> dict[str, ProcessResult]:
         results: dict[str, ProcessResult] = {}
         watchlist = self._storage.load_active_watchlist_tickers()
+        providers = self._configured_providers()
 
-        for source_key, provider in self._providers.items():
+        for source_key, provider in providers.items():
             started_at = datetime.now(timezone.utc)
+            if self._is_backing_off(source_key, started_at):
+                self._record_cycle_status(
+                    source_key=source_key,
+                    started_at=started_at,
+                    result=None,
+                    status="error",
+                    error_code="provider_rate_limit_backoff",
+                )
+                continue
+            if self._is_waiting_for_interval(source_key, started_at):
+                self._record_cycle_status(
+                    source_key=source_key,
+                    started_at=started_at,
+                    result=None,
+                    status="success",
+                    error_code="source_interval_wait",
+                )
+                continue
+
             adapter = NewsSourceAdapter(
                 provider=provider,
                 timeout_seconds=self._settings.provider_timeout_seconds,
@@ -64,6 +87,7 @@ class NewsFetcherService:
             try:
                 result = engine.process_source(source_key)
                 results[source_key] = result
+                self._mark_interval(source_key)
                 self._record_cycle_status(
                     source_key=source_key,
                     started_at=started_at,
@@ -71,8 +95,26 @@ class NewsFetcherService:
                     status="success",
                     error_code=None,
                 )
+            except ProviderRateLimitError:
+                backoff_until = datetime.now(timezone.utc) + timedelta(
+                    seconds=self._settings.rss_rate_limit_backoff_seconds
+                )
+                self._source_backoff_until[source_key] = backoff_until
+                LOGGER.warning(
+                    "news_fetcher source rate limited; backing off",
+                    extra={"source_key": source_key, "backoff_until": backoff_until.isoformat()},
+                )
+                self._record_cycle_status(
+                    source_key=source_key,
+                    started_at=started_at,
+                    result=None,
+                    status="error",
+                    error_code="provider_rate_limited",
+                )
+                continue
             except Exception:  # pragma: no cover - defensive process-level guard
                 LOGGER.exception("news_fetcher source cycle failed", extra={"source_key": source_key})
+                self._mark_interval(source_key)
                 self._record_cycle_status(
                     source_key=source_key,
                     started_at=started_at,
@@ -83,6 +125,46 @@ class NewsFetcherService:
                 continue
 
         return results
+
+    def _configured_providers(self) -> dict[str, NewsProvider]:
+        providers = dict(self._providers)
+        if not self._settings.rss_enabled:
+            return providers
+
+        loader = getattr(self._storage, "load_rss_feed_specs", None)
+        if loader is None:
+            return providers
+
+        for spec in loader():
+            providers[spec.source_key] = RssProvider(feed_spec=spec)
+            self._source_min_interval_seconds[spec.source_key] = spec.min_request_interval_seconds
+        return providers
+
+    def _is_backing_off(self, source_key: str, now: datetime) -> bool:
+        backoff_until = self._source_backoff_until.get(source_key)
+        if backoff_until is None:
+            return False
+        if now < backoff_until:
+            return True
+        self._source_backoff_until.pop(source_key, None)
+        return False
+
+    def _is_waiting_for_interval(self, source_key: str, now: datetime) -> bool:
+        interval_until = self._source_interval_until.get(source_key)
+        if interval_until is None:
+            return False
+        if now < interval_until:
+            return True
+        self._source_interval_until.pop(source_key, None)
+        return False
+
+    def _mark_interval(self, source_key: str) -> None:
+        interval_seconds = self._source_min_interval_seconds.get(source_key, 0)
+        if interval_seconds <= 0:
+            return
+        self._source_interval_until[source_key] = datetime.now(timezone.utc) + timedelta(
+            seconds=interval_seconds
+        )
 
     def _record_cycle_status(
         self,

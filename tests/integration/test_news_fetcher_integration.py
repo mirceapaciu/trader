@@ -83,6 +83,8 @@ def _settings() -> NewsFetcherSettings:
         provider_timeout_seconds=int(os.getenv("PROVIDER_TIMEOUT_SECONDS", "10")),
         provider_max_retries=int(os.getenv("PROVIDER_MAX_RETRIES", "3")),
         provider_backoff_base_seconds=int(os.getenv("PROVIDER_BACKOFF_BASE_SECONDS", "1")),
+        rss_enabled=False,
+        rss_rate_limit_backoff_seconds=int(os.getenv("RSS_RATE_LIMIT_BACKOFF_SECONDS", "900")),
         queue_url=os.getenv("QUEUE_URL", "redis://127.0.0.1:6379/0"),
         news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
         dedupe_lookback_hours=int(os.getenv("DEDUPE_LOOKBACK_HOURS", "24")),

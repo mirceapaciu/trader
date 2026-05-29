@@ -18,6 +18,8 @@ class NewsFetcherSettings:
     provider_timeout_seconds: int
     provider_max_retries: int
     provider_backoff_base_seconds: int
+    rss_enabled: bool
+    rss_rate_limit_backoff_seconds: int
 
     queue_url: str
     news_raw_queue: str
@@ -54,6 +56,8 @@ class NewsFetcherSettings:
             provider_timeout_seconds=_int_env("PROVIDER_TIMEOUT_SECONDS", 10),
             provider_max_retries=_int_env("PROVIDER_MAX_RETRIES", 3),
             provider_backoff_base_seconds=_int_env("PROVIDER_BACKOFF_BASE_SECONDS", 1),
+            rss_enabled=_bool_env("NEWS_SOURCE_RSS_ENABLED", True),
+            rss_rate_limit_backoff_seconds=_int_env("RSS_RATE_LIMIT_BACKOFF_SECONDS", 900),
             queue_url=os.getenv("QUEUE_URL", "redis://127.0.0.1:6379/0"),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
             dedupe_lookback_hours=_int_env("DEDUPE_LOOKBACK_HOURS", 24),
@@ -82,3 +86,15 @@ def _csv_env(key: str) -> tuple[str, ...]:
     raw = os.getenv(key, "")
     values = [entry.strip().lower() for entry in raw.split(",") if entry.strip()]
     return tuple(values)
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
@@ -7,6 +8,9 @@ from typing import Any, Protocol
 
 import feedparser
 import requests
+from requests import HTTPError
+
+from .rss_feeds import RssFeedSpec
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,10 @@ class NewsProvider(Protocol):
 
     def fetch(self, *, source_key: str, cursor: Any | None, timeout_seconds: int) -> ProviderBatch:
         """Fetch one batch from provider using a replay-safe cursor."""
+
+
+class ProviderRateLimitError(RuntimeError):
+    """Raised when an upstream provider explicitly rate-limits a request."""
 
 
 class FinnhubProvider:
@@ -118,10 +126,28 @@ class FinnhubProvider:
 class RssProvider:
     """Fetches headlines from configured RSS feeds."""
 
-    def __init__(self, *, feed_urls: list[str]) -> None:
-        self._feed_urls = [url.strip() for url in feed_urls if url.strip()]
-        if not self._feed_urls:
-            raise ValueError("RSS_FEED_URLS must contain at least one URL for RssProvider")
+    def __init__(
+        self,
+        *,
+        feed_urls: list[str] | None = None,
+        feed_spec: RssFeedSpec | None = None,
+    ) -> None:
+        specs: list[RssFeedSpec] = []
+        if feed_spec is not None:
+            specs.append(feed_spec)
+        specs.extend(
+            RssFeedSpec(
+                source_key="rss:static",
+                provider_name="static",
+                url=url.strip(),
+                app_tickers=(),
+            )
+            for url in (feed_urls or [])
+            if url.strip()
+        )
+        self._feed_specs = specs
+        if not self._feed_specs:
+            raise ValueError("RssProvider requires at least one feed URL or feed spec")
 
     def fetch(self, *, source_key: str, cursor: Any | None, timeout_seconds: int) -> ProviderBatch:
         since = _extract_datetime_cursor(cursor, "published_after")
@@ -129,8 +155,8 @@ class RssProvider:
         events: list[ProviderArticle] = []
         max_published_at = since
 
-        for feed_url in self._feed_urls:
-            parsed = feedparser.parse(feed_url)
+        for feed_spec in self._feed_specs:
+            parsed = _parse_rss_feed(feed_spec.url, timeout_seconds=timeout_seconds)
             entries = getattr(parsed, "entries", [])
             for entry in entries:
                 published_at = _parse_rss_datetime(entry)
@@ -142,6 +168,12 @@ class RssProvider:
                 url = str(getattr(entry, "link", "") or "")
                 headline = str(getattr(entry, "title", "") or "")
                 summary = str(getattr(entry, "summary", "") or "") or None
+                tickers = _match_rss_tickers(
+                    headline=headline,
+                    summary=summary,
+                    url=url,
+                    feed_spec=feed_spec,
+                )
                 provider_event_id = (
                     str(getattr(entry, "id", "") or "")
                     or str(getattr(entry, "guid", "") or "")
@@ -153,7 +185,7 @@ class RssProvider:
                         headline=headline,
                         summary=summary,
                         url=url,
-                        tickers=[],
+                        tickers=tickers,
                         sentiment_source=None,
                         provider_event_id=provider_event_id,
                         published_at=published_at,
@@ -284,6 +316,44 @@ def _parse_rss_datetime(entry: Any) -> datetime | None:
 
     raw = getattr(entry, "published", None) or getattr(entry, "updated", None)
     return _parse_datetime(raw)
+
+
+def _parse_rss_feed(feed_url: str, *, timeout_seconds: int) -> Any:
+    response = _http_get(feed_url, params={}, timeout=timeout_seconds)
+    try:
+        response.raise_for_status()
+    except HTTPError as error:
+        if response.status_code == 429:
+            raise ProviderRateLimitError("provider_rate_limited") from error
+        raise
+    return feedparser.parse(response.content)
+
+
+def _match_rss_tickers(
+    *,
+    headline: str,
+    summary: str | None,
+    url: str,
+    feed_spec: RssFeedSpec,
+) -> list[str]:
+    if not feed_spec.ticker_matches:
+        return list(feed_spec.app_tickers)
+
+    text = f"{headline}\n{summary or ''}\n{url}".lower()
+    matched: list[str] = []
+    for ticker_match in feed_spec.ticker_matches:
+        if any(_contains_match_term(text, term) for term in ticker_match.match_terms):
+            matched.append(ticker_match.ticker)
+    return sorted({ticker.strip().upper() for ticker in matched if ticker.strip()})
+
+
+def _contains_match_term(text: str, term: str) -> bool:
+    normalized = term.strip().lower()
+    if not normalized:
+        return False
+    if re.fullmatch(r"[a-z0-9]+", normalized):
+        return re.search(rf"\b{re.escape(normalized)}\b", text) is not None
+    return normalized in text
 
 
 def _parse_datetime(value: Any) -> datetime | None:

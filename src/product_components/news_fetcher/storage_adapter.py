@@ -15,6 +15,14 @@ from src.core_components.event_ingestion_engine.models import (
     PublicationObligation,
     PublicationStatus,
 )
+from src.product_components.news_fetcher.rss_feeds import (
+    RssFeedSpec,
+    RssTickerMatch,
+    WatchlistTicker,
+    build_rss_feed_url,
+    rss_batch_source_key,
+    rss_source_key,
+)
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -270,14 +278,115 @@ class PostgresNewsStorageAdapter(StorageAdapter):
             return cur.rowcount == 1
 
     def load_active_watchlist_tickers(self) -> set[str]:
+        return {row.ticker for row in self.load_active_watchlist_rows()}
+
+    def load_active_watchlist_rows(self) -> list[WatchlistTicker]:
         sql = (
-            f"SELECT ticker FROM {self._shared_schema}.{self._watchlist_table} "
+            f"SELECT ticker, exchange_code FROM {self._shared_schema}.{self._watchlist_table} "
             f"WHERE is_active = TRUE"
         )
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql)
             rows = cur.fetchall()
-        return {str(row[0]).strip().upper() for row in rows if str(row[0]).strip()}
+        watchlist: list[WatchlistTicker] = []
+        for row in rows:
+            ticker = str(row[0]).strip().upper()
+            exchange_code = str(row[1]).strip().upper()
+            if ticker and exchange_code:
+                watchlist.append(WatchlistTicker(ticker=ticker, exchange_code=exchange_code))
+        return watchlist
+
+    def load_rss_feed_specs(self) -> list[RssFeedSpec]:
+        sql = (
+            f"SELECT "
+            f"w.ticker, w.exchange_code, s.source_key, s.base_url, s.symbol_param, "
+            f"s.default_query_params, s.max_symbols_per_request, s.min_request_interval_seconds, "
+            f"s.grouping_mode, r.provider_symbol, r.query_params, r.match_terms "
+            f"FROM {self._shared_schema}.{self._watchlist_table} w "
+            f"CROSS JOIN {self._news_schema}.t_rss_sources s "
+            f"LEFT JOIN {self._news_schema}.t_rss_symbol_rules r "
+            f"ON r.source_key = s.source_key "
+            f"AND UPPER(r.ticker) = UPPER(w.ticker) "
+            f"AND UPPER(r.exchange_code) = UPPER(w.exchange_code) "
+            f"AND r.is_enabled = TRUE "
+            f"WHERE w.is_active = TRUE AND s.is_enabled = TRUE "
+            f"ORDER BY s.source_key, w.ticker, w.exchange_code"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+
+        grouped_rows: dict[tuple[str, str, str, tuple[tuple[str, str], ...], int, int, str], list[dict[str, Any]]] = {}
+        for row in rows:
+            ticker = str(row["ticker"]).strip().upper()
+            exchange_code = str(row["exchange_code"]).strip().upper()
+            if not ticker or not exchange_code:
+                continue
+
+            default_params = _string_dict(row["default_query_params"])
+            override_params = _string_dict(row["query_params"])
+            query_params = {**default_params, **override_params}
+            key = (
+                str(row["source_key"]).strip(),
+                str(row["base_url"]),
+                str(row["symbol_param"]),
+                tuple(sorted(query_params.items())),
+                int(row["max_symbols_per_request"] or 10),
+                int(row["min_request_interval_seconds"] or 0),
+                str(row["grouping_mode"] or "grouped"),
+            )
+            enriched = dict(row)
+            enriched["_ticker"] = ticker
+            enriched["_exchange_code"] = exchange_code
+            enriched["_provider_symbol"] = str(row["provider_symbol"] or ticker).strip().upper()
+            enriched["_query_params"] = query_params
+            grouped_rows.setdefault(key, []).append(enriched)
+
+        specs: list[RssFeedSpec] = []
+        for (
+            source_name,
+            base_url,
+            symbol_param,
+            query_param_items,
+            max_symbols,
+            min_interval,
+            grouping_mode,
+        ), source_rows in grouped_rows.items():
+            query_params = dict(query_param_items)
+            if grouping_mode == "single":
+                specs.extend(
+                    _build_single_rss_specs(
+                        source_name=source_name,
+                        base_url=base_url,
+                        symbol_param=symbol_param,
+                        query_params=query_params,
+                        min_interval=min_interval,
+                        rows=source_rows,
+                    )
+                )
+                continue
+
+            for chunk in _chunks(source_rows, max_symbols):
+                provider_symbols = tuple(row["_provider_symbol"] for row in chunk)
+                specs.append(
+                    RssFeedSpec(
+                        source_key=rss_batch_source_key(
+                            provider_name=source_name,
+                            provider_symbols=provider_symbols,
+                        ),
+                        provider_name=source_name,
+                        url=build_rss_feed_url(
+                            base_url=base_url,
+                            symbol_param=symbol_param,
+                            provider_symbol=provider_symbols,
+                            query_params=query_params,
+                        ),
+                        app_tickers=tuple(row["_ticker"] for row in chunk),
+                        ticker_matches=tuple(_ticker_match(row) for row in chunk),
+                        min_request_interval_seconds=min_interval,
+                    )
+                )
+        return specs
 
     def record_provider_cycle_status(
         self,
@@ -340,3 +449,69 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _string_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip()
+        normalized_value = str(item).strip()
+        if normalized_key and normalized_value:
+            result[normalized_key] = normalized_value
+    return result
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _ticker_match(row: dict[str, Any]) -> RssTickerMatch:
+    terms = {
+        str(row["_ticker"]).strip(),
+        str(row["_provider_symbol"]).strip(),
+        *(_string_list(row.get("match_terms"))),
+    }
+    normalized = tuple(sorted({term for term in terms if term}))
+    return RssTickerMatch(ticker=str(row["_ticker"]), match_terms=normalized)
+
+
+def _chunks(rows: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+    safe_size = max(1, size)
+    return [rows[index : index + safe_size] for index in range(0, len(rows), safe_size)]
+
+
+def _build_single_rss_specs(
+    *,
+    source_name: str,
+    base_url: str,
+    symbol_param: str,
+    query_params: dict[str, str],
+    min_interval: int,
+    rows: list[dict[str, Any]],
+) -> list[RssFeedSpec]:
+    specs: list[RssFeedSpec] = []
+    for row in rows:
+        specs.append(
+            RssFeedSpec(
+                source_key=rss_source_key(
+                    provider_name=source_name,
+                    ticker=str(row["_ticker"]),
+                    exchange_code=str(row["_exchange_code"]),
+                ),
+                provider_name=source_name,
+                url=build_rss_feed_url(
+                    base_url=base_url,
+                    symbol_param=symbol_param,
+                    provider_symbol=str(row["_provider_symbol"]),
+                    query_params=query_params,
+                ),
+                app_tickers=(str(row["_ticker"]),),
+                ticker_matches=(_ticker_match(row),),
+                min_request_interval_seconds=min_interval,
+            )
+        )
+    return specs
