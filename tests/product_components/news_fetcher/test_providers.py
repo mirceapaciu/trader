@@ -22,6 +22,17 @@ class _FakeResponse:
         return self._payload
 
 
+class _FakeSession:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+        self.trust_env = True
+        self.calls = []
+
+    def get(self, url, *, params, timeout):
+        self.calls.append((url, params, timeout, self.trust_env))
+        return _FakeResponse(self.payload)
+
+
 def test_finnhub_provider_maps_payload(monkeypatch) -> None:
     payload = [
         {
@@ -34,10 +45,8 @@ def test_finnhub_provider_maps_payload(monkeypatch) -> None:
         }
     ]
 
-    def _fake_get(*args, **kwargs):
-        return _FakeResponse(payload)
-
-    monkeypatch.setattr("requests.get", _fake_get)
+    fake_session = _FakeSession(payload)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
 
     provider = FinnhubProvider(api_key="key")
     batch = provider.fetch(source_key="finnhub", cursor={"min_id": 100}, timeout_seconds=5)
@@ -46,6 +55,7 @@ def test_finnhub_provider_maps_payload(monkeypatch) -> None:
     assert batch.events[0].source == "finnhub"
     assert batch.events[0].tickers == ["AAPL", "MSFT"]
     assert batch.next_cursor["min_id"] == 101
+    assert fake_session.calls[0][3] is False
 
 
 def test_rss_provider_filters_using_cursor(monkeypatch) -> None:
@@ -100,10 +110,8 @@ def test_marketaux_provider_maps_entities_and_sentiment(monkeypatch) -> None:
         ]
     }
 
-    def _fake_get(*args, **kwargs):
-        return _FakeResponse(payload)
-
-    monkeypatch.setattr("requests.get", _fake_get)
+    fake_session = _FakeSession(payload)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
 
     provider = MarketauxProvider(api_key="key")
     batch = provider.fetch(
@@ -119,3 +127,4 @@ def test_marketaux_provider_maps_entities_and_sentiment(monkeypatch) -> None:
     assert event.tickers == ["SAP", "OR"]
     assert event.sentiment_source == 0.6
     assert batch.cursor_updated_at == datetime(2026, 5, 27, 11, 30, tzinfo=UTC)
+    assert fake_session.calls[0][3] is False

@@ -58,7 +58,7 @@ class FinnhubProvider:
         if min_id is not None:
             params["minId"] = min_id
 
-        response = requests.get(
+        response = _http_get(
             "https://finnhub.io/api/v1/news",
             params=params,
             timeout=timeout_seconds,
@@ -193,7 +193,7 @@ class MarketauxProvider:
         if published_after is not None:
             params["published_after"] = _isoformat(published_after)
 
-        response = requests.get(
+        response = _http_get(
             "https://api.marketaux.com/v1/news/all",
             params=params,
             timeout=timeout_seconds,
@@ -315,3 +315,9 @@ def _utc_now() -> datetime:
 
 def _isoformat(value: datetime) -> str:
     return _to_utc(value).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _http_get(url: str, *, params: dict[str, Any], timeout: int):
+    session = requests.Session()
+    session.trust_env = False
+    return session.get(url, params=params, timeout=timeout)
