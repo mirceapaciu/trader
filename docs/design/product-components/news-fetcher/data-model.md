@@ -42,6 +42,29 @@ Behavioral constraints:
 - Checkpoint advancement uses optimistic concurrency.
 - Checkpoint advances only after persistence and publish obligations are completed.
 
+### `t_provider_cycle_status`
+
+Purpose:
+- Last-cycle heartbeat and summary for each provider/source key.
+- Provides liveness telemetry even when a cycle fetches zero accepted articles and does not advance a checkpoint.
+
+Logical fields:
+- `source_key` (primary key): stable source stream identifier.
+- `last_cycle_started_at`: UTC timestamp when the most recent cycle started.
+- `last_cycle_finished_at`: UTC timestamp when the most recent cycle finished.
+- `last_cycle_status`: `success` or `error`.
+- `last_cycle_error_code`: nullable machine-readable failure reason.
+- `last_cycle_fetched_count`: number of source events returned after provider normalization and relevance filtering.
+- `last_cycle_accepted_count`: number of events accepted after deduplication.
+- `last_cycle_rejected_count`: number of events rejected after deduplication.
+- `last_cycle_checkpoint_advanced`: whether the cycle advanced the source checkpoint.
+- `updated_at`: row update timestamp.
+
+Behavioral constraints:
+- Exactly one active status row per `source_key`.
+- Row must update on every provider cycle, including empty cycles and provider failures.
+- Monitoring UI liveness must use `last_cycle_finished_at`, not checkpoint timestamps.
+
 ### `t_publication_obligations`
 
 Purpose:

@@ -36,6 +36,7 @@ class InMemoryStorage(StorageAdapter):
         self.obligations: dict[str, PublicationObligation] = {}
         self.batch_to_ids: dict[str, list[str]] = {}
         self.watchlist = {"AAPL"}
+        self.cycle_statuses: list[dict[str, Any]] = []
 
     def load_active_watchlist_tickers(self) -> set[str]:
         return self.watchlist
@@ -111,6 +112,9 @@ class InMemoryStorage(StorageAdapter):
             version=expected_version + 1,
         )
         return True
+
+    def record_provider_cycle_status(self, **kwargs) -> None:
+        self.cycle_statuses.append(kwargs)
 
 
 class FakePublisher(EventPublisher):
@@ -209,3 +213,29 @@ def test_service_continues_when_one_provider_fails() -> None:
 
     assert "finnhub" in results
     assert results["finnhub"].checkpoint_advanced is False
+
+
+def test_service_records_cycle_status_for_empty_batches() -> None:
+    provider = FakeProvider(
+        ProviderBatch(
+            events=[],
+            next_cursor={"cursor": "new"},
+            cursor_updated_at=datetime(2026, 5, 27, 9, 1, tzinfo=timezone.utc),
+        )
+    )
+    storage = InMemoryStorage()
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={"finnhub": provider},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    results = service.run_once()
+
+    assert results["finnhub"].fetched == 0
+    assert len(storage.cycle_statuses) == 1
+    assert storage.cycle_statuses[0]["source_key"] == "finnhub"
+    assert storage.cycle_statuses[0]["status"] == "success"
+    assert storage.cycle_statuses[0]["fetched_count"] == 0

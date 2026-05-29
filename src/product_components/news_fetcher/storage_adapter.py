@@ -279,6 +279,53 @@ class PostgresNewsStorageAdapter(StorageAdapter):
             rows = cur.fetchall()
         return {str(row[0]).strip().upper() for row in rows if str(row[0]).strip()}
 
+    def record_provider_cycle_status(
+        self,
+        *,
+        source_key: str,
+        started_at: datetime,
+        finished_at: datetime,
+        status: str,
+        error_code: str | None,
+        fetched_count: int,
+        accepted_count: int,
+        rejected_count: int,
+        checkpoint_advanced: bool,
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._news_schema}.t_provider_cycle_status "
+            f"(source_key, last_cycle_started_at, last_cycle_finished_at, last_cycle_status, "
+            f"last_cycle_error_code, last_cycle_fetched_count, last_cycle_accepted_count, "
+            f"last_cycle_rejected_count, last_cycle_checkpoint_advanced, updated_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()) "
+            f"ON CONFLICT (source_key) DO UPDATE SET "
+            f"last_cycle_started_at = EXCLUDED.last_cycle_started_at, "
+            f"last_cycle_finished_at = EXCLUDED.last_cycle_finished_at, "
+            f"last_cycle_status = EXCLUDED.last_cycle_status, "
+            f"last_cycle_error_code = EXCLUDED.last_cycle_error_code, "
+            f"last_cycle_fetched_count = EXCLUDED.last_cycle_fetched_count, "
+            f"last_cycle_accepted_count = EXCLUDED.last_cycle_accepted_count, "
+            f"last_cycle_rejected_count = EXCLUDED.last_cycle_rejected_count, "
+            f"last_cycle_checkpoint_advanced = EXCLUDED.last_cycle_checkpoint_advanced, "
+            f"updated_at = NOW()"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    source_key,
+                    _to_utc(started_at),
+                    _to_utc(finished_at),
+                    status,
+                    error_code,
+                    fetched_count,
+                    accepted_count,
+                    rejected_count,
+                    checkpoint_advanced,
+                ),
+            )
+            conn.commit()
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)
 

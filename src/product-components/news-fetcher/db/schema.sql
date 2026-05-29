@@ -22,6 +22,27 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_source_checkpoints (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS news_fetcher.t_provider_cycle_status (
+    source_key TEXT PRIMARY KEY,
+    last_cycle_started_at TIMESTAMPTZ NOT NULL,
+    last_cycle_finished_at TIMESTAMPTZ NOT NULL,
+    last_cycle_status TEXT NOT NULL,
+    last_cycle_error_code TEXT,
+    last_cycle_fetched_count INTEGER NOT NULL DEFAULT 0,
+    last_cycle_accepted_count INTEGER NOT NULL DEFAULT 0,
+    last_cycle_rejected_count INTEGER NOT NULL DEFAULT 0,
+    last_cycle_checkpoint_advanced BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_provider_cycle_status
+        CHECK (last_cycle_status IN ('success', 'error')),
+    CONSTRAINT ck_provider_cycle_counts
+        CHECK (
+            last_cycle_fetched_count >= 0
+            AND last_cycle_accepted_count >= 0
+            AND last_cycle_rejected_count >= 0
+        )
+);
+
 CREATE TABLE IF NOT EXISTS news_fetcher.t_publication_obligations (
     obligation_id TEXT PRIMARY KEY,
     source_key TEXT NOT NULL,
