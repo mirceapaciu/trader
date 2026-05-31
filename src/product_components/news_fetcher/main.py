@@ -10,7 +10,8 @@ from typing import Any
 import psycopg
 
 from .env_loader import load_env_files
-from .providers import FinnhubProvider, MarketauxProvider, RssProvider
+from .providers import FinnhubProvider, MarketauxProvider
+from .config_sync import sync_seed_configs
 from .service import build_service
 from .settings import NewsFetcherSettings
 
@@ -46,15 +47,6 @@ def _build_providers() -> dict[str, Any]:
     if finnhub_enabled and finnhub_key:
         providers["finnhub"] = FinnhubProvider(api_key=finnhub_key)
 
-    rss_enabled = _bool_env("NEWS_SOURCE_RSS_ENABLED", default=True)
-    rss_urls = [
-        url.strip()
-        for url in (os.getenv("RSS_FEED_URLS") or "").split(",")
-        if url.strip()
-    ]
-    if rss_enabled and rss_urls:
-        providers["rss:static"] = RssProvider(feed_urls=rss_urls)
-
     marketaux_enabled = _bool_env("NEWS_SOURCE_MARKETAUX_ENABLED", default=True)
     marketaux_key = (os.getenv("MARKETAUX_API_KEY") or "").strip()
     if marketaux_enabled and marketaux_key:
@@ -80,6 +72,7 @@ def main() -> None:
 
     settings = NewsFetcherSettings.from_env()
     _bootstrap_database_schema(settings)
+    sync_seed_configs(repo_root=_repo_root(), settings=settings)
     providers = _build_providers()
 
     if not providers and not settings.rss_enabled:

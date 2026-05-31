@@ -20,3 +20,28 @@ CREATE TABLE IF NOT EXISTS shared.t_watchlist_tickers (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (ticker, exchange_code)
 );
+
+CREATE TABLE IF NOT EXISTS shared.t_instruments (
+    ticker TEXT NOT NULL,
+    exchange_code TEXT NOT NULL,
+    display_name TEXT,
+    identifiers JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ticker, exchange_code)
+);
+
+CREATE TABLE IF NOT EXISTS shared.t_instrument_aliases (
+    ticker TEXT NOT NULL,
+    exchange_code TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL DEFAULT 'alias',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ticker, exchange_code, alias),
+    CONSTRAINT fk_instrument_aliases_instrument
+        FOREIGN KEY (ticker, exchange_code)
+        REFERENCES shared.t_instruments (ticker, exchange_code)
+        ON DELETE CASCADE
+);

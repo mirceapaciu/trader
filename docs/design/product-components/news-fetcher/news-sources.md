@@ -95,8 +95,9 @@ Current confidence level:
 
 Ticker attribution rule:
 - Do not rely only on parsing the ticker from the URL for long-term correctness.
-- Store RSS feed configuration as DB metadata: configured ticker, exchange code, provider symbol, feed URL template, language, and region.
-- When a feed is configured for one ticker, tag articles from that feed with the configured ticker even if the RSS item itself has no ticker field.
+- Store source-specific query metadata in RSS source configuration: provider symbol, feed URL template, language, and region.
+- Store reusable instrument names and aliases in shared instrument configuration.
+- When a feed is configured for one ticker, tag articles from that feed with the configured ticker when article text matches reusable aliases or provider symbols.
 - For broad market feeds, leave tickers empty unless article text or later entity extraction maps the article to watchlist tickers.
 
 Implemented configuration model:
@@ -114,15 +115,14 @@ ticker=NVDA
 exchange_code=NASDAQ
 provider_symbol=NVDA
 query_params={}
-match_terms=["NVDA","NVIDIA"]
 ```
 
-The runtime config uses `RSS_FEED_URLS` only for static or broad RSS feeds. Ticker-specific Yahoo Finance feeds are generated from `news_fetcher.t_rss_sources`, `news_fetcher.t_rss_symbol_rules`, and active `shared.t_watchlist_tickers` rows.
+Static broad RSS feeds and dynamic Yahoo sources are seeded from `config/news-fetcher/rss-sources.json`. Reusable instrument aliases are seeded from `config/news-fetcher/instruments.json`. Runtime reads from `news_fetcher.t_rss_sources`, `news_fetcher.t_rss_symbol_rules`, shared instrument alias tables, and active `shared.t_watchlist_tickers` rows.
 
 Per-ticker vs combined feeds:
 - Prefer grouped Yahoo RSS requests for default ingestion because per-ticker requests hit Yahoo rate limits too easily.
 - Use one `s=` parameter with comma-separated provider symbols, for example `s=AXA,MU,NVDA,RHM.DE`.
-- Attribute grouped-feed articles by matching headline, summary, and URL against configured ticker match terms.
+- Attribute grouped-feed articles by matching headline, summary, and URL against shared instrument aliases plus provider symbols.
 - Use single-symbol grouping mode only when debugging or when a source-specific reason requires it.
 
 Server-side fetching:

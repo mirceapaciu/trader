@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "instruments": [
+    {
+      "ticker": "AXA",
+      "exchange_code": "ETR",
+      "names": ["AXA SA"],
+      "aliases": ["AXA", "AXA SA"],
+      "identifiers": {
+        "isin": "FR0000120628"
+      },
+      "enabled": true
+    },
+    {
+      "ticker": "RHM",
+      "exchange_code": "ETR",
+      "names": ["Rheinmetall"],
+      "aliases": ["RHM", "Rheinmetall"],
+      "identifiers": {
+        "isin": "DE0007030009"
+      },
+      "enabled": true
+    }
+  ]
+}

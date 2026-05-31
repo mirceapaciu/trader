@@ -56,6 +56,42 @@ Behavioral constraints:
 - Composite uniqueness on (`ticker`, `exchange_code`).
 - Consumers must treat only active rows as eligible watchlist membership.
 
+### `t_instruments`
+
+Purpose:
+- Shared instrument identity and reusable metadata.
+- Provides a canonical place for names and identifiers that should not be tied to one news provider.
+
+Logical fields:
+- `ticker`: application ticker symbol.
+- `exchange_code`: market/exchange identifier.
+- `display_name`: optional human-readable instrument name.
+- `identifiers`: optional JSON identifiers such as ISIN.
+- `is_enabled`: controls whether the instrument metadata is active.
+- `created_at`: creation timestamp.
+- `updated_at`: update timestamp.
+
+Behavioral constraints:
+- Composite uniqueness on (`ticker`, `exchange_code`).
+- Provider-specific symbols do not belong here.
+
+### `t_instrument_aliases`
+
+Purpose:
+- Reusable text terms for attributing unstructured news to instruments.
+
+Logical fields:
+- `ticker`: application ticker symbol.
+- `exchange_code`: market/exchange identifier.
+- `alias`: text term such as `Rheinmetall`, `RHM`, or an ISIN.
+- `alias_type`: `alias`, `name`, or `identifier`.
+- `created_at`: creation timestamp.
+- `updated_at`: update timestamp.
+
+Behavioral constraints:
+- Aliases are source-agnostic.
+- RSS provider-specific symbols remain in `news_fetcher.t_rss_symbol_rules`.
+
 ## Notes
 
 - Executable PostgreSQL DDL is maintained in `src/product-components/shared/db/schema.sql`.

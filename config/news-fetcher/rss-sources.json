@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "source_key": "rss:marketwatch:topstories",
+      "type": "static",
+      "url": "https://www.marketwatch.com/rss/topstories",
+      "enabled": true,
+      "min_request_interval_seconds": 900
+    },
+    {
+      "source_key": "rss:marketwatch:marketpulse",
+      "type": "static",
+      "url": "https://www.marketwatch.com/rss/marketpulse",
+      "enabled": true,
+      "min_request_interval_seconds": 900
+    },
+    {
+      "source_key": "yahoo_finance",
+      "type": "dynamic_watchlist",
+      "base_url": "https://feeds.finance.yahoo.com/rss/2.0/headline",
+      "symbol_param": "s",
+      "default_query_params": {
+        "region": "US",
+        "lang": "en-US"
+      },
+      "grouping_mode": "grouped",
+      "max_symbols_per_request": 10,
+      "min_request_interval_seconds": 900,
+      "enabled": true,
+      "symbol_mappings": [
+        {
+          "ticker": "AXA",
+          "exchange_code": "ETR",
+          "provider_symbol": "AXA.DE",
+          "query_params": {
+            "region": "DE",
+            "lang": "en-US"
+          }
+        },
+        {
+          "ticker": "RHM",
+          "exchange_code": "ETR",
+          "provider_symbol": "RHM.DE",
+          "query_params": {
+            "region": "DE",
+            "lang": "en-US"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,9 @@ class NewsFetcherSettings:
     provider_backoff_base_seconds: int
     rss_enabled: bool
     rss_rate_limit_backoff_seconds: int
+    instruments_config: str
+    rss_sources_config: str
+    legacy_rss_feed_urls: tuple[str, ...]
 
     queue_url: str
     news_raw_queue: str
@@ -58,6 +62,15 @@ class NewsFetcherSettings:
             provider_backoff_base_seconds=_int_env("PROVIDER_BACKOFF_BASE_SECONDS", 1),
             rss_enabled=_bool_env("NEWS_SOURCE_RSS_ENABLED", True),
             rss_rate_limit_backoff_seconds=_int_env("RSS_RATE_LIMIT_BACKOFF_SECONDS", 900),
+            instruments_config=os.getenv(
+                "NEWS_INSTRUMENTS_CONFIG",
+                "config/news-fetcher/instruments.json",
+            ),
+            rss_sources_config=os.getenv(
+                "NEWS_RSS_SOURCES_CONFIG",
+                "config/news-fetcher/rss-sources.json",
+            ),
+            legacy_rss_feed_urls=_csv_env_raw("RSS_FEED_URLS"),
             queue_url=os.getenv("QUEUE_URL", "redis://127.0.0.1:6379/0"),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
             dedupe_lookback_hours=_int_env("DEDUPE_LOOKBACK_HOURS", 24),
@@ -66,6 +79,12 @@ class NewsFetcherSettings:
             include_keywords=_csv_env("NEWS_INCLUDE_KEYWORDS"),
             exclude_keywords=_csv_env("NEWS_EXCLUDE_KEYWORDS"),
         )
+
+    def instruments_config_path(self, repo_root: Path) -> Path | None:
+        return _optional_path(self.instruments_config, repo_root)
+
+    def rss_sources_config_path(self, repo_root: Path) -> Path | None:
+        return _optional_path(self.rss_sources_config, repo_root)
 
 
 def _int_env(key: str, default: int) -> int:
@@ -88,6 +107,11 @@ def _csv_env(key: str) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _csv_env_raw(key: str) -> tuple[str, ...]:
+    raw = os.getenv(key, "")
+    return tuple(entry.strip() for entry in raw.split(",") if entry.strip())
+
+
 def _bool_env(key: str, default: bool) -> bool:
     value = os.getenv(key)
     if value is None or not value.strip():
@@ -98,3 +122,12 @@ def _bool_env(key: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _optional_path(value: str, repo_root: Path) -> Path | None:
+    if not value.strip():
+        return None
+    path = Path(value.strip())
+    if not path.is_absolute():
+        path = repo_root / path
+    return path

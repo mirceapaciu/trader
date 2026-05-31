@@ -297,11 +297,40 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         return watchlist
 
     def load_rss_feed_specs(self) -> list[RssFeedSpec]:
+        specs = self._load_static_rss_feed_specs()
+        specs.extend(self._load_dynamic_rss_feed_specs())
+        return specs
+
+    def _load_static_rss_feed_specs(self) -> list[RssFeedSpec]:
+        sql = (
+            f"SELECT source_key, base_url, min_request_interval_seconds "
+            f"FROM {self._news_schema}.t_rss_sources "
+            f"WHERE is_enabled = TRUE AND source_type = 'static' "
+            f"ORDER BY source_key"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+
+        return [
+            RssFeedSpec(
+                source_key=str(row["source_key"]),
+                provider_name=str(row["source_key"]),
+                url=str(row["base_url"]),
+                app_tickers=(),
+                ticker_matches=(),
+                min_request_interval_seconds=int(row["min_request_interval_seconds"] or 0),
+            )
+            for row in rows
+        ]
+
+    def _load_dynamic_rss_feed_specs(self) -> list[RssFeedSpec]:
         sql = (
             f"SELECT "
             f"w.ticker, w.exchange_code, s.source_key, s.base_url, s.symbol_param, "
             f"s.default_query_params, s.max_symbols_per_request, s.min_request_interval_seconds, "
-            f"s.grouping_mode, r.provider_symbol, r.query_params, r.match_terms "
+            f"s.grouping_mode, r.provider_symbol, r.query_params, "
+            f"COALESCE(a.aliases, '[]'::jsonb) AS aliases "
             f"FROM {self._shared_schema}.{self._watchlist_table} w "
             f"CROSS JOIN {self._news_schema}.t_rss_sources s "
             f"LEFT JOIN {self._news_schema}.t_rss_symbol_rules r "
@@ -309,7 +338,14 @@ class PostgresNewsStorageAdapter(StorageAdapter):
             f"AND UPPER(r.ticker) = UPPER(w.ticker) "
             f"AND UPPER(r.exchange_code) = UPPER(w.exchange_code) "
             f"AND r.is_enabled = TRUE "
+            f"LEFT JOIN ("
+            f"SELECT ticker, exchange_code, jsonb_agg(alias ORDER BY alias) AS aliases "
+            f"FROM {self._shared_schema}.t_instrument_aliases "
+            f"GROUP BY ticker, exchange_code"
+            f") a ON UPPER(a.ticker) = UPPER(w.ticker) "
+            f"AND UPPER(a.exchange_code) = UPPER(w.exchange_code) "
             f"WHERE w.is_active = TRUE AND s.is_enabled = TRUE "
+            f"AND s.source_type = 'dynamic_watchlist' "
             f"ORDER BY s.source_key, w.ticker, w.exchange_code"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -473,7 +509,7 @@ def _ticker_match(row: dict[str, Any]) -> RssTickerMatch:
     terms = {
         str(row["_ticker"]).strip(),
         str(row["_provider_symbol"]).strip(),
-        *(_string_list(row.get("match_terms"))),
+        *(_string_list(row.get("aliases"))),
     }
     normalized = tuple(sorted({term for term in terms if term}))
     return RssTickerMatch(ticker=str(row["_ticker"]), match_terms=normalized)

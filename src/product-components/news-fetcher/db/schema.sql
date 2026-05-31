@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_provider_cycle_status (
 CREATE TABLE IF NOT EXISTS news_fetcher.t_rss_sources (
     source_key TEXT PRIMARY KEY,
     base_url TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'dynamic_watchlist',
     symbol_param TEXT NOT NULL DEFAULT 's',
     default_query_params JSONB NOT NULL DEFAULT '{}'::jsonb,
     max_symbols_per_request INTEGER NOT NULL DEFAULT 10,
@@ -58,9 +59,14 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_rss_sources (
         CHECK (max_symbols_per_request > 0),
     CONSTRAINT ck_rss_sources_min_interval
         CHECK (min_request_interval_seconds >= 0),
+    CONSTRAINT ck_rss_sources_source_type
+        CHECK (source_type IN ('static', 'dynamic_watchlist')),
     CONSTRAINT ck_rss_sources_grouping_mode
-        CHECK (grouping_mode IN ('grouped', 'single'))
+        CHECK (grouping_mode IN ('grouped', 'single', 'static'))
 );
+
+ALTER TABLE news_fetcher.t_rss_sources
+    ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'dynamic_watchlist';
 
 ALTER TABLE news_fetcher.t_rss_sources
     ADD COLUMN IF NOT EXISTS max_symbols_per_request INTEGER NOT NULL DEFAULT 10;
@@ -70,6 +76,13 @@ ALTER TABLE news_fetcher.t_rss_sources
 
 ALTER TABLE news_fetcher.t_rss_sources
     ADD COLUMN IF NOT EXISTS grouping_mode TEXT NOT NULL DEFAULT 'grouped';
+
+ALTER TABLE news_fetcher.t_rss_sources
+    DROP CONSTRAINT IF EXISTS ck_rss_sources_grouping_mode;
+
+ALTER TABLE news_fetcher.t_rss_sources
+    ADD CONSTRAINT ck_rss_sources_grouping_mode
+        CHECK (grouping_mode IN ('grouped', 'single', 'static'));
 
 CREATE TABLE IF NOT EXISTS news_fetcher.t_rss_symbol_rules (
     source_key TEXT NOT NULL,
@@ -94,6 +107,7 @@ ALTER TABLE news_fetcher.t_rss_symbol_rules
 INSERT INTO news_fetcher.t_rss_sources (
     source_key,
     base_url,
+    source_type,
     symbol_param,
     default_query_params,
     max_symbols_per_request,
@@ -104,6 +118,7 @@ INSERT INTO news_fetcher.t_rss_sources (
 VALUES (
     'yahoo_finance',
     'https://feeds.finance.yahoo.com/rss/2.0/headline',
+    'dynamic_watchlist',
     's',
     '{"region": "US", "lang": "en-US"}'::jsonb,
     10,

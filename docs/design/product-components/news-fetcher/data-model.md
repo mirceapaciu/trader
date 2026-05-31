@@ -73,12 +73,13 @@ Purpose:
 
 Logical fields:
 - `source_key` (primary key): provider identifier, for example `yahoo_finance`.
-- `base_url`: RSS endpoint without ticker-specific query parameters.
+- `base_url`: RSS endpoint without ticker-specific query parameters, or exact URL for static RSS sources.
+- `source_type`: `static` or `dynamic_watchlist`.
 - `symbol_param`: query parameter name used for provider symbols, for example `s`.
 - `default_query_params`: provider default query parameters such as region and language.
 - `max_symbols_per_request`: maximum provider symbols to combine into one request.
 - `min_request_interval_seconds`: minimum interval between requests for generated feeds from this source.
-- `grouping_mode`: `grouped` or `single`.
+- `grouping_mode`: `grouped`, `single`, or `static`.
 - `is_enabled`: controls whether this RSS source generates feed requests.
 - `created_at`: creation timestamp.
 - `updated_at`: update timestamp.
@@ -86,6 +87,7 @@ Logical fields:
 Behavioral constraints:
 - Enabled grouped sources generate RSS feed specs by batching active watchlist rows.
 - Enabled single-symbol sources generate one RSS feed spec per active watchlist row.
+- Enabled static sources generate one RSS feed spec per row and do not depend on watchlist rows.
 - Source defaults can be overridden per symbol rule.
 
 ### `t_rss_symbol_rules`
@@ -100,7 +102,7 @@ Logical fields:
 - `exchange_code`: app watchlist exchange code.
 - `provider_symbol`: provider-specific symbol to place in the RSS query.
 - `query_params`: optional provider query parameter overrides.
-- `match_terms`: optional strings used to attribute grouped RSS articles to this ticker.
+- `match_terms`: deprecated; reusable attribution terms live in shared instrument aliases.
 - `is_enabled`: controls whether the override is active.
 - `created_at`: creation timestamp.
 - `updated_at`: update timestamp.

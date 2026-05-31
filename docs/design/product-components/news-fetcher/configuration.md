@@ -13,6 +13,8 @@ NEWSFETCHER_DB_SCHEMA=news_fetcher
 # News feeds
 FINNHUB_API_KEY=
 MARKETAUX_API_KEY=           # Optional
+NEWS_INSTRUMENTS_CONFIG=config/news-fetcher/instruments.json
+NEWS_RSS_SOURCES_CONFIG=config/news-fetcher/rss-sources.json
 
 # Scheduling
 NEWS_POLL_INTERVAL=120       # seconds
@@ -29,7 +31,7 @@ PROVIDER_MAX_RETRIES=3
 PROVIDER_BACKOFF_BASE_SECONDS=1
 
 # Provider-specific inputs
-RSS_FEED_URLS=               # optional comma-separated static/broad RSS URLs; Yahoo ticker feeds are generated from DB rules
+RSS_FEED_URLS=               # deprecated comma-separated static/broad RSS fallback
 
 # Relevance filtering
 NEWS_INCLUDE_KEYWORDS=       # comma-separated case-insensitive terms
@@ -51,9 +53,9 @@ NewsFetcher also depends on shared PostgreSQL connection, operational, and queue
 
 Watchlist source for relevance filtering is the shared schema table `shared.t_watchlist_tickers` (table name configurable via `WATCHLIST_TABLE`).
 
-Ticker-specific Yahoo RSS feeds are generated dynamically from active watchlist rows and NewsFetcher-owned DB tables:
+NewsFetcher seeds source configuration from JSON into PostgreSQL during startup:
 
-- `news_fetcher.t_rss_sources` stores provider base URLs, grouping mode, max symbols per request, request interval, and default query parameters.
-- `news_fetcher.t_rss_symbol_rules` stores provider-specific symbol overrides and ticker match terms such as `RHM/XETRA -> RHM.DE` plus `Rheinmetall`.
+- `NEWS_INSTRUMENTS_CONFIG` defines reusable instrument names, aliases, and identifiers.
+- `NEWS_RSS_SOURCES_CONFIG` defines static RSS feeds, dynamic Yahoo RSS sources, and provider-specific symbol mappings.
 
-`RSS_FEED_URLS` remains available for static broad feeds such as MarketWatch.
+Runtime reads RSS configuration from `news_fetcher.t_rss_sources`, `news_fetcher.t_rss_symbol_rules`, and shared instrument alias tables. `RSS_FEED_URLS` remains available only as a legacy fallback and is synced into DB as static RSS sources.
