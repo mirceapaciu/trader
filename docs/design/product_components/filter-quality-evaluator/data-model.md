@@ -34,12 +34,7 @@ Logical fields:
 - `incorrectly_accepted_count`: accepted items classified as incorrectly accepted.
 - `rejection_precision_proxy`: proxy precision metric for rejected items.
 - `incorrectly_accepted_rate_estimate`: estimated false-positive rate over accepted population.
-- `estimated_noisy_accepted_count`: estimated noisy accepted items in the full run population.
-- `estimated_downstream_tokens_wasted`: estimated downstream trading-LLM token waste.
-- `estimated_downstream_llm_cost_wasted`: estimated downstream trading-LLM cost waste.
 - `token_budget_limit`: configured per-run token ceiling.
-- `tokens_used_input`: summed prompt/input tokens consumed by evaluator calls.
-- `tokens_used_output`: summed completion/output tokens consumed by evaluator calls.
 - `summary_json`: structured run-level metrics and recommendation aggregates.
 - `recommendation_summary_md`: human-readable recommendation summary for operators.
 - `created_at`: row creation timestamp.
@@ -79,8 +74,6 @@ Logical fields:
 - `improvement_suggestion`: actionable recommendation text.
 - `suggestion_json`: structured recommendation payload.
 - `llm_model`: model identifier used for evaluation.
-- `tokens_used_input`: optional input token usage for this item.
-- `tokens_used_output`: optional output token usage for this item.
 - `evaluated_at`: assessment timestamp.
 
 Behavioral constraints:
@@ -118,12 +111,7 @@ Columns:
 - `incorrectly_accepted_count INTEGER NOT NULL DEFAULT 0`
 - `rejection_precision_proxy NUMERIC(6,5) NULL`
 - `incorrectly_accepted_rate_estimate NUMERIC(6,5) NULL`
-- `estimated_noisy_accepted_count INTEGER NULL`
-- `estimated_downstream_tokens_wasted BIGINT NULL`
-- `estimated_downstream_llm_cost_wasted NUMERIC(18,8) NULL`
 - `token_budget_limit INTEGER NOT NULL`
-- `tokens_used_input INTEGER NOT NULL DEFAULT 0`
-- `tokens_used_output INTEGER NOT NULL DEFAULT 0`
 - `summary_json JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `recommendation_summary_md TEXT NOT NULL DEFAULT ''`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -139,7 +127,6 @@ Check constraints:
 - `accepted_audit_enabled = TRUE OR accepted_audit_sample_size IS NULL`
 - all count fields are `>= 0`
 - `token_budget_limit > 0`
-- `tokens_used_input >= 0 AND tokens_used_output >= 0`
 - `rejection_precision_proxy IS NULL OR (rejection_precision_proxy >= 0 AND rejection_precision_proxy <= 1)`
 - `incorrectly_accepted_rate_estimate IS NULL OR (incorrectly_accepted_rate_estimate >= 0 AND incorrectly_accepted_rate_estimate <= 1)`
 - terminal completion consistency:
@@ -176,8 +163,6 @@ Columns:
 - `improvement_suggestion TEXT NULL`
 - `suggestion_json JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `llm_model TEXT NULL`
-- `tokens_used_input INTEGER NULL`
-- `tokens_used_output INTEGER NULL`
 - `evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Foreign keys:
@@ -204,8 +189,6 @@ Check constraints:
 	- `evaluation_scope = 'rejected_population'` allows only `correctly_rejected` or `incorrectly_rejected`
 	- `evaluation_scope = 'accepted_audit'` allows only `correctly_accepted` or `incorrectly_accepted`
 - `probable_cause IS NULL OR probable_cause IN ('keyword_gap', 'watchlist_coverage_gap', 'dedupe_threshold_issue', 'rule_conflict', 'low_value_noise')`
-- `tokens_used_input IS NULL OR tokens_used_input >= 0`
-- `tokens_used_output IS NULL OR tokens_used_output >= 0`
 
 Required indexes:
 - by run and scope: `(run_id, evaluation_scope, item_status, article_id)`

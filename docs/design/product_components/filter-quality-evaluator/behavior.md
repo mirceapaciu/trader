@@ -8,7 +8,7 @@ Filter Quality Evaluator responsibilities:
 - Run on-demand filter simulations over the existing 30-day NewsFetcher input corpus after configuration changes.
 - Compare simulation results against production baseline filter results.
 - Evaluate quality of filtering decisions, especially disagreements and incorrect rejections.
-- Optionally audit accepted items to estimate false-positive noise and downstream trading-LLM cost impact.
+- Optionally audit accepted items to estimate false-positive noise rate.
 - Produce actionable recommendations for improving NewsFetcher filtering rules.
 - Persist run outputs for auditability and comparison across configuration changes.
 
@@ -146,11 +146,8 @@ Run-level output:
 - top rejection-reason error drivers
 - grouped recommendations ordered by estimated impact
 - accepted_audit_enabled flag and accepted_audit_sample_size
-- accepted_items_total and accepted_items_sampled
+- dataset_accepted_count and accepted_items_sampled
 - incorrectly_accepted_rate_estimate
-- estimated_noisy_accepted_count
-- estimated_downstream_tokens_wasted
-- estimated_downstream_llm_cost_wasted
 
 ## 7. Configuration Fingerprint Contract
 

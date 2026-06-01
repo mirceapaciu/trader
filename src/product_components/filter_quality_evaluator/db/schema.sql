@@ -26,12 +26,7 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_runs (
     incorrectly_accepted_count INTEGER NOT NULL DEFAULT 0,
     rejection_precision_proxy NUMERIC(6, 5),
     incorrectly_accepted_rate_estimate NUMERIC(6, 5),
-    estimated_noisy_accepted_count INTEGER,
-    estimated_downstream_tokens_wasted BIGINT,
-    estimated_downstream_llm_cost_wasted NUMERIC(18, 8),
     token_budget_limit INTEGER NOT NULL,
-    tokens_used_input INTEGER NOT NULL DEFAULT 0,
-    tokens_used_output INTEGER NOT NULL DEFAULT 0,
     summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     recommendation_summary_md TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -60,8 +55,6 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_runs (
             AND incorrectly_rejected_count >= 0
             AND correctly_accepted_count >= 0
             AND incorrectly_accepted_count >= 0
-            AND tokens_used_input >= 0
-            AND tokens_used_output >= 0
         ),
     CONSTRAINT ck_filter_quality_runs_budget_limit
         CHECK (token_budget_limit > 0),
@@ -128,8 +121,6 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_item_assess
     improvement_suggestion TEXT,
     suggestion_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     llm_model TEXT,
-    tokens_used_input INTEGER,
-    tokens_used_output INTEGER,
     evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_filter_quality_item_assessments_run_article
         UNIQUE (run_id, article_id),
@@ -208,11 +199,6 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_item_assess
                 'rule_conflict',
                 'low_value_noise'
             )
-        ),
-    CONSTRAINT ck_filter_quality_item_assessments_tokens_non_negative
-        CHECK (
-            (tokens_used_input IS NULL OR tokens_used_input >= 0)
-            AND (tokens_used_output IS NULL OR tokens_used_output >= 0)
         )
 );
 
