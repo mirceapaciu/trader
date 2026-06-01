@@ -39,5 +39,5 @@ The browser UI must use `UI_API_BASE_URL` to reach the Monitoring UI API. It mus
 ## Ownership Rules
 
 - Variables prefixed with `UI_` are owned by Monitoring UI.
-- NewsFetcher variables remain owned by `docs/design/product-components/news-fetcher/configuration.md`.
+- NewsFetcher variables remain owned by `docs/design/product_components/news-fetcher/configuration.md`.
 - Shared cross-process variables belong in `docs/design/shared/configuration.md`.

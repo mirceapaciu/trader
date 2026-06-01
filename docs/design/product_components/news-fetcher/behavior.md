@@ -4,7 +4,7 @@
 
 This file defines the runtime behavior owned by the NewsFetcher process.
 
-Provider selection and source-specific rules are documented in `docs/design/product-components/news-fetcher/news-sources.md`.
+Provider selection and source-specific rules are documented in `docs/design/product_components/news-fetcher/news-sources.md`.
 
 NewsFetcher responsibilities:
 - Fetch news from configured providers.

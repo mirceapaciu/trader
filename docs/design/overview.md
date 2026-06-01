@@ -5,14 +5,14 @@
 This documentation is split into a system overview and implementation specs:
 
 - This file (`docs/design/overview.md`): system goals, architecture, component boundaries, and lifecycle.
-- Core technology specification: `docs/design/core-components/event-ingestion-engine/event-ingestion-engine.md`.
+- Core technology specification: `docs/design/core_components/event-ingestion-engine/event-ingestion-engine.md`.
 - Data model index and component-owned schema specs: `docs/design/data-model.md`.
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
 - Product identity constraint and thesis-card contract: `docs/design/shared/product-constraint.md`.
-- News source guidance: `docs/design/product-components/news-fetcher/news-sources.md`.
-- Filter quality evaluator behavior: `docs/design/product-components/filter-quality-evaluator/behavior.md`.
+- News source guidance: `docs/design/product_components/news-fetcher/news-sources.md`.
+- Filter quality evaluator behavior: `docs/design/product_components/filter-quality-evaluator/behavior.md`.
 - Deployment specs: `docs/design/deployment/`.
-- Component folders (owner-based): `docs/design/product-components/news-fetcher/`, `docs/design/product-components/analyzer-worker/`, `docs/design/product-components/trade-executor/`, `docs/design/product-components/monitoring-ui/`, `docs/design/product-components/filter-quality-evaluator/`, `docs/design/shared/`.
+- Component folders (owner-based): `docs/design/product_components/news-fetcher/`, `docs/design/product_components/analyzer-worker/`, `docs/design/product_components/trade-executor/`, `docs/design/product_components/monitoring-ui/`, `docs/design/product_components/filter-quality-evaluator/`, `docs/design/shared/`.
 
 Implementation code and coding agents should follow this map and avoid adding implementation-level detail directly in this overview unless it changes architecture-level behavior.
 
@@ -52,7 +52,7 @@ How this principle applies in this project:
 
 This project's named core asset is the **Real-time Event Ingestion and Signal Preprocessing Engine**.
 
-The core-technology definition, interfaces, portability constraints, and non-trading reuse scenarios are specified in `docs/design/core-components/event-ingestion-engine/event-ingestion-engine.md`.
+The core-technology definition, interfaces, portability constraints, and non-trading reuse scenarios are specified in `docs/design/core_components/event-ingestion-engine/event-ingestion-engine.md`.
 
 ### 1.3 Product Identity Constraint (Mandatory)
 
@@ -449,7 +449,7 @@ The UI (`src/product_components/monitoring_ui/frontend`) provides:
 - Queue deployment spec: `docs/design/deployment/redis-queue-container.md`
 - Data model details: `docs/design/data-model.md`
 - Configuration index: `docs/design/configuration.md`
-- Component configuration specs: `docs/design/product-components/news-fetcher/configuration.md`, `docs/design/product-components/analyzer-worker/configuration.md`, `docs/design/product-components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
+- Component configuration specs: `docs/design/product_components/news-fetcher/configuration.md`, `docs/design/product_components/analyzer-worker/configuration.md`, `docs/design/product_components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
 
 ## 13. Source Code Organization and Core vs Product Boundary
 

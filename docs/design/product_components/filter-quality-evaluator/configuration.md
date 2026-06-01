@@ -46,5 +46,5 @@ Filter Quality Evaluator also depends on shared PostgreSQL connection and operat
 ## Ownership Rules
 
 - Variables prefixed with `FILTER_QUALITY_` are owned by Filter Quality Evaluator.
-- NewsFetcher variables remain owned by `docs/design/product-components/news-fetcher/configuration.md`.
+- NewsFetcher variables remain owned by `docs/design/product_components/news-fetcher/configuration.md`.
 - Shared cross-process variables belong in `docs/design/shared/configuration.md`.

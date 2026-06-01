@@ -7,10 +7,10 @@ The persistence engine is PostgreSQL, and each component owns a dedicated Postgr
 ## Data Model Map
 
 - Shared schema (`shared`): `docs/design/shared/data-model.md`
-- NewsFetcher schema (`news_fetcher`): `docs/design/product-components/news-fetcher/data-model.md`
-- AnalyzerWorker schema (`analyzer_worker`): `docs/design/product-components/analyzer-worker/data-model.md`
-- TradeExecutor schema (`trade_executor`): `docs/design/product-components/trade-executor/data-model.md`
-- Filter Quality Evaluator schema (`filter_quality_evaluator`): `docs/design/product-components/filter-quality-evaluator/data-model.md`
+- NewsFetcher schema (`news_fetcher`): `docs/design/product_components/news-fetcher/data-model.md`
+- AnalyzerWorker schema (`analyzer_worker`): `docs/design/product_components/analyzer-worker/data-model.md`
+- TradeExecutor schema (`trade_executor`): `docs/design/product_components/trade-executor/data-model.md`
+- Filter Quality Evaluator schema (`filter_quality_evaluator`): `docs/design/product_components/filter-quality-evaluator/data-model.md`
 
 ## Separation Rules
 

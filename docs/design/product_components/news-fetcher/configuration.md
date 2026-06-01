@@ -2,7 +2,7 @@
 
 Configuration owned by the NewsFetcher process.
 
-Provider-specific source guidance, including Yahoo Finance RSS URL rules, is documented in `docs/design/product-components/news-fetcher/news-sources.md`.
+Provider-specific source guidance, including Yahoo Finance RSS URL rules, is documented in `docs/design/product_components/news-fetcher/news-sources.md`.
 
 ## Environment Variables
 
