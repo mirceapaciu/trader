@@ -25,7 +25,7 @@ An automated trading bot for a small private trader that:
 4. Executes trades via the Interactive Brokers (IBKR) API
 5. Provides a UI for monitoring and manual overrides
 
-The project one-pager is here: [Project one-pager](docs/one-pager.md) It contains the north star and the non-negotiables of the product.
+The project one-pager is here: [Project one-pager](../one-pager.md) It contains the north star and the non-negotiables of the product.
 
 
 **Target monthly budget: ≤ 100 EUR** for all external API costs.
@@ -442,7 +442,7 @@ The UI (`src/product_components/monitoring_ui/frontend`) provides:
 - [ib_insync documentation](https://ib-insync.readthedocs.io/)
 - [IBKR API reference](https://interactivebrokers.github.io/tws-api/)
 - [OpenAI API pricing](https://openai.com/api/pricing/)
-- Trading strategies: see [trading-strategies.md](trading-strategies.md)
+- Trading strategies: see [trading-strategies.md](../trading-strategies.md)
 - Database deployment spec: `docs/design/deployment/postgres-container.md`
 - Queue deployment spec: `docs/design/deployment/redis-queue-container.md`
 - Data model details: `docs/design/data-model.md`
