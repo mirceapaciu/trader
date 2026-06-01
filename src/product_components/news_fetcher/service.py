@@ -76,6 +76,7 @@ class NewsFetcherService:
                 publisher=self._publisher,
                 producer="news_fetcher",
                 event_type="news.article.created",
+                filter_run=self._settings.production_filter_run(watchlist),
                 dedupe_policy=SoftDedupePolicy(
                     enabled=True,
                     algorithm=self._settings.dedupe_algorithm,

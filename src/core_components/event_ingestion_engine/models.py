@@ -33,6 +33,43 @@ class FetchedBatch:
     cursor_updated_at: datetime
 
 
+class FilterOutcome(StrEnum):
+    """Final filter outcome for one candidate article in one filter run."""
+
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class FilterRunMode(StrEnum):
+    """Execution mode for one filter run."""
+
+    PRODUCTION = "production"
+    SIMULATION = "simulation"
+
+
+@dataclass(frozen=True)
+class FilterRun:
+    """Execution context for one filter run."""
+
+    filter_run_id: str
+    run_mode: FilterRunMode
+    filter_config_fingerprint: str
+    window_start_at: datetime | None = None
+    window_end_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class FilterResult:
+    """Filter decision for one canonical candidate article."""
+
+    article_id: str
+    outcome: FilterOutcome
+    rejection_reason_code: str | None = None
+    matched_article_id: str | None = None
+    similarity_score: float | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class Checkpoint:
     """Replay-safe progress marker for one source adapter."""

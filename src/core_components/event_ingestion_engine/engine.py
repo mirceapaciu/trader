@@ -12,6 +12,9 @@ from .deduplication import evaluate_dedupe
 from .errors import NonTransientPublishError, TransientPublishError
 from .interfaces import EventPublisher, InboundSourceAdapter, StorageAdapter
 from .models import (
+    FilterOutcome,
+    FilterRun,
+    FilterResult,
     ProcessResult,
     PublicationObligation,
     PublicationStatus,
@@ -30,6 +33,7 @@ class EventIngestionEngine:
         publisher: EventPublisher,
         producer: str,
         event_type: str,
+        filter_run: FilterRun,
         dedupe_policy: SoftDedupePolicy | None = None,
         dead_letter_completes_obligation: bool = True,
         clock: Callable[[], datetime] | None = None,
@@ -39,6 +43,7 @@ class EventIngestionEngine:
         self._publisher = publisher
         self._producer = producer
         self._event_type = event_type
+        self._filter_run = filter_run
         self._dedupe_policy = dedupe_policy or SoftDedupePolicy()
         self._dead_letter_completes_obligation = dead_letter_completes_obligation
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -53,9 +58,26 @@ class EventIngestionEngine:
             return ProcessResult(fetched=0, accepted=0, rejected=0, checkpoint_advanced=False)
 
         batch_id = f"batch_{uuid.uuid4().hex}"
+        candidate_events = []
         accepted_events = []
+        filter_results: list[FilterResult] = []
         for source_event in batch.events:
             canonical = canonicalize_source_event(source_event, ingested_at=self._clock())
+            candidate_events.append(canonical)
+            attributes = canonical.attributes or {}
+            pre_filter_outcome = str(attributes.get("pre_filter_outcome", FilterOutcome.ACCEPTED.value))
+            pre_filter_reason_code = attributes.get("pre_filter_reason_code")
+            if pre_filter_outcome == FilterOutcome.REJECTED.value:
+                filter_results.append(
+                    FilterResult(
+                        article_id=canonical.id,
+                        outcome=FilterOutcome.REJECTED,
+                        rejection_reason_code=(
+                            str(pre_filter_reason_code) if pre_filter_reason_code is not None else None
+                        ),
+                    )
+                )
+                continue
             candidates = list(
                 self._storage_adapter.list_soft_dedupe_candidates(
                     source=canonical.source,
@@ -66,6 +88,21 @@ class EventIngestionEngine:
             decision = evaluate_dedupe(canonical, candidates, self._dedupe_policy)
             if decision.accepted:
                 accepted_events.append(canonical)
+                filter_results.append(
+                    FilterResult(article_id=canonical.id, outcome=FilterOutcome.ACCEPTED)
+                )
+                continue
+
+            filter_results.append(
+                FilterResult(
+                    article_id=canonical.id,
+                    outcome=FilterOutcome.REJECTED,
+                    rejection_reason_code=decision.reason_code,
+                    matched_article_id=decision.matched_event_id,
+                    similarity_score=decision.similarity_score,
+                    details=dict(decision.audit),
+                )
+            )
 
         obligations = [
             self._build_obligation(source_key=source_key, batch_id=batch_id, canonical_event=event)
@@ -75,7 +112,10 @@ class EventIngestionEngine:
         self._storage_adapter.persist_batch(
             source_key=source_key,
             batch_id=batch_id,
+            filter_run=self._filter_run,
+            candidate_events=candidate_events,
             accepted_events=accepted_events,
+            filter_results=filter_results,
             obligations=obligations,
         )
 
@@ -92,9 +132,9 @@ class EventIngestionEngine:
             )
 
         return ProcessResult(
-            fetched=len(batch.events),
+            fetched=len(candidate_events),
             accepted=len(accepted_events),
-            rejected=len(batch.events) - len(accepted_events),
+            rejected=len(filter_results) - len(accepted_events),
             checkpoint_advanced=checkpoint_advanced,
         )
 

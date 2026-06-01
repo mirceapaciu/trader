@@ -12,6 +12,8 @@ from src.core_components.event_ingestion_engine.interfaces import StorageAdapter
 from src.core_components.event_ingestion_engine.models import (
     CanonicalEvent,
     Checkpoint,
+    FilterRun,
+    FilterResult,
     PublicationObligation,
     PublicationStatus,
 )
@@ -105,14 +107,40 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         *,
         source_key: str,
         batch_id: str,
+        filter_run: FilterRun,
+        candidate_events,
         accepted_events,
+        filter_results,
         obligations,
     ) -> None:
+        filter_run_sql = (
+            f"INSERT INTO {self._news_schema}.t_news_filter_runs "
+            f"(filter_run_id, run_mode, filter_config_fingerprint, window_start_at, window_end_at) "
+            f"VALUES (%s, %s, %s, %s, %s) "
+            f"ON CONFLICT (filter_run_id) DO UPDATE SET "
+            f"run_mode = EXCLUDED.run_mode, "
+            f"filter_config_fingerprint = EXCLUDED.filter_config_fingerprint, "
+            f"window_start_at = EXCLUDED.window_start_at, "
+            f"window_end_at = EXCLUDED.window_end_at, "
+            f"updated_at = NOW()"
+        )
+        input_article_sql = (
+            f"INSERT INTO {self._news_schema}.t_input_news_articles "
+            f"(id, source, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (id) DO NOTHING"
+        )
         article_sql = (
             f"INSERT INTO {self._news_schema}.t_news_articles "
             f"(id, source, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
             f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (id) DO NOTHING"
+        )
+        filter_result_sql = (
+            f"INSERT INTO {self._news_schema}.t_news_filter_results "
+            f"(filter_run_id, article_id, filter_outcome, rejection_reason_code, matched_article_id, similarity_score, details_json) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (filter_run_id, article_id) DO NOTHING"
         )
         obligation_sql = (
             f"INSERT INTO {self._news_schema}.t_publication_obligations "
@@ -122,6 +150,42 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         )
 
         with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                filter_run_sql,
+                (
+                    filter_run.filter_run_id,
+                    filter_run.run_mode.value,
+                    filter_run.filter_config_fingerprint,
+                    filter_run.window_start_at,
+                    filter_run.window_end_at,
+                ),
+            )
+
+            for event in candidate_events:
+                attributes = event.attributes or {}
+                tickers = list(event.entities or attributes.get("tickers") or [])
+                sentiment = attributes.get("sentiment_source")
+                fetched_at = attributes.get("fetched_at")
+                parsed_fetched_at = (
+                    _to_utc(datetime.fromisoformat(fetched_at))
+                    if isinstance(fetched_at, str)
+                    else event.ingested_at
+                )
+                cur.execute(
+                    input_article_sql,
+                    (
+                        event.id,
+                        event.source,
+                        event.title,
+                        event.summary,
+                        event.canonical_locator,
+                        Json(tickers),
+                        _to_utc(event.occurred_at),
+                        _to_utc(parsed_fetched_at),
+                        sentiment,
+                    ),
+                )
+
             for event in accepted_events:
                 attributes = event.attributes or {}
                 tickers = list(event.entities or attributes.get("tickers") or [])
@@ -144,6 +208,20 @@ class PostgresNewsStorageAdapter(StorageAdapter):
                         _to_utc(event.occurred_at),
                         _to_utc(parsed_fetched_at),
                         sentiment,
+                    ),
+                )
+
+            for filter_result in filter_results:
+                cur.execute(
+                    filter_result_sql,
+                    (
+                        filter_run.filter_run_id,
+                        filter_result.article_id,
+                        filter_result.outcome.value,
+                        filter_result.rejection_reason_code,
+                        filter_result.matched_article_id,
+                        filter_result.similarity_score,
+                        Json(filter_result.details),
                     ),
                 )
 

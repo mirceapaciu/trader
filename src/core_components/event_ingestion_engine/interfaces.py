@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Protocol, Sequence
 
-from .models import CanonicalEvent, Checkpoint, FetchedBatch, PublicationObligation, PublicationStatus
+from .models import (
+    CanonicalEvent,
+    Checkpoint,
+    FetchedBatch,
+    FilterRun,
+    FilterResult,
+    PublicationObligation,
+    PublicationStatus,
+)
 
 
 class InboundSourceAdapter(Protocol):
@@ -35,10 +43,13 @@ class StorageAdapter(Protocol):
         *,
         source_key: str,
         batch_id: str,
+        filter_run: FilterRun,
+        candidate_events: Sequence[CanonicalEvent],
         accepted_events: Sequence[CanonicalEvent],
+        filter_results: Sequence[FilterResult],
         obligations: Sequence[PublicationObligation],
     ) -> None:
-        """Atomically persist accepted events plus publication obligations."""
+        """Atomically persist candidate events, filter results, accepted events, and obligations."""
 
     def load_batch_obligations(self, *, batch_id: str) -> Sequence[PublicationObligation]:
         """Load obligations created for one batch."""

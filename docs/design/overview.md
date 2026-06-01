@@ -10,8 +10,9 @@ This documentation is split into a system overview and implementation specs:
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
 - Product identity constraint and thesis-card contract: `docs/design/shared/product-constraint.md`.
 - News source guidance: `docs/design/product-components/news-fetcher/news-sources.md`.
+- Filter quality evaluator behavior: `docs/design/product-components/filter-quality-evaluator/behavior.md`.
 - Deployment specs: `docs/design/deployment/`.
-- Component folders (owner-based): `docs/design/product-components/news-fetcher/`, `docs/design/product-components/analyzer-worker/`, `docs/design/product-components/trade-executor/`, `docs/design/product-components/monitoring-ui/`, `docs/design/shared/`.
+- Component folders (owner-based): `docs/design/product-components/news-fetcher/`, `docs/design/product-components/analyzer-worker/`, `docs/design/product-components/trade-executor/`, `docs/design/product-components/monitoring-ui/`, `docs/design/product-components/filter-quality-evaluator/`, `docs/design/shared/`.
 
 Implementation code and coding agents should follow this map and avoid adding implementation-level detail directly in this overview unless it changes architecture-level behavior.
 
@@ -164,6 +165,7 @@ For runtime decoupling, these modules run as separate OS processes (or separate 
 2. `message_broker` process: standalone queue backend that mediates all inter-process communication
 3. `analyzer_worker` process: consumes news from `news_raw_queue`, performs scoring/LLM enrichment, then publishes trade signals to `signal_queue`
 4. `trade_executor` process: consumes signals from `signal_queue`, applies risk checks, and executes orders via IBKR
+5. `filter_quality_evaluator` process: runs on demand, evaluates accepted/rejected NewsFetcher outcomes from DB, and produces filter-quality recommendations
 
 In-process queues are not used for production because they do not provide durability or cross-process isolation. The message broker must run independently of all producer and consumer processes.
 

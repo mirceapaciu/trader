@@ -148,7 +148,10 @@ def _cleanup_news_fetcher_rows(settings: NewsFetcherSettings) -> None:
     with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_publication_obligations")
+            cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_news_filter_results")
             cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_news_articles")
+            cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_input_news_articles")
+            cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_news_filter_runs")
             cur.execute(f"DELETE FROM {settings.newsfetcher_db_schema}.t_source_checkpoints")
         conn.commit()
 
@@ -179,6 +182,16 @@ def _latest_checkpoint_version(settings: NewsFetcherSettings, source_key: str) -
             )
             row = cur.fetchone()
     return int(row[0]) if row else None
+
+
+def _filter_result_rows(settings: NewsFetcherSettings) -> list[tuple[str, str | None]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT filter_outcome, rejection_reason_code FROM {settings.newsfetcher_db_schema}.t_news_filter_results ORDER BY article_id"
+            )
+            rows = cur.fetchall()
+    return [(str(row[0]), str(row[1]) if row[1] is not None else None) for row in rows]
 
 
 def _batch_with_one_article(provider_event_id: str) -> ProviderBatch:
@@ -227,7 +240,11 @@ def test_news_fetcher_e2e_persist_then_publish_and_checkpoint() -> None:
     result = service.run_once()["finnhub"]
 
     assert result.accepted == 1
+    assert _count_rows(settings, "t_input_news_articles") == 1
     assert _count_rows(settings, "t_news_articles") == 1
+    assert _count_rows(settings, "t_news_filter_runs") == 1
+    assert _count_rows(settings, "t_news_filter_results") == 1
+    assert _filter_result_rows(settings) == [("accepted", None)]
     assert _count_rows(settings, "t_publication_obligations") == 1
     assert _obligation_statuses(settings) == ["published"]
     assert _latest_checkpoint_version(settings, "finnhub") == 1
@@ -258,7 +275,10 @@ def test_news_fetcher_repeated_cycle_is_idempotent_on_articles() -> None:
 
     assert first.accepted == 1
     assert second.accepted in {0, 1}
+    assert _count_rows(settings, "t_input_news_articles") == 1
     assert _count_rows(settings, "t_news_articles") == 1
+    assert _count_rows(settings, "t_news_filter_runs") == 1
+    assert _count_rows(settings, "t_news_filter_results") == 1
 
 
 def test_news_fetcher_non_transient_publish_moves_to_dead_lettered() -> None:

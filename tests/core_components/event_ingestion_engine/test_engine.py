@@ -18,6 +18,10 @@ from src.core_components.event_ingestion_engine.models import (
     CanonicalEvent,
     Checkpoint,
     FetchedBatch,
+    FilterOutcome,
+    FilterRun,
+    FilterRunMode,
+    FilterResult,
     PublicationObligation,
     PublicationStatus,
     SoftDedupePolicy,
@@ -46,6 +50,9 @@ class InMemoryStorage(StorageAdapter):
             )
         }
         self.events: dict[str, CanonicalEvent] = {}
+        self.candidate_events: dict[str, CanonicalEvent] = {}
+        self.filter_results: list[FilterResult] = []
+        self.filter_run: FilterRun | None = None
         self.obligations: dict[str, PublicationObligation] = {}
         self.batch_to_ids: dict[str, list[str]] = {}
 
@@ -71,11 +78,18 @@ class InMemoryStorage(StorageAdapter):
         *,
         source_key: str,
         batch_id: str,
+        filter_run,
+        candidate_events,
         accepted_events,
+        filter_results,
         obligations,
     ) -> None:
+        self.filter_run = filter_run
+        for event in candidate_events:
+            self.candidate_events.setdefault(event.id, event)
         for event in accepted_events:
             self.events.setdefault(event.id, event)
+        self.filter_results.extend(filter_results)
         ids: list[str] = []
         for obligation in obligations:
             self.obligations[obligation.obligation_id] = obligation
@@ -143,6 +157,7 @@ def _source_event(title: str) -> SourceEvent:
         title=title,
         summary="Revenue beat expectations",
         occurred_at=datetime(2026, 5, 25, 10, 30, 0, tzinfo=timezone.utc),
+        attributes={"pre_filter_outcome": "accepted", "pre_filter_reason_code": None},
     )
 
 
@@ -163,6 +178,11 @@ def test_process_source_advances_checkpoint_after_successful_publish() -> None:
         producer="news_fetcher",
         event_type="news.article.created",
         dedupe_policy=SoftDedupePolicy(),
+        filter_run=FilterRun(
+            filter_run_id="prod_test",
+            run_mode=FilterRunMode.PRODUCTION,
+            filter_config_fingerprint="fingerprint",
+        ),
     )
 
     result = engine.process_source("finnhub")
@@ -171,7 +191,13 @@ def test_process_source_advances_checkpoint_after_successful_publish() -> None:
     assert result.accepted == 1
     assert result.rejected == 0
     assert result.checkpoint_advanced is True
+    assert storage.filter_run is not None
+    assert storage.filter_run.filter_run_id == "prod_test"
     assert storage.checkpoints["finnhub"].cursor_value == {"cursor": "new"}
+    assert len(storage.candidate_events) == 1
+    assert storage.filter_results == [
+        FilterResult(article_id=next(iter(storage.candidate_events)), outcome=FilterOutcome.ACCEPTED)
+    ]
     assert len(publisher.published) == 1
 
 
@@ -191,6 +217,11 @@ def test_process_source_blocks_checkpoint_on_transient_publish_failure() -> None
         publisher=publisher,
         producer="news_fetcher",
         event_type="news.article.created",
+        filter_run=FilterRun(
+            filter_run_id="prod_test",
+            run_mode=FilterRunMode.PRODUCTION,
+            filter_config_fingerprint="fingerprint",
+        ),
     )
 
     result = engine.process_source("finnhub")
@@ -215,9 +246,65 @@ def test_process_source_can_advance_checkpoint_when_non_transient_dead_letters()
         publisher=publisher,
         producer="news_fetcher",
         event_type="news.article.created",
+        filter_run=FilterRun(
+            filter_run_id="prod_test",
+            run_mode=FilterRunMode.PRODUCTION,
+            filter_config_fingerprint="fingerprint",
+        ),
         dead_letter_completes_obligation=True,
     )
 
     result = engine.process_source("finnhub")
 
     assert result.checkpoint_advanced is True
+
+
+def test_process_source_records_pre_filter_rejections_without_publishing() -> None:
+    batch = FetchedBatch(
+        events=[
+            SourceEvent(
+                source="finnhub",
+                source_event_id="provider-2",
+                canonical_locator="https://example.com/news/2",
+                title="Broad market commentary",
+                summary="No watchlist relevance",
+                occurred_at=datetime(2026, 5, 25, 10, 35, 0, tzinfo=timezone.utc),
+                attributes={
+                    "pre_filter_outcome": "rejected",
+                    "pre_filter_reason_code": "rejected_not_relevant",
+                },
+            )
+        ],
+        next_cursor={"cursor": "new"},
+        cursor_updated_at=datetime(2026, 5, 25, 10, 36, 0, tzinfo=timezone.utc),
+    )
+    source = FakeSourceAdapter(batch)
+    storage = InMemoryStorage()
+    publisher = FakePublisher(mode="ok")
+
+    engine = EventIngestionEngine(
+        source_adapter=source,
+        storage_adapter=storage,
+        publisher=publisher,
+        producer="news_fetcher",
+        event_type="news.article.created",
+        filter_run=FilterRun(
+            filter_run_id="prod_test",
+            run_mode=FilterRunMode.PRODUCTION,
+            filter_config_fingerprint="fingerprint",
+        ),
+    )
+
+    result = engine.process_source("finnhub")
+
+    assert result.fetched == 1
+    assert result.accepted == 0
+    assert result.rejected == 1
+    assert publisher.published == []
+    assert storage.filter_results == [
+        FilterResult(
+            article_id=next(iter(storage.candidate_events)),
+            outcome=FilterOutcome.REJECTED,
+            rejection_reason_code="rejected_not_relevant",
+        )
+    ]

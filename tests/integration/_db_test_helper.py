@@ -113,7 +113,7 @@ def bootstrap_newsfetcher_schema(config: dict[str, object]) -> None:
         (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "product-components"
+            / "product_components"
             / "shared"
             / "db"
             / "schema.sql"
@@ -121,24 +121,24 @@ def bootstrap_newsfetcher_schema(config: dict[str, object]) -> None:
         (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "product-components"
-            / "news-fetcher"
+            / "product_components"
+            / "news_fetcher"
             / "db"
             / "schema.sql"
         ),
         (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "product-components"
-            / "analyzer-worker"
+            / "product_components"
+            / "analyzer_worker"
             / "db"
             / "schema.sql"
         ),
         (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "product-components"
-            / "trade-executor"
+            / "product_components"
+            / "trade_executor"
             / "db"
             / "schema.sql"
         ),
@@ -156,8 +156,8 @@ def bootstrap_newsfetcher_only_schema(config: dict[str, object]) -> None:
     schema_file = (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "product-components"
-        / "news-fetcher"
+        / "product_components"
+        / "news_fetcher"
         / "db"
         / "schema.sql"
     )

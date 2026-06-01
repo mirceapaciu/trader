@@ -94,5 +94,5 @@ Behavioral constraints:
 
 ## Notes
 
-- Executable PostgreSQL DDL is maintained in `src/product-components/shared/db/schema.sql`.
+- Executable PostgreSQL DDL is maintained in `src/product_components/shared/db/schema.sql`.
 - Design docs define logical ownership and behavior constraints; runtime DDL must come from source-managed SQL/migrations.

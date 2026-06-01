@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from src.core_components.event_ingestion_engine.models import FilterRun, FilterRunMode
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,26 @@ class NewsFetcherSettings:
 
     def rss_sources_config_path(self, repo_root: Path) -> Path | None:
         return _optional_path(self.rss_sources_config, repo_root)
+
+    def filter_config_fingerprint(self, watchlist_tickers: set[str]) -> str:
+        payload = {
+            "include_keywords": list(self.include_keywords),
+            "exclude_keywords": list(self.exclude_keywords),
+            "watchlist_tickers": sorted(watchlist_tickers),
+            "dedupe_algorithm": self.dedupe_algorithm,
+            "dedupe_similarity_threshold": self.dedupe_similarity_threshold,
+            "dedupe_lookback_hours": self.dedupe_lookback_hours,
+        }
+        normalized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def production_filter_run(self, watchlist_tickers: set[str]) -> FilterRun:
+        fingerprint = self.filter_config_fingerprint(watchlist_tickers)
+        return FilterRun(
+            filter_run_id=f"prod_{fingerprint[:24]}",
+            run_mode=FilterRunMode.PRODUCTION,
+            filter_config_fingerprint=fingerprint,
+        )
 
 
 def _int_env(key: str, default: int) -> int:

@@ -2,6 +2,68 @@
 
 CREATE SCHEMA IF NOT EXISTS news_fetcher;
 
+CREATE TABLE IF NOT EXISTS news_fetcher.t_input_news_articles (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    summary TEXT,
+    url TEXT NOT NULL,
+    tickers JSONB,
+    published_at TIMESTAMPTZ NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    sentiment_source DOUBLE PRECISION,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_input_news_articles_published_at
+    ON news_fetcher.t_input_news_articles (published_at DESC);
+
+CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_runs (
+    filter_run_id TEXT PRIMARY KEY,
+    run_mode TEXT NOT NULL,
+    filter_config_fingerprint TEXT NOT NULL,
+    window_start_at TIMESTAMPTZ,
+    window_end_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_news_filter_runs_mode
+        CHECK (run_mode IN ('production', 'simulation'))
+);
+
+ALTER TABLE news_fetcher.t_news_filter_runs
+    DROP COLUMN IF EXISTS triggered_by;
+
+CREATE INDEX IF NOT EXISTS idx_news_filter_runs_mode_created_at
+    ON news_fetcher.t_news_filter_runs (run_mode, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_results (
+    filter_run_id TEXT NOT NULL,
+    article_id TEXT NOT NULL,
+    filter_outcome TEXT NOT NULL,
+    rejection_reason_code TEXT,
+    matched_article_id TEXT,
+    similarity_score DOUBLE PRECISION,
+    details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (filter_run_id, article_id),
+    CONSTRAINT fk_news_filter_results_run
+        FOREIGN KEY (filter_run_id)
+        REFERENCES news_fetcher.t_news_filter_runs (filter_run_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_news_filter_results_article
+        FOREIGN KEY (article_id)
+        REFERENCES news_fetcher.t_input_news_articles (id)
+        ON DELETE CASCADE,
+    CONSTRAINT ck_news_filter_results_outcome
+        CHECK (filter_outcome IN ('accepted', 'rejected'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_filter_results_article
+    ON news_fetcher.t_news_filter_results (article_id);
+
+CREATE INDEX IF NOT EXISTS idx_news_filter_results_outcome_reason
+    ON news_fetcher.t_news_filter_results (filter_outcome, rejection_reason_code);
+
 CREATE TABLE IF NOT EXISTS news_fetcher.t_news_articles (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL,

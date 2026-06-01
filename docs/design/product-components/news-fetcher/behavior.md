@@ -9,8 +9,9 @@ Provider selection and source-specific rules are documented in `docs/design/prod
 NewsFetcher responsibilities:
 - Fetch news from configured providers.
 - Normalize all provider payloads into one canonical article shape.
-- Filter and deduplicate before persistence and publish.
-- Persist canonical articles in schema news_fetcher.
+- Persist all structurally valid normalized candidates into a 30-day input corpus.
+- Apply production filtering and deduplication without blocking future simulation runs.
+- Persist production filter outcomes and accepted canonical articles in schema news_fetcher.
 - Publish canonical events to queue news_raw_queue.
 - Record provider usage in schema shared. (For measuring the external API consumption)
 - Preserve stable article identifiers for thesis-card evidence linkage.
@@ -30,7 +31,9 @@ Inputs:
 - Watchlist loaded from shared schema table `shared.t_watchlist_tickers`.
 
 Outputs:
+- Rows in news_fetcher.t_input_news_articles.
 - Rows in news_fetcher.t_news_articles.
+- Rows in news_fetcher.t_news_filter_runs and news_fetcher.t_news_filter_results for the production baseline.
 - Optional rows in shared.t_api_usage for provider usage tracking.
 - Events published to news_raw_queue.
 
@@ -176,8 +179,9 @@ Normalization rules:
 
 Filter order:
 1. Structural validation.
-2. Watchlist and keyword relevance.
-3. Duplicate detection.
+2. Persist structurally valid normalized candidates into `t_input_news_articles`.
+3. Watchlist and keyword relevance.
+4. Duplicate detection.
 
 Relevance rules:
 - Keep if at least one ticker intersects watchlist.
@@ -211,15 +215,19 @@ Minimum required configuration:
 ## 8. Persistence Rules
 
 Primary table:
+- news_fetcher.t_input_news_articles
 - news_fetcher.t_news_articles
+- news_fetcher.t_news_filter_results
 
 Write policy:
-- Upsert by primary key id.
+- Persist all structurally valid normalized candidates to `t_input_news_articles`.
+- Persist production filter outcome for each candidate to `t_news_filter_results` under the production run.
+- Persist only accepted candidates to `t_news_articles`.
 - On conflict do not mutate source publication metadata.
 - Always preserve first seen fetched_at.
 
 Transaction policy:
-- For each accepted article, persist article row and create publication obligation in one database transaction.
+- For each batch, persist input-corpus rows, production filter-result rows, accepted article rows, and publication obligations in one database transaction.
 - Publisher worker claims pending obligations and publishes envelope to queue.
 - On successful publish, obligation transitions to `published`.
 - If publish fails, retry by incrementing `attempt_count` and preserving idempotent `dedupe_key`.
@@ -261,7 +269,7 @@ Published event schema:
   - sentiment_source
 
 Publish rules:
-- Publish only from durable obligations created after successful persistence.
+- Publish only for accepted articles from durable obligations created after successful persistence.
 - Use dedupe_key so consumers can enforce idempotency.
 - Retry publish using queue retry policy.
 - On retry exhaustion, send event envelope to failed_messages_dlq.

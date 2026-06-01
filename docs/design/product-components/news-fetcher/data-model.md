@@ -5,13 +5,36 @@ PostgreSQL schema: `news_fetcher`.
 
 ## Logical Model
 
+### `t_input_news_articles`
+
+Purpose:
+- Durable 30-day normalized input corpus for production filtering and offline filter simulation.
+
+Logical fields:
+- `id` (primary key): deterministic article identity.
+- `source`: source/provider identifier.
+- `source_event_id`: optional provider-native event id.
+- `headline`: normalized article title.
+- `summary`: optional short content summary.
+- `url`: canonical source URL.
+- `tickers`: normalized ticker list.
+- `published_at`: source publication timestamp.
+- `fetched_at`: ingestion timestamp.
+- `sentiment_source`: optional provider-supplied sentiment.
+- `created_at`: row creation timestamp.
+
+Behavioral constraints:
+- Stores all structurally valid normalized candidates before final production filter outcome is applied.
+- Retention target is 30 days.
+- Acts as the source corpus for simulation re-filtering.
+
 ### `t_news_articles`
 
 Purpose:
 - Durable audit trail of accepted canonical articles.
 
 Logical fields:
-- `id` (primary key): deterministic article identity.
+- `id` (primary key): deterministic article identity and foreign-key-compatible identifier from `t_input_news_articles`.
 - `source`: source/provider identifier.
 - `headline`: normalized article title.
 - `summary`: optional short content summary.
@@ -24,6 +47,46 @@ Logical fields:
 Behavioral constraints:
 - Idempotent upsert by `id`.
 - Preserve first-seen ingestion semantics during retries/replays.
+- Contains only the accepted subset of `t_input_news_articles`.
+
+### `t_news_filter_runs`
+
+Purpose:
+- Durable metadata for one filter execution context.
+
+Logical fields:
+- `filter_run_id` (primary key): stable filter-run identity.
+- `run_mode`: `production` or `simulation`.
+- `filter_config_fingerprint`: deterministic full-context fingerprint for the filter configuration.
+- `run_note`: optional operator note.
+- `created_at`: creation timestamp.
+- `last_used_at`: last execution timestamp for this run context.
+
+Behavioral constraints:
+- Production runs represent baseline writes from NewsFetcher.
+- Simulation runs are created by Filter Quality Evaluator and do not mutate production state.
+- One production run row may be reused for the same fingerprint.
+
+### `t_news_filter_results`
+
+Purpose:
+- One production or simulation filter outcome per article and filter run.
+
+Logical fields:
+- `filter_run_id`: parent filter run identity.
+- `article_id`: candidate article identity from `t_input_news_articles`.
+- `filter_outcome`: `accepted` or `rejected`.
+- `rejection_reason_code`: nullable machine-readable reason when rejected.
+- `matched_article_id`: nullable accepted-article id for dedupe rejections.
+- `similarity_score`: nullable dedupe similarity score.
+- `details_json`: structured audit metadata.
+- `created_at`: row creation timestamp.
+
+Behavioral constraints:
+- Primary key is (`filter_run_id`, `article_id`).
+- Every row must reference an existing `t_input_news_articles` row.
+- Production baseline writes come from NewsFetcher.
+- Simulation writes come from Filter Quality Evaluator and must not alter production baseline rows.
 
 ### `t_source_checkpoints`
 
@@ -158,5 +221,5 @@ Physical constraints (required):
 
 ## Notes
 
-- Executable PostgreSQL DDL is maintained in `src/product-components/news-fetcher/db/schema.sql`.
+- Executable PostgreSQL DDL is maintained in `src/product_components/news_fetcher/db/schema.sql`.
 - Design docs define logical ownership and behavior constraints; runtime DDL must come from source-managed SQL/migrations.

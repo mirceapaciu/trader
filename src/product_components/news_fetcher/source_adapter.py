@@ -45,8 +45,7 @@ class NewsSourceAdapter(InboundSourceAdapter):
             normalized = _normalize_article(article)
             if normalized is None:
                 continue
-            if not _is_relevant(normalized, self._filter):
-                continue
+            filter_outcome, rejection_reason_code = _evaluate_relevance(normalized, self._filter)
             events.append(
                 SourceEvent(
                     source=normalized.source,
@@ -60,6 +59,8 @@ class NewsSourceAdapter(InboundSourceAdapter):
                         "tickers": normalized.tickers,
                         "sentiment_source": normalized.sentiment_source,
                         "fetched_at": normalized.fetched_at.isoformat(),
+                        "pre_filter_outcome": filter_outcome,
+                        "pre_filter_reason_code": rejection_reason_code,
                     },
                 )
             )
@@ -110,17 +111,20 @@ def _normalize_article(article: ProviderArticle) -> _NormalizedArticle | None:
     )
 
 
-def _is_relevant(article: _NormalizedArticle, config: SourceFilterConfig) -> bool:
+def _evaluate_relevance(article: _NormalizedArticle, config: SourceFilterConfig) -> tuple[str, str | None]:
     text = f"{article.headline}\n{article.summary or ''}".lower()
 
     for keyword in config.exclude_keywords:
         if keyword in text:
-            return False
+            return "rejected", "rejected_excluded_keyword"
 
     if config.watchlist_tickers and any(ticker in config.watchlist_tickers for ticker in article.tickers):
-        return True
+        return "accepted", None
 
-    return any(keyword in text for keyword in config.include_keywords)
+    if any(keyword in text for keyword in config.include_keywords):
+        return "accepted", None
+
+    return "rejected", "rejected_not_relevant"
 
 
 def _to_utc(value):

@@ -69,13 +69,19 @@ def test_source_adapter_filters_and_maps_relevant_articles() -> None:
 
     assert provider.calls == [("finnhub", {"cursor": "old"}, 9)]
     assert batch.next_cursor == {"cursor": "next"}
-    assert len(batch.events) == 1
+    assert len(batch.events) == 2
 
     event = batch.events[0]
     assert event.source == "finnhub"
     assert event.canonical_locator.startswith("https://example.com/news/earnings")
     assert event.entities == ["AAPL"]
     assert event.attributes["sentiment_source"] == 0.42
+    assert event.attributes["pre_filter_outcome"] == "accepted"
+    assert event.attributes["pre_filter_reason_code"] is None
+
+    rejected_event = batch.events[1]
+    assert rejected_event.attributes["pre_filter_outcome"] == "rejected"
+    assert rejected_event.attributes["pre_filter_reason_code"] == "rejected_excluded_keyword"
 
 
 def test_source_adapter_drops_invalid_structural_records() -> None:

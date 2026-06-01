@@ -28,8 +28,8 @@ def _repo_root() -> Path:
 
 def _bootstrap_database_schema(settings: NewsFetcherSettings) -> None:
     schema_files = (
-        _repo_root() / "src" / "product-components" / "shared" / "db" / "schema.sql",
-        _repo_root() / "src" / "product-components" / "news-fetcher" / "db" / "schema.sql",
+        _repo_root() / "src" / "product_components" / "shared" / "db" / "schema.sql",
+        _repo_root() / "src" / "product_components" / "news_fetcher" / "db" / "schema.sql",
     )
 
     with closing(psycopg.connect(settings.postgres_dsn)) as connection:
