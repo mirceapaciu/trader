@@ -36,7 +36,7 @@ Outputs:
 
 Delivery semantics:
 - On-demand execution only. The process is not a continuously running consumer.
-- Idempotent run creation based on an explicit run id generated at trigger time.
+- Idempotent run creation for the evaluator run record based on an explicit run id generated at trigger time.
 
 ## 3. Triggering and Run Lifecycle
 - Direct CLI execution of `filter_quality_evaluator`.
@@ -60,6 +60,9 @@ Run policy:
 - A run evaluates one immutable dataset snapshot defined by the parameters.
 - A run may be retried by creating a new run id, not by mutating completed results.
 - A direct CLI invocation creates exactly one run request.
+- Evaluator `run_id` is unique per invocation and is not reused across retries.
+- Production baseline `filter_run_id` is reused when `filter_config_fingerprint` is unchanged.
+- When production fingerprint changes, a new production `filter_run_id` is created.
 
 ## 4. Evaluation Dataset Rules
 
