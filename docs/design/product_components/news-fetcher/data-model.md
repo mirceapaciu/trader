@@ -58,6 +58,7 @@ Logical fields:
 - `filter_run_id` (primary key): stable filter-run identity.
 - `run_mode`: `production` or `simulation`.
 - `filter_config_fingerprint`: deterministic full-context fingerprint for the filter configuration.
+- `filter_config_snapshot_json`: immutable effective filter configuration used for this run; populated for simulation runs and optional for production runs when a full snapshot is persisted.
 - `run_note`: optional operator note.
 - `created_at`: creation timestamp.
 - `last_used_at`: last execution timestamp for this run context.
@@ -66,6 +67,9 @@ Behavioral constraints:
 - Production runs represent baseline writes from NewsFetcher.
 - Simulation runs are created by Filter Quality Evaluator and do not mutate production state.
 - One production run row may be reused for the same fingerprint.
+- Simulation configuration must be applied only to the simulation run identified by `filter_run_id`; NewsFetcher must not read simulation overrides from global environment variables.
+- The effective filter configuration for a simulation run is the immutable JSON snapshot stored with that run.
+- Production execution continues to read the active production configuration source and is not affected by simulation snapshots.
 
 ### `t_news_filter_results`
 

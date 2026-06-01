@@ -46,6 +46,7 @@ Trigger payload:
 - news_window_start_at (UTC)
 - news_window_end_at (UTC) should be lower than the timestamp of the newest news
 - filter_config_fingerprint (optional)
+- filter_config_snapshot_json (optional; required when running a simulation with overrides not already present in the active NewsFetcher production configuration)
 - run_note (optional)
 - accepted_audit_enabled (optional, default false)
 - accepted_audit_sample_size (optional, required when accepted_audit_enabled=true)
@@ -70,6 +71,21 @@ Population contract:
 - Input population: structurally valid normalized candidates from the last retained 30 days.
 - Production baseline: NewsFetcher results recorded under a `production` filter run.
 - Simulation population: results written under a new `simulation` filter run created for the requested configuration.
+
+Dataset join and matching rules:
+- Canonical join key is `article_id`, sourced from `news_fetcher.t_input_news_articles.id`.
+- The evaluator first materializes the selected input slice from `t_input_news_articles`, then left-joins the corresponding baseline and simulation rows from `t_news_filter_results`.
+- The evaluator creates the simulation filter run with a run-scoped immutable `filter_config_snapshot_json` payload; this payload is stored on the simulation run row and is never written into global NewsFetcher configuration.
+- Baseline rows are selected from exactly one production filter run:
+	- if `filter_config_fingerprint` is provided, use the unique production run with the same fingerprint;
+	- otherwise use the most recently created production run that covers the selected news window.
+- Simulation rows are selected from the single simulation run created for the current evaluator run id.
+- A row participates in comparison only when the input article exists and both baseline and simulation rows can be matched by `(filter_run_id, article_id)`.
+- If the baseline row is missing, the item is recorded as a failed item with `item_error_code = missing_production_result`.
+- If the simulation row is missing, the item is recorded as a failed item with `item_error_code = missing_simulation_result`.
+- If both rows exist, the evaluator compares `filter_outcome` values to determine `is_disagreement`.
+- If either row is present more than once for the same `(filter_run_id, article_id)`, the run fails with a hard data-integrity error because `t_news_filter_results` must be unique on that pair.
+- Rejection reason analysis uses the baseline row for production behavior and the simulation row for proposed behavior; the simulation row wins for the saved `rejection_reason_code` when the simulated outcome is `rejected`.
 
 Rejection reason taxonomy expected from NewsFetcher:
 - rejected_structural_invalid
