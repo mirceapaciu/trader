@@ -29,8 +29,10 @@ Inputs:
 - LLM provider credentials and policy.
 
 Outputs:
-- Run summary rows and per-item evaluation rows in analyzer-owned schema.
-- Human-readable recommendation summary for operators.
+- Run summary rows in `filter_quality_evaluator.t_filter_quality_runs`.
+- Per-item evaluation rows in `filter_quality_evaluator.t_filter_quality_item_assessments`.
+- Human-readable recommendation summary in `filter_quality_evaluator.t_filter_quality_runs.recommendation_summary_md`.
+- Concrete physical output contract is defined in `docs/design/product_components/filter-quality-evaluator/data-model.md`.
 
 Delivery semantics:
 - On-demand execution only. The process is not a continuously running consumer.

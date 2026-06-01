@@ -11,30 +11,40 @@ Purpose:
 - Durable metadata and summary for one on-demand quality evaluation run.
 
 Logical fields:
-- `run_id` (primary key): stable run identity.
+- `run_id` (primary key): stable run identity created at trigger time.
 - `news_window_start_at`: evaluated news-time lower bound (UTC).
 - `news_window_end_at`: evaluated news-time upper bound (UTC).
+- `dataset_snapshot_hash`: deterministic hash of the selected dataset membership.
 - `filter_config_fingerprint`: optional exact-match fingerprint constraint.
-- `trigger_mode`: run trigger source, for example `manual_cli`.
+- `trigger_mode`: run trigger source (`manual_cli` in v1).
+- `run_note`: optional operator note from trigger payload.
 - `accepted_audit_enabled`: whether accepted-item audit mode is enabled for this run.
 - `accepted_audit_sample_size`: configured accepted-item sample size for this run.
-- `status`: `queued`, `running`, `completed`, `failed`, or `canceled`.
+- `status`: `running`, `completed`, or `failed`.
 - `error_code`: nullable machine-readable terminal error.
-- `accepted_count`: accepted population count for dataset slice.
-- `rejected_count`: rejected population count for dataset slice.
-- `incorrect_rejection_count`: rejected items classified as incorrectly rejected.
-- `correct_rejection_count`: rejected items classified as correctly rejected.
+- `error_details_json`: nullable structured terminal error context.
+- `dataset_input_count`: number of input candidates in the selected window/fingerprint slice.
+- `dataset_rejected_count`: rejected population count for the selected slice.
+- `dataset_accepted_count`: accepted population count for the selected slice.
+- `rejected_items_evaluated`: rejected items actually evaluated by LLM.
 - `accepted_items_sampled`: accepted items actually evaluated in this run.
-- `incorrect_accepted_count`: accepted items classified as incorrectly accepted.
-- `correct_accepted_count`: accepted items classified as correctly accepted.
-- `incorrect_accepted_rate_estimate`: estimated false-positive rate over accepted population.
+- `correctly_rejected_count`: rejected items classified as correctly rejected.
+- `incorrectly_rejected_count`: rejected items classified as incorrectly rejected.
+- `correctly_accepted_count`: accepted items classified as correctly accepted.
+- `incorrectly_accepted_count`: accepted items classified as incorrectly accepted.
+- `rejection_precision_proxy`: proxy precision metric for rejected items.
+- `incorrectly_accepted_rate_estimate`: estimated false-positive rate over accepted population.
 - `estimated_noisy_accepted_count`: estimated noisy accepted items in the full run population.
 - `estimated_downstream_tokens_wasted`: estimated downstream trading-LLM token waste.
 - `estimated_downstream_llm_cost_wasted`: estimated downstream trading-LLM cost waste.
+- `token_budget_limit`: configured per-run token ceiling.
+- `tokens_used_input`: summed prompt/input tokens consumed by evaluator calls.
+- `tokens_used_output`: summed completion/output tokens consumed by evaluator calls.
 - `summary_json`: structured run-level metrics and recommendation aggregates.
-- `created_at`: creation timestamp.
+- `recommendation_summary_md`: human-readable recommendation summary for operators.
+- `created_at`: row creation timestamp.
 - `started_at`: execution start timestamp.
-- `finished_at`: execution completion timestamp.
+- `finished_at`: terminal timestamp.
 
 Behavioral constraints:
 - One immutable row per run id.
@@ -44,14 +54,24 @@ Behavioral constraints:
 ### `t_filter_quality_item_assessments`
 
 Purpose:
-- Per-item classification and recommendation output for each evaluated rejected item.
+- Per-item classification and recommendation output for each evaluated article in rejected-population and accepted-audit scopes.
 
 Logical fields:
 - `assessment_id` (primary key): stable assessment identity.
 - `run_id`: parent run identity.
-- `source_article_id`: evaluated article identifier from NewsFetcher.
-- `source_key`: source stream key from NewsFetcher.
-- `rejection_reason_code`: NewsFetcher rejection reason when the item was rejected; nullable for accepted-item audits.
+- `article_id`: evaluated article identifier from NewsFetcher.
+- `evaluation_scope`: `rejected_population` or `accepted_audit`.
+- `source`: source/provider identifier copied from input corpus.
+- `published_at`: publication timestamp copied from input corpus.
+- `filter_run_id_production`: production filter run used for baseline lookup.
+- `filter_run_id_simulation`: simulation filter run used for comparison.
+- `production_filter_outcome`: baseline filter outcome (`accepted` or `rejected`).
+- `simulation_filter_outcome`: simulation filter outcome (`accepted` or `rejected`).
+- `is_disagreement`: whether production and simulation outcomes differ.
+- `rejection_reason_code`: rejection reason selected from simulation result when rejected; nullable for accepted-item audits.
+- `item_status`: `evaluated` or `failed`.
+- `item_error_code`: nullable machine-readable per-item evaluation error code.
+- `item_error_details_json`: nullable structured per-item error context.
 - `classification_label`: `correctly_rejected`, `incorrectly_rejected`, `correctly_accepted`, or `incorrectly_accepted`.
 - `classification_confidence`: normalized confidence in [0, 1].
 - `rationale`: explanation text.
@@ -59,13 +79,144 @@ Logical fields:
 - `improvement_suggestion`: actionable recommendation text.
 - `suggestion_json`: structured recommendation payload.
 - `llm_model`: model identifier used for evaluation.
-- `tokens_used`: optional token usage.
+- `tokens_used_input`: optional input token usage for this item.
+- `tokens_used_output`: optional output token usage for this item.
 - `evaluated_at`: assessment timestamp.
 
 Behavioral constraints:
-- Each run can include at most one final assessment per `source_article_id`.
+- Each run can include at most one final assessment per `article_id`.
 - `run_id` must reference an existing run.
 - Classification and confidence must follow contract bounds.
+
+## Physical Contract (Required for v1)
+
+The following physical definitions are the required output contract for implementation.
+
+### `filter_quality_evaluator.t_filter_quality_runs`
+
+Columns:
+- `run_id TEXT PRIMARY KEY`
+- `news_window_start_at TIMESTAMPTZ NOT NULL`
+- `news_window_end_at TIMESTAMPTZ NOT NULL`
+- `dataset_snapshot_hash TEXT NOT NULL`
+- `filter_config_fingerprint TEXT NULL`
+- `trigger_mode TEXT NOT NULL DEFAULT 'manual_cli'`
+- `run_note TEXT NULL`
+- `accepted_audit_enabled BOOLEAN NOT NULL DEFAULT FALSE`
+- `accepted_audit_sample_size INTEGER NULL`
+- `status TEXT NOT NULL`
+- `error_code TEXT NULL`
+- `error_details_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `dataset_input_count INTEGER NOT NULL DEFAULT 0`
+- `dataset_rejected_count INTEGER NOT NULL DEFAULT 0`
+- `dataset_accepted_count INTEGER NOT NULL DEFAULT 0`
+- `rejected_items_evaluated INTEGER NOT NULL DEFAULT 0`
+- `accepted_items_sampled INTEGER NOT NULL DEFAULT 0`
+- `correctly_rejected_count INTEGER NOT NULL DEFAULT 0`
+- `incorrectly_rejected_count INTEGER NOT NULL DEFAULT 0`
+- `correctly_accepted_count INTEGER NOT NULL DEFAULT 0`
+- `incorrectly_accepted_count INTEGER NOT NULL DEFAULT 0`
+- `rejection_precision_proxy NUMERIC(6,5) NULL`
+- `incorrectly_accepted_rate_estimate NUMERIC(6,5) NULL`
+- `estimated_noisy_accepted_count INTEGER NULL`
+- `estimated_downstream_tokens_wasted BIGINT NULL`
+- `estimated_downstream_llm_cost_wasted NUMERIC(18,8) NULL`
+- `token_budget_limit INTEGER NOT NULL`
+- `tokens_used_input INTEGER NOT NULL DEFAULT 0`
+- `tokens_used_output INTEGER NOT NULL DEFAULT 0`
+- `summary_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `recommendation_summary_md TEXT NOT NULL DEFAULT ''`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `finished_at TIMESTAMPTZ NULL`
+
+Check constraints:
+- `trigger_mode IN ('manual_cli')`
+- `status IN ('running', 'completed', 'failed')`
+- `news_window_start_at < news_window_end_at`
+- `dataset_snapshot_hash <> ''`
+- `accepted_audit_sample_size IS NULL OR accepted_audit_sample_size > 0`
+- `accepted_audit_enabled = TRUE OR accepted_audit_sample_size IS NULL`
+- all count fields are `>= 0`
+- `token_budget_limit > 0`
+- `tokens_used_input >= 0 AND tokens_used_output >= 0`
+- `rejection_precision_proxy IS NULL OR (rejection_precision_proxy >= 0 AND rejection_precision_proxy <= 1)`
+- `incorrectly_accepted_rate_estimate IS NULL OR (incorrectly_accepted_rate_estimate >= 0 AND incorrectly_accepted_rate_estimate <= 1)`
+- terminal completion consistency:
+	- if `status = 'running'`, then `finished_at IS NULL`
+	- if `status IN ('completed', 'failed')`, then `finished_at IS NOT NULL`
+
+Required indexes:
+- run-time listing: `(status, created_at DESC, run_id)`
+- window query: `(news_window_start_at, news_window_end_at, created_at DESC)`
+- fingerprint compare query: `(filter_config_fingerprint, created_at DESC, run_id)`
+
+### `filter_quality_evaluator.t_filter_quality_item_assessments`
+
+Columns:
+- `assessment_id TEXT PRIMARY KEY`
+- `run_id TEXT NOT NULL`
+- `article_id TEXT NOT NULL`
+- `evaluation_scope TEXT NOT NULL`
+- `source TEXT NOT NULL`
+- `published_at TIMESTAMPTZ NOT NULL`
+- `filter_run_id_production TEXT NOT NULL`
+- `filter_run_id_simulation TEXT NOT NULL`
+- `production_filter_outcome TEXT NOT NULL`
+- `simulation_filter_outcome TEXT NOT NULL`
+- `is_disagreement BOOLEAN NOT NULL`
+- `rejection_reason_code TEXT NULL`
+- `item_status TEXT NOT NULL`
+- `item_error_code TEXT NULL`
+- `item_error_details_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `classification_label TEXT NULL`
+- `classification_confidence NUMERIC(6,5) NULL`
+- `rationale TEXT NULL`
+- `probable_cause TEXT NULL`
+- `improvement_suggestion TEXT NULL`
+- `suggestion_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `llm_model TEXT NULL`
+- `tokens_used_input INTEGER NULL`
+- `tokens_used_output INTEGER NULL`
+- `evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+
+Foreign keys:
+- `run_id -> filter_quality_evaluator.t_filter_quality_runs(run_id) ON DELETE CASCADE`
+- `article_id -> news_fetcher.t_input_news_articles(id) ON DELETE CASCADE`
+- `(filter_run_id_production, article_id) -> news_fetcher.t_news_filter_results(filter_run_id, article_id)`
+- `(filter_run_id_simulation, article_id) -> news_fetcher.t_news_filter_results(filter_run_id, article_id)`
+
+Uniqueness:
+- `UNIQUE (run_id, article_id)`
+
+Check constraints:
+- `evaluation_scope IN ('rejected_population', 'accepted_audit')`
+- `production_filter_outcome IN ('accepted', 'rejected')`
+- `simulation_filter_outcome IN ('accepted', 'rejected')`
+- `item_status IN ('evaluated', 'failed')`
+- if `item_status = 'failed'`, then `classification_label IS NULL`
+- if `item_status = 'evaluated'`, then:
+	- `classification_label IS NOT NULL`
+	- `classification_confidence IS NOT NULL`
+	- `classification_confidence >= 0 AND classification_confidence <= 1`
+- `classification_label IS NULL OR classification_label IN ('correctly_rejected', 'incorrectly_rejected', 'correctly_accepted', 'incorrectly_accepted')`
+- scope-label consistency:
+	- `evaluation_scope = 'rejected_population'` allows only `correctly_rejected` or `incorrectly_rejected`
+	- `evaluation_scope = 'accepted_audit'` allows only `correctly_accepted` or `incorrectly_accepted`
+- `probable_cause IS NULL OR probable_cause IN ('keyword_gap', 'watchlist_coverage_gap', 'dedupe_threshold_issue', 'rule_conflict', 'low_value_noise')`
+- `tokens_used_input IS NULL OR tokens_used_input >= 0`
+- `tokens_used_output IS NULL OR tokens_used_output >= 0`
+
+Required indexes:
+- by run and scope: `(run_id, evaluation_scope, item_status, article_id)`
+- disagreement triage: `(run_id, is_disagreement, simulation_filter_outcome, article_id)`
+- rejected reason analysis: `(run_id, rejection_reason_code, article_id)`
+
+Write semantics:
+- Insert run row first with `status='running'`.
+- Insert item rows incrementally as each item reaches `evaluated` or `failed` terminal per-item state.
+- Update run aggregate counters and summaries in-place during execution.
+- Finalize run with terminal `status` and `finished_at`; no further item writes after terminal transition.
 
 ## External Read Dependencies (Not Owned)
 
