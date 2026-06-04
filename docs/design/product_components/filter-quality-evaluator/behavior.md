@@ -149,6 +149,63 @@ Run-level output:
 - dataset_accepted_count and accepted_items_sampled
 - incorrectly_accepted_rate_estimate
 
+### 6.1 Executable Metric Formulas (Normative)
+
+The following formulas are normative for run-level outputs written to
+`filter_quality_evaluator.t_filter_quality_runs` and `summary_json`.
+
+Base symbols (all from run-level persisted counters):
+- R_eval = `rejected_items_evaluated`
+- R_ok = `correctly_rejected_count`
+- R_bad = `incorrectly_rejected_count`
+- A_sample = `accepted_items_sampled`
+- A_ok = `correctly_accepted_count`
+- A_bad = `incorrectly_accepted_count`
+- A_total = `dataset_accepted_count`
+
+Required consistency checks before metric finalization:
+- `R_eval = R_ok + R_bad`
+- `A_sample = A_ok + A_bad`
+- `R_eval <= dataset_rejected_count`
+- `A_sample <= A_total`
+
+If any check fails, the run must finalize as `failed` with a machine-readable
+error code and must not publish derived rate metrics.
+
+Formula 1: rejection_precision_proxy
+- Definition: precision proxy over rejected-population evaluations.
+- Equation: `rejection_precision_proxy = R_ok / R_eval`.
+- Zero-denominator rule: if `R_eval = 0`, store `NULL`.
+- Storage rounding: round to 5 decimal places (half-up).
+
+Formula 2: incorrectly_accepted_rate_estimate
+- Definition: estimated accepted-population error rate using accepted-audit sample.
+- Equation: `incorrectly_accepted_rate_estimate = A_bad / A_sample`.
+- Zero-denominator rule: if `A_sample = 0`, store `NULL`.
+- Storage rounding: round to 5 decimal places (half-up).
+
+Formula 3: accepted_audit_coverage_ratio (summary_json only)
+- Definition: accepted-population sampling coverage ratio for interpretation.
+- Equation: `accepted_audit_coverage_ratio = A_sample / A_total`.
+- Zero-denominator rule: if `A_total = 0`, store `NULL`.
+- Serialization rounding in `summary_json`: round to 5 decimal places (half-up).
+
+Formula 4: accepted_audit_enabled_effective (summary_json only)
+- Definition: effective accepted-audit execution flag.
+- Equation:
+	- `true` when `accepted_audit_enabled = true` and `A_sample > 0`.
+	- `false` otherwise.
+
+Deterministic ranking rules for non-scalar run-level outputs:
+- Top rejection-reason error drivers:
+	- Group rejected-population items where `item_status='evaluated'` and
+		`classification_label='incorrectly_rejected'` by `rejection_reason_code`.
+	- Sort by `count DESC`, then `rejection_reason_code ASC`.
+- Grouped recommendations ordered by estimated impact:
+	- Group incorrectly rejected items by `probable_cause`.
+	- Primary order key: group count DESC.
+	- Tie-break key: `probable_cause ASC`.
+
 ## 7. Configuration Fingerprint Contract
 
 Fingerprint purpose:
