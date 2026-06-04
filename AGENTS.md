@@ -68,7 +68,7 @@ When behavior changes, update relevant docs in docs or README as needed.
 
 ### Creating new issues for bugs or features
 
-For non-trivial bug fixes or features, create an entry in docs/issues/issues-index.md with the status=new and a detail file under docs/issues/issues-detail with:
+If the user is explicitly requesting you to create an issue for a  bug fix or a feature, create an entry in docs/issues/issues-index.md with the status=new and a detail file under docs/issues/issues-detail with:
 - clear problem statement
 - verified evidence
 - expected behavior
