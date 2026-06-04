@@ -107,8 +107,8 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_item_assess
     published_at TIMESTAMPTZ NOT NULL,
     filter_run_id_production TEXT NOT NULL,
     filter_run_id_simulation TEXT NOT NULL,
-    production_filter_outcome TEXT NOT NULL,
-    simulation_filter_outcome TEXT NOT NULL,
+    production_filter_outcome TEXT,
+    simulation_filter_outcome TEXT,
     is_disagreement BOOLEAN NOT NULL,
     rejection_reason_code TEXT,
     item_status TEXT NOT NULL,
@@ -132,18 +132,12 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_item_assess
         FOREIGN KEY (article_id)
         REFERENCES news_fetcher.t_input_news_articles (id)
         ON DELETE CASCADE,
-    CONSTRAINT fk_filter_quality_item_assessments_prod_result
-        FOREIGN KEY (filter_run_id_production, article_id)
-        REFERENCES news_fetcher.t_news_filter_results (filter_run_id, article_id),
-    CONSTRAINT fk_filter_quality_item_assessments_sim_result
-        FOREIGN KEY (filter_run_id_simulation, article_id)
-        REFERENCES news_fetcher.t_news_filter_results (filter_run_id, article_id),
     CONSTRAINT ck_filter_quality_item_assessments_scope
         CHECK (evaluation_scope IN ('rejected_population', 'accepted_audit')),
     CONSTRAINT ck_filter_quality_item_assessments_prod_outcome
-        CHECK (production_filter_outcome IN ('accepted', 'rejected')),
+        CHECK (production_filter_outcome IS NULL OR production_filter_outcome IN ('accepted', 'rejected')),
     CONSTRAINT ck_filter_quality_item_assessments_sim_outcome
-        CHECK (simulation_filter_outcome IN ('accepted', 'rejected')),
+        CHECK (simulation_filter_outcome IS NULL OR simulation_filter_outcome IN ('accepted', 'rejected')),
     CONSTRAINT ck_filter_quality_item_assessments_item_status
         CHECK (item_status IN ('evaluated', 'failed')),
     CONSTRAINT ck_filter_quality_item_assessments_label_enum
@@ -169,6 +163,8 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_item_assess
                 AND classification_confidence IS NOT NULL
                 AND classification_confidence >= 0
                 AND classification_confidence <= 1
+                AND production_filter_outcome IS NOT NULL
+                AND simulation_filter_outcome IS NOT NULL
             )
         ),
     CONSTRAINT ck_filter_quality_item_assessments_scope_label_consistency
@@ -201,6 +197,18 @@ CREATE TABLE IF NOT EXISTS filter_quality_evaluator.t_filter_quality_item_assess
             )
         )
 );
+
+ALTER TABLE filter_quality_evaluator.t_filter_quality_item_assessments
+    DROP CONSTRAINT IF EXISTS fk_filter_quality_item_assessments_prod_result;
+
+ALTER TABLE filter_quality_evaluator.t_filter_quality_item_assessments
+    DROP CONSTRAINT IF EXISTS fk_filter_quality_item_assessments_sim_result;
+
+ALTER TABLE filter_quality_evaluator.t_filter_quality_item_assessments
+    ALTER COLUMN production_filter_outcome DROP NOT NULL;
+
+ALTER TABLE filter_quality_evaluator.t_filter_quality_item_assessments
+    ALTER COLUMN simulation_filter_outcome DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_filter_quality_item_assessments_run_scope_status
     ON filter_quality_evaluator.t_filter_quality_item_assessments (

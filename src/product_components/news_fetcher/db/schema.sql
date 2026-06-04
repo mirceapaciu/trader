@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_runs (
     filter_run_id TEXT PRIMARY KEY,
     run_mode TEXT NOT NULL,
     filter_config_fingerprint TEXT NOT NULL,
+    filter_config_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    run_note TEXT,
     window_start_at TIMESTAMPTZ,
     window_end_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -32,6 +34,12 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_runs (
 
 ALTER TABLE news_fetcher.t_news_filter_runs
     DROP COLUMN IF EXISTS triggered_by;
+
+ALTER TABLE news_fetcher.t_news_filter_runs
+    ADD COLUMN IF NOT EXISTS filter_config_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE news_fetcher.t_news_filter_runs
+    ADD COLUMN IF NOT EXISTS run_note TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_news_filter_runs_mode_created_at
     ON news_fetcher.t_news_filter_runs (run_mode, created_at DESC);

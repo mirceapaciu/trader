@@ -54,6 +54,8 @@ class FilterRun:
     filter_run_id: str
     run_mode: FilterRunMode
     filter_config_fingerprint: str
+    filter_config_snapshot_json: dict[str, Any] = field(default_factory=dict)
+    run_note: str | None = None
     window_start_at: datetime | None = None
     window_end_at: datetime | None = None
 

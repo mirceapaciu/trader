@@ -115,11 +115,14 @@ class PostgresNewsStorageAdapter(StorageAdapter):
     ) -> None:
         filter_run_sql = (
             f"INSERT INTO {self._news_schema}.t_news_filter_runs "
-            f"(filter_run_id, run_mode, filter_config_fingerprint, window_start_at, window_end_at) "
-            f"VALUES (%s, %s, %s, %s, %s) "
+            f"(filter_run_id, run_mode, filter_config_fingerprint, filter_config_snapshot_json, "
+            f"run_note, window_start_at, window_end_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (filter_run_id) DO UPDATE SET "
             f"run_mode = EXCLUDED.run_mode, "
             f"filter_config_fingerprint = EXCLUDED.filter_config_fingerprint, "
+            f"filter_config_snapshot_json = EXCLUDED.filter_config_snapshot_json, "
+            f"run_note = EXCLUDED.run_note, "
             f"window_start_at = EXCLUDED.window_start_at, "
             f"window_end_at = EXCLUDED.window_end_at, "
             f"updated_at = NOW()"
@@ -156,6 +159,8 @@ class PostgresNewsStorageAdapter(StorageAdapter):
                     filter_run.filter_run_id,
                     filter_run.run_mode.value,
                     filter_run.filter_config_fingerprint,
+                    Json(filter_run.filter_config_snapshot_json),
+                    filter_run.run_note,
                     filter_run.window_start_at,
                     filter_run.window_end_at,
                 ),

@@ -20,6 +20,21 @@ class SourceFilterConfig:
     exclude_keywords: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class NormalizedNewsArticle:
+    """Normalized article fields needed by NewsFetcher filtering."""
+
+    source: str
+    provider_event_id: str | None
+    headline: str
+    summary: str | None
+    url: str
+    tickers: list[str]
+    published_at: Any
+    fetched_at: Any
+    sentiment_source: float | None
+
+
 class NewsSourceAdapter(InboundSourceAdapter):
     """Adapts provider payloads into the generic ingestion-engine source contract."""
 
@@ -71,20 +86,7 @@ class NewsSourceAdapter(InboundSourceAdapter):
         )
 
 
-@dataclass(frozen=True)
-class _NormalizedArticle:
-    source: str
-    provider_event_id: str | None
-    headline: str
-    summary: str | None
-    url: str
-    tickers: list[str]
-    published_at: Any
-    fetched_at: Any
-    sentiment_source: float | None
-
-
-def _normalize_article(article: ProviderArticle) -> _NormalizedArticle | None:
+def _normalize_article(article: ProviderArticle) -> NormalizedNewsArticle | None:
     source = article.source.strip().lower()
     headline = " ".join(article.headline.strip().split())
     if not source or not headline:
@@ -98,7 +100,7 @@ def _normalize_article(article: ProviderArticle) -> _NormalizedArticle | None:
     tickers = sorted({ticker.strip().upper() for ticker in article.tickers if ticker.strip()})
     summary = " ".join(article.summary.strip().split()) if article.summary else None
 
-    return _NormalizedArticle(
+    return NormalizedNewsArticle(
         source=source,
         provider_event_id=article.provider_event_id,
         headline=headline,
@@ -111,7 +113,11 @@ def _normalize_article(article: ProviderArticle) -> _NormalizedArticle | None:
     )
 
 
-def _evaluate_relevance(article: _NormalizedArticle, config: SourceFilterConfig) -> tuple[str, str | None]:
+def evaluate_relevance(
+    article: NormalizedNewsArticle,
+    config: SourceFilterConfig,
+) -> tuple[str, str | None]:
+    """Evaluate NewsFetcher relevance rules for one normalized article."""
     text = f"{article.headline}\n{article.summary or ''}".lower()
 
     for keyword in config.exclude_keywords:
@@ -125,6 +131,10 @@ def _evaluate_relevance(article: _NormalizedArticle, config: SourceFilterConfig)
         return "accepted", None
 
     return "rejected", "rejected_not_relevant"
+
+
+def _evaluate_relevance(article: NormalizedNewsArticle, config: SourceFilterConfig) -> tuple[str, str | None]:
+    return evaluate_relevance(article, config)
 
 
 def _to_utc(value):

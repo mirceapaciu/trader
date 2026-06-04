@@ -78,7 +78,10 @@ class InMemoryStorage(StorageAdapter):
         *,
         source_key: str,
         batch_id: str,
+        filter_run,
+        candidate_events,
         accepted_events,
+        filter_results,
         obligations,
     ) -> None:
         for event in accepted_events:
