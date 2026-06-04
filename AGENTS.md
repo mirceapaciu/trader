@@ -1,4 +1,4 @@
-# Copilot Instructions for Trader
+# Agent Instructions for Trader
 
 ## Project Context
 - This repository contains an AI-powered Trading Bot.
