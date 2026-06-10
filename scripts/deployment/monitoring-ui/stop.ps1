@@ -28,7 +28,7 @@ function Stop-MonitoringProcess {
     }
 
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $LogFile -Value "[$timestamp] stopping $Name via PID $rawPid"
+    Out-File -LiteralPath $LogFile -InputObject "[$timestamp] stopping $Name via PID $rawPid" -Append -Encoding utf8
 
     cmd.exe /c "taskkill /PID $rawPid /T /F" | Out-Null
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue

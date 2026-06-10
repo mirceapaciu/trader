@@ -34,10 +34,14 @@ class OpenAIResponsesClient:
         response = client.responses.create(
             model=model,
             input=prompt,
+            instructions="Return only a JSON object that matches the requested schema.",
             max_output_tokens=max_output_tokens,
+            text={"format": _CLASSIFIER_RESPONSE_FORMAT},
+            temperature=0,
+            store=False,
         )
         text = getattr(response, "output_text", "")
-        return json.loads(text)
+        return _load_json_object(text)
 
 
 @dataclass
@@ -96,7 +100,6 @@ def _build_prompt(
                 "rationale",
                 "probable_cause",
                 "improvement_suggestion",
-                "suggestion_json",
             ],
             "scope": scope.value,
             "article": {
@@ -159,3 +162,68 @@ def _parse_result(raw: dict[str, Any], *, scope: EvaluationScope, model: str) ->
 def _estimate_tokens(*parts: str) -> int:
     # Conservative local estimate for budget gating before the provider returns usage.
     return max(1, sum(len(part) for part in parts) // 4)
+
+
+def _load_json_object(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if not stripped:
+        raise json.JSONDecodeError("empty classifier response", text, 0)
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        payload = json.loads(stripped[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("classifier_response_not_object")
+    return payload
+
+
+_CLASSIFIER_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "name": "filter_quality_classification",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "classification_label",
+            "classification_confidence",
+            "rationale",
+            "probable_cause",
+            "improvement_suggestion",
+            "estimated_tokens",
+        ],
+        "properties": {
+            "classification_label": {
+                "type": "string",
+                "enum": [
+                    "correctly_rejected",
+                    "incorrectly_rejected",
+                    "correctly_accepted",
+                    "incorrectly_accepted",
+                ],
+            },
+            "classification_confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+            },
+            "rationale": {"type": "string"},
+            "probable_cause": {
+                "type": "string",
+                "enum": [
+                    "keyword_gap",
+                    "watchlist_coverage_gap",
+                    "dedupe_threshold_issue",
+                    "rule_conflict",
+                    "low_value_noise",
+                ],
+            },
+            "improvement_suggestion": {"type": "string"},
+            "estimated_tokens": {"type": "integer", "minimum": 0},
+        },
+    },
+}

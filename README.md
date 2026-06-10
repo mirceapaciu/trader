@@ -59,6 +59,7 @@ Architecture boundaries and detailed ownership are maintained in
    - PID files: `logs/monitoring-ui-backend.pid`, `logs/monitoring-ui-frontend.pid`
    - Optional PowerShell ports: `scripts/deployment/monitoring-ui/start.ps1 -BackendPort 8091 -FrontendPort 5175`
    - Optional Bash ports: `scripts/deployment/monitoring-ui/start.sh 8091 5175`
+   - The Filter Quality panel starts an in-process evaluator run for the last 24 hours. Accepted-audit sampling is off by default; results are persisted in `filter_quality_evaluator.t_filter_quality_runs`.
 
 News-fetcher source toggles are configured in `.env.news-fetcher` (see `.env.news-fetcher.example`):
 - `NEWS_SOURCE_FINNHUB_ENABLED=true|false`

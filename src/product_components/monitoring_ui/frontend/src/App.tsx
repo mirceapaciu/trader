@@ -1,20 +1,46 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   fetchBacklog,
   fetchDeadLetters,
+  fetchFilterQualityIncorrectlyRejected,
   fetchHealth,
+  fetchFilterQualityStatus,
   fetchProviders,
   fetchThroughput,
+  startFilterQualityRun,
+  type FilterQualityIncorrectlyRejectedItem,
+  type FilterQualityRunSummary,
   type HealthState
 } from "./api";
 
 export function App() {
+  const queryClient = useQueryClient();
+  const [incorrectlyRejectedOpen, setIncorrectlyRejectedOpen] = useState(false);
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
   const providers = useQuery({ queryKey: ["providers"], queryFn: fetchProviders, refetchInterval: 10000 });
   const throughput = useQuery({ queryKey: ["throughput", "1h"], queryFn: () => fetchThroughput("1h") });
   const backlog = useQuery({ queryKey: ["backlog"], queryFn: fetchBacklog, refetchInterval: 20000 });
   const deadLetters = useQuery({ queryKey: ["dead-letter"], queryFn: fetchDeadLetters, refetchInterval: 20000 });
+  const filterQuality = useQuery({
+    queryKey: ["filter-quality"],
+    queryFn: fetchFilterQualityStatus,
+    refetchInterval: 10000
+  });
+  const lastFilterQualityRunId = filterQuality.data?.last_run?.run_id;
+  const incorrectlyRejected = useQuery({
+    queryKey: ["filter-quality", lastFilterQualityRunId, "incorrectly-rejected"],
+    queryFn: () => fetchFilterQualityIncorrectlyRejected(lastFilterQualityRunId ?? ""),
+    enabled: incorrectlyRejectedOpen && Boolean(lastFilterQualityRunId)
+  });
+  const startFilterQuality = useMutation({
+    mutationFn: startFilterQualityRun,
+    onSuccess: () => {
+      setIncorrectlyRejectedOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["filter-quality"] });
+    }
+  });
 
   const chartRows =
     throughput.data?.buckets.map((bucket) => ({
@@ -153,6 +179,40 @@ export function App() {
           </div>
         </div>
       </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div className="heading-with-state">
+            <h2>Filter Quality</h2>
+            <span className={`state-pill ${filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}`}>
+              {filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={Boolean(filterQuality.data?.running_run) || startFilterQuality.isPending}
+            onClick={() => startFilterQuality.mutate()}
+          >
+            {startFilterQuality.isPending ? "Starting" : "Run filter quality"}
+          </button>
+        </div>
+        {startFilterQuality.isError && (
+          <div className="inline-error">{startFilterQuality.error.message}</div>
+        )}
+        {filterQuality.data?.last_run ? (
+          <FilterQualityMetrics
+            run={filterQuality.data.last_run}
+            incorrectlyRejectedOpen={incorrectlyRejectedOpen}
+            incorrectlyRejectedItems={incorrectlyRejected.data?.items ?? []}
+            incorrectlyRejectedLoading={incorrectlyRejected.isLoading || incorrectlyRejected.isFetching}
+            incorrectlyRejectedError={incorrectlyRejected.isError}
+            onToggleIncorrectlyRejected={() => setIncorrectlyRejectedOpen((open) => !open)}
+          />
+        ) : (
+          <EmptyState text={filterQuality.isError ? "Filter quality data unavailable" : "No filter quality runs yet"} />
+        )}
+      </section>
     </main>
   );
 }
@@ -180,6 +240,129 @@ function EmptyState({ text }: { text: string }) {
   return <div className="empty">{text}</div>;
 }
 
+function FilterQualityMetrics({
+  run,
+  incorrectlyRejectedOpen,
+  incorrectlyRejectedItems,
+  incorrectlyRejectedLoading,
+  incorrectlyRejectedError,
+  onToggleIncorrectlyRejected
+}: {
+  run: FilterQualityRunSummary;
+  incorrectlyRejectedOpen: boolean;
+  incorrectlyRejectedItems: FilterQualityIncorrectlyRejectedItem[];
+  incorrectlyRejectedLoading: boolean;
+  incorrectlyRejectedError: boolean;
+  onToggleIncorrectlyRejected: () => void;
+}) {
+  return (
+    <div className="quality-section">
+      <div className="quality-grid">
+        <QualityValue label="Rejection precision" value={formatRate(run.rejection_precision_proxy)} />
+        <QualityValue label="Incorrectly accepted" value={formatRate(run.incorrectly_accepted_rate_estimate)} />
+        <QualityValue
+          label="Incorrectly rejected"
+          value={run.incorrectly_rejected_count}
+          buttonDisabled={run.incorrectly_rejected_count === 0}
+          onClick={run.incorrectly_rejected_count > 0 ? onToggleIncorrectlyRejected : undefined}
+        />
+        <QualityValue label="Rejected evaluated" value={run.rejected_items_evaluated} />
+        <QualityValue label="Accepted sampled" value={run.accepted_items_sampled} />
+        <QualityValue label="Item failures" value={run.item_failed_count} />
+        <QualityValue label="Dataset input" value={run.dataset_input_count} />
+        <QualityValue label="Last finished" value={formatDate(run.finished_at)} />
+        {run.item_failed_count > 0 && <QualityValue label="Failure reason" value={formatErrorCodes(run.item_error_codes)} />}
+        {run.status === "failed" && <QualityValue label="Error" value={run.error_code ?? "unknown_error"} />}
+      </div>
+      {incorrectlyRejectedOpen && (
+        <IncorrectlyRejectedTable
+          items={incorrectlyRejectedItems}
+          loading={incorrectlyRejectedLoading}
+          error={incorrectlyRejectedError}
+        />
+      )}
+    </div>
+  );
+}
+
+function QualityValue({
+  label,
+  value,
+  buttonDisabled = false,
+  onClick
+}: {
+  label: string;
+  value: string | number;
+  buttonDisabled?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <div className="quality-value">
+      <span>{label}</span>
+      {onClick ? (
+        <button type="button" className="quality-link" disabled={buttonDisabled} onClick={onClick}>
+          {value}
+        </button>
+      ) : (
+        <strong>{value}</strong>
+      )}
+    </div>
+  );
+}
+
+function IncorrectlyRejectedTable({
+  items,
+  loading,
+  error
+}: {
+  items: FilterQualityIncorrectlyRejectedItem[];
+  loading: boolean;
+  error: boolean;
+}) {
+  if (loading) {
+    return <EmptyState text="Loading incorrectly rejected records" />;
+  }
+  if (error) {
+    return <EmptyState text="Incorrectly rejected records unavailable" />;
+  }
+  if (!items.length) {
+    return <EmptyState text="No incorrectly rejected records" />;
+  }
+  return (
+    <div className="quality-details table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Article</th>
+            <th>Published</th>
+            <th>Source</th>
+            <th>Rejection reason</th>
+            <th>Cause</th>
+            <th>Solution</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.assessment_id}>
+              <td className="article-cell">
+                <a href={item.url} target="_blank" rel="noreferrer">
+                  {item.headline}
+                </a>
+                {item.rationale && <small>{item.rationale}</small>}
+              </td>
+              <td>{formatDate(item.published_at)}</td>
+              <td>{item.source}</td>
+              <td>{item.rejection_reason_code ?? "n/a"}</td>
+              <td>{formatCause(item.probable_cause)}</td>
+              <td className="solution-cell">{item.improvement_suggestion ?? "n/a"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function formatDate(value?: string | null) {
   if (!value) {
     return "n/a";
@@ -195,4 +378,36 @@ function formatDuration(seconds?: number | null) {
     return `${Math.round(seconds)}s`;
   }
   return `${Math.round(seconds / 60)}m`;
+}
+
+function formatRate(value?: number | null) {
+  if (value == null) {
+    return "n/a";
+  }
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function filterQualityState(running?: FilterQualityRunSummary | null, last?: FilterQualityRunSummary | null) {
+  if (running) {
+    return "running";
+  }
+  return last?.status ?? "no runs";
+}
+
+function formatErrorCodes(codes: Record<string, number>) {
+  const entries = Object.entries(codes);
+  if (!entries.length) {
+    return "n/a";
+  }
+  return entries
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([code, count]) => `${code} (${count})`)
+    .join(", ");
+}
+
+function formatCause(value?: string | null) {
+  if (!value) {
+    return "n/a";
+  }
+  return value.replaceAll("_", " ");
 }

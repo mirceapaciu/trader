@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 HealthState = Literal["healthy", "unhealthy"]
 DependencyKind = Literal["postgres", "redis"]
@@ -99,3 +99,78 @@ class DeadLetterResponse(BaseModel):
     limit: int
     offset: int
     generated_at: datetime
+
+
+FilterQualityRunStatus = Literal["running", "completed", "failed"]
+
+
+class FilterQualityRunSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    status: FilterQualityRunStatus
+    news_window_start_at: datetime
+    news_window_end_at: datetime
+    created_at: datetime
+    started_at: datetime
+    finished_at: datetime | None = None
+    error_code: str | None = None
+    rejection_precision_proxy: float | None = None
+    incorrectly_accepted_rate_estimate: float | None = None
+    dataset_input_count: int
+    dataset_rejected_count: int
+    dataset_accepted_count: int
+    rejected_items_evaluated: int
+    accepted_items_sampled: int
+    correctly_rejected_count: int
+    incorrectly_rejected_count: int
+    correctly_accepted_count: int
+    incorrectly_accepted_count: int
+    item_failed_count: int = 0
+    item_error_codes: dict[str, int] = Field(default_factory=dict)
+    summary_json: dict[str, Any]
+    recommendation_summary_md: str
+
+
+class FilterQualityStatusResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    running_run: FilterQualityRunSummary | None
+    last_run: FilterQualityRunSummary | None
+    generated_at: datetime
+
+
+class FilterQualityIncorrectlyRejectedItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    assessment_id: str
+    run_id: str
+    article_id: str
+    headline: str
+    url: str
+    source: str
+    published_at: datetime
+    production_filter_outcome: str | None = None
+    simulation_filter_outcome: str | None = None
+    rejection_reason_code: str | None = None
+    probable_cause: str | None = None
+    improvement_suggestion: str | None = None
+    rationale: str | None = None
+    classification_confidence: float | None = None
+    suggestion_json: dict[str, Any] = Field(default_factory=dict)
+    evaluated_at: datetime
+
+
+class FilterQualityIncorrectlyRejectedResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    items: list[FilterQualityIncorrectlyRejectedItem]
+    generated_at: datetime
+
+
+class FilterQualityStartRunResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    status: Literal["running"]

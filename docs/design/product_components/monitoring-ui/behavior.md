@@ -8,6 +8,7 @@ Monitoring UI responsibilities:
 - Present near-real-time NewsFetcher operational state to the operator.
 - Surface provider health, throughput, deduplication, and publish outcomes.
 - Surface queue and dependency health relevant to NewsFetcher.
+- Start a bounded Filter Quality Evaluator run and surface the latest persisted evaluator summary.
 
 Out of scope:
 - Fetching or mutating provider payloads.
@@ -83,6 +84,17 @@ Must display time-series and aggregates for:
 Time windows:
 - 15 minutes, 1 hour, 24 hours, and custom bounded range.
 
+### 4.3.1 Filter Quality Panel
+
+The dashboard includes a compact Filter Quality panel.
+
+The panel must display:
+- Whether a filter quality run is currently `running`.
+- The latest terminal run status: `completed`, `failed`, or no prior runs.
+- The latest terminal run metrics: rejection precision proxy, incorrectly accepted rate estimate, rejected evaluated count, accepted sampled count, dataset input count, finished timestamp, and failed error code when present.
+
+The Run filter quality button starts one evaluator run for the last 24 hours. UI-triggered runs use the active NewsFetcher filter configuration, set `accepted_audit_enabled=false`, and write their status and summary to `filter_quality_evaluator.t_filter_quality_runs`. If a run is already active, the API returns `409` with the active `run_id`.
+
 ### 4.4 Backlog and Dead-Letter Panels
 
 Must display:
@@ -127,10 +139,12 @@ Required read endpoints:
 - `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
+- `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.
 
 Optional operator-action endpoints:
 - `POST /api/actions/refresh` triggers a non-blocking refresh of UI projections when supported.
 - `POST /api/actions/alert-test` sends a test alert when alert webhooks are enabled.
+- `POST /api/filter-quality/runs` starts an in-process background Filter Quality Evaluator run for the last 24 hours and returns `202` when accepted.
 
 All response timestamps must be UTC ISO 8601 strings. Endpoint responses must include enough metadata for the frontend to render degraded panels without treating one failed source as a full dashboard failure.
 

@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import re
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import BacklogResponse, DeadLetterResponse, HealthResponse, ProvidersResponse, ThroughputResponse
+from .filter_quality_runner import FilterQualityRunCoordinator
+from .models import (
+    BacklogResponse,
+    DeadLetterResponse,
+    FilterQualityIncorrectlyRejectedResponse,
+    FilterQualityStartRunResponse,
+    FilterQualityStatusResponse,
+    HealthResponse,
+    ProvidersResponse,
+    ThroughputResponse,
+)
 from .repository import PostgresRedisMonitoringDataSource
-from .service import MonitoringService
+from .service import FilterQualityRunAlreadyActive, MonitoringService
 from .settings import MonitoringUiSettings
 
 
@@ -20,11 +30,16 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     data_source = PostgresRedisMonitoringDataSource(
         dsn=resolved_settings.postgres_dsn,
         news_schema=resolved_settings.newsfetcher_db_schema,
+        filter_quality_schema=resolved_settings.filter_quality_db_schema,
         queue_url=resolved_settings.queue_url,
         news_raw_queue=resolved_settings.news_raw_queue,
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
     )
-    service = MonitoringService(settings=resolved_settings, data_source=data_source)
+    service = MonitoringService(
+        settings=resolved_settings,
+        data_source=data_source,
+        filter_quality_runner=FilterQualityRunCoordinator(),
+    )
 
     app = FastAPI(title="Trader Monitoring UI API")
     app.add_middleware(
@@ -57,6 +72,31 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         offset: int = Query(default=0, ge=0),
     ) -> DeadLetterResponse:
         return service.list_dead_letters(limit=limit, offset=offset)
+
+    @app.get("/api/filter-quality", response_model=FilterQualityStatusResponse)
+    def get_filter_quality() -> FilterQualityStatusResponse:
+        return service.get_filter_quality_status()
+
+    @app.get(
+        "/api/filter-quality/runs/{run_id}/incorrectly-rejected",
+        response_model=FilterQualityIncorrectlyRejectedResponse,
+    )
+    def list_filter_quality_incorrectly_rejected(run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
+        return service.list_filter_quality_incorrectly_rejected(run_id=run_id)
+
+    @app.post(
+        "/api/filter-quality/runs",
+        response_model=FilterQualityStartRunResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def start_filter_quality_run() -> FilterQualityStartRunResponse:
+        try:
+            return service.start_filter_quality_run()
+        except FilterQualityRunAlreadyActive as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
+            ) from exc
 
     @app.post("/api/actions/refresh")
     def refresh() -> dict[str, str]:

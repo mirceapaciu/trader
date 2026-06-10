@@ -19,6 +19,8 @@ class MonitoringUiSettings:
     ui_default_time_window: str
     ui_export_max_rows: int
     newsfetcher_db_schema: str
+    filter_quality_db_schema: str
+    filter_quality_run_timeout_seconds: int
     queue_url: str
     news_raw_queue: str
 
@@ -48,6 +50,8 @@ class MonitoringUiSettings:
             ui_default_time_window=os.getenv("UI_DEFAULT_TIME_WINDOW", "1h"),
             ui_export_max_rows=_int_env("UI_EXPORT_MAX_ROWS", 500),
             newsfetcher_db_schema=os.getenv("NEWSFETCHER_DB_SCHEMA", "news_fetcher"),
+            filter_quality_db_schema=os.getenv("FILTER_QUALITY_DB_SCHEMA", "filter_quality_evaluator"),
+            filter_quality_run_timeout_seconds=_int_env("FILTER_QUALITY_RUN_TIMEOUT_SECONDS", 1800),
             queue_url=_queue_url_from_env(),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
         )

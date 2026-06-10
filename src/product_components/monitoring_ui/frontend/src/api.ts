@@ -74,12 +74,105 @@ export type DeadLetterResponse = {
   generated_at: string;
 };
 
+export type FilterQualityRunStatus = "running" | "completed" | "failed";
+
+export type FilterQualityRunSummary = {
+  run_id: string;
+  status: FilterQualityRunStatus;
+  news_window_start_at: string;
+  news_window_end_at: string;
+  created_at: string;
+  started_at: string;
+  finished_at?: string | null;
+  error_code?: string | null;
+  rejection_precision_proxy?: number | null;
+  incorrectly_accepted_rate_estimate?: number | null;
+  dataset_input_count: number;
+  dataset_rejected_count: number;
+  dataset_accepted_count: number;
+  rejected_items_evaluated: number;
+  accepted_items_sampled: number;
+  correctly_rejected_count: number;
+  incorrectly_rejected_count: number;
+  correctly_accepted_count: number;
+  incorrectly_accepted_count: number;
+  item_failed_count: number;
+  item_error_codes: Record<string, number>;
+  summary_json: Record<string, unknown>;
+  recommendation_summary_md: string;
+};
+
+export type FilterQualityStatusResponse = {
+  running_run?: FilterQualityRunSummary | null;
+  last_run?: FilterQualityRunSummary | null;
+  generated_at: string;
+};
+
+export type FilterQualityIncorrectlyRejectedItem = {
+  assessment_id: string;
+  run_id: string;
+  article_id: string;
+  headline: string;
+  url: string;
+  source: string;
+  published_at: string;
+  production_filter_outcome?: string | null;
+  simulation_filter_outcome?: string | null;
+  rejection_reason_code?: string | null;
+  probable_cause?: string | null;
+  improvement_suggestion?: string | null;
+  rationale?: string | null;
+  classification_confidence?: number | null;
+  suggestion_json: Record<string, unknown>;
+  evaluated_at: string;
+};
+
+export type FilterQualityIncorrectlyRejectedResponse = {
+  run_id: string;
+  items: FilterQualityIncorrectlyRejectedItem[];
+  generated_at: string;
+};
+
+export type FilterQualityStartRunResponse = {
+  run_id: string;
+  status: "running";
+};
+
 const apiBaseUrl = import.meta.env.VITE_UI_API_BASE_URL ?? "";
 
+function apiUrl(path: string): string {
+  const normalizedBase = apiBaseUrl.replace(/\/$/, "");
+  if (!normalizedBase) {
+    return path;
+  }
+  if (normalizedBase.endsWith("/api") && path.startsWith("/api/")) {
+    return `${normalizedBase}${path.slice(4)}`;
+  }
+  return `${normalizedBase}${path}`;
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`);
+  const response = await fetch(apiUrl(path));
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function postJson<T>(path: string): Promise<T> {
+  const response = await fetch(apiUrl(path), { method: "POST" });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      const detail = body.detail;
+      if (detail?.message && detail?.run_id) {
+        message = `${detail.message}: ${detail.run_id}`;
+      }
+    } catch {
+      // Keep the HTTP status fallback when the server returns a non-JSON body.
+    }
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }
@@ -102,4 +195,20 @@ export function fetchBacklog(): Promise<BacklogResponse> {
 
 export function fetchDeadLetters(): Promise<DeadLetterResponse> {
   return getJson<DeadLetterResponse>("/api/dead-letter?limit=25&offset=0");
+}
+
+export function fetchFilterQualityStatus(): Promise<FilterQualityStatusResponse> {
+  return getJson<FilterQualityStatusResponse>("/api/filter-quality");
+}
+
+export function fetchFilterQualityIncorrectlyRejected(
+  runId: string
+): Promise<FilterQualityIncorrectlyRejectedResponse> {
+  return getJson<FilterQualityIncorrectlyRejectedResponse>(
+    `/api/filter-quality/runs/${encodeURIComponent(runId)}/incorrectly-rejected`
+  );
+}
+
+export function startFilterQualityRun(): Promise<FilterQualityStartRunResponse> {
+  return postJson<FilterQualityStartRunResponse>("/api/filter-quality/runs");
 }

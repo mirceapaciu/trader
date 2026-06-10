@@ -21,12 +21,12 @@ $uiUrl = "http://127.0.0.1:$FrontendPort"
 $null = New-Item -ItemType Directory -Path $logsDir -Force
 
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-Add-Content -LiteralPath $backendLog -Value "[$timestamp] starting backend on $apiBaseUrl"
-Add-Content -LiteralPath $frontendLog -Value "[$timestamp] starting frontend on $uiUrl"
+Out-File -LiteralPath $backendLog -InputObject "[$timestamp] starting backend on $apiBaseUrl" -Append -Encoding utf8
+Out-File -LiteralPath $frontendLog -InputObject "[$timestamp] starting frontend on $uiUrl" -Append -Encoding utf8
 
-$backendCommand = "& { `$env:UI_PORT='$BackendPort'; Set-Location -LiteralPath '$repoRoot'; & '$pythonExe' -m src.product_components.monitoring_ui.backend } *>> '$backendLog'"
+$backendCommand = "& { `$env:UI_PORT='$BackendPort'; Set-Location -LiteralPath '$repoRoot'; & '$pythonExe' -m src.product_components.monitoring_ui.backend 2>&1 | Out-File -LiteralPath '$backendLog' -Append -Encoding utf8 }"
 
-$frontendCommand = "& { `$env:VITE_UI_API_BASE_URL='$apiBaseUrl'; Set-Location -LiteralPath '$frontendDir'; if (-not (Test-Path 'node_modules')) { & '$npmCmd' install }; & '$npmCmd' run dev -- --host 127.0.0.1 --port $FrontendPort } *>> '$frontendLog'"
+$frontendCommand = "& { `$env:VITE_UI_API_BASE_URL='$apiBaseUrl'; Set-Location -LiteralPath '$frontendDir'; if (-not (Test-Path 'node_modules')) { & '$npmCmd' install 2>&1 | Out-File -LiteralPath '$frontendLog' -Append -Encoding utf8 }; & '$npmCmd' run dev -- --host 127.0.0.1 --port $FrontendPort 2>&1 | Out-File -LiteralPath '$frontendLog' -Append -Encoding utf8 }"
 
 $backendProcess = Start-Process `
     -FilePath 'powershell.exe' `

@@ -28,6 +28,14 @@ from .simulation import (
 )
 from .summary import build_run_summary
 
+_MAX_CONSECUTIVE_CLASSIFICATION_FAILURES = 3
+
+
+class RepeatedLlmClassificationFailure(RuntimeError):
+    def __init__(self, *, failure_count: int) -> None:
+        super().__init__("repeated_llm_classification_failed")
+        self.failure_count = failure_count
+
 
 class FilterQualityEvaluatorService:
     def __init__(
@@ -155,9 +163,15 @@ class FilterQualityEvaluatorService:
         assessments: list[ItemAssessment] = []
         for item in comparisons:
             if item.production_result is None:
-                assessments.append(self._failed_assessment(params.run_id, item, "missing_production_result"))
+                self._record_assessment(
+                    assessments,
+                    self._failed_assessment(params.run_id, item, "missing_production_result"),
+                )
             elif item.simulation_result is None:
-                assessments.append(self._failed_assessment(params.run_id, item, "missing_simulation_result"))
+                self._record_assessment(
+                    assessments,
+                    self._failed_assessment(params.run_id, item, "missing_simulation_result"),
+                )
 
         rejected = [
             item
@@ -176,28 +190,47 @@ class FilterQualityEvaluatorService:
         else:
             accepted_sample = []
 
+        consecutive_classification_failures = 0
         for item in rejected:
-            assessments.append(
+            assessment = self._record_assessment(
+                assessments,
                 self._classify_or_fail(
                     params.run_id,
                     item,
                     EvaluationScope.REJECTED_POPULATION,
                     filter_config_snapshot_json,
-                )
+                ),
             )
+            consecutive_classification_failures = _next_consecutive_classification_failures(
+                assessment,
+                consecutive_classification_failures,
+            )
+            _raise_if_repeated_classification_failures(consecutive_classification_failures)
         for item in accepted_sample:
-            assessments.append(
+            assessment = self._record_assessment(
+                assessments,
                 self._classify_or_fail(
                     params.run_id,
                     item,
                     EvaluationScope.ACCEPTED_AUDIT,
                     filter_config_snapshot_json,
-                )
+                ),
             )
-
-        for assessment in assessments:
-            self._repository.insert_item_assessment(assessment)
+            consecutive_classification_failures = _next_consecutive_classification_failures(
+                assessment,
+                consecutive_classification_failures,
+            )
+            _raise_if_repeated_classification_failures(consecutive_classification_failures)
         return assessments
+
+    def _record_assessment(
+        self,
+        assessments: list[ItemAssessment],
+        assessment: ItemAssessment,
+    ) -> ItemAssessment:
+        assessments.append(assessment)
+        self._repository.insert_item_assessment(assessment)
+        return assessment
 
     def _classify_or_fail(
         self,
@@ -219,7 +252,7 @@ class FilterQualityEvaluatorService:
                 run_id,
                 item,
                 "llm_classification_failed",
-                {"exception_type": error.__class__.__name__},
+                _error_details(error),
             )
         return self._evaluated_assessment(run_id, item, scope, result)
 
@@ -302,3 +335,28 @@ def new_run_id() -> str:
 
 def _assessment_id(run_id: str, article_id: str) -> str:
     return f"fqa_{uuid.uuid5(uuid.NAMESPACE_URL, f'{run_id}:{article_id}').hex}"
+
+
+def _next_consecutive_classification_failures(
+    assessment: ItemAssessment,
+    current_count: int,
+) -> int:
+    if (
+        assessment.item_status == ItemStatus.FAILED
+        and assessment.item_error_code == "llm_classification_failed"
+    ):
+        return current_count + 1
+    return 0
+
+
+def _raise_if_repeated_classification_failures(count: int) -> None:
+    if count >= _MAX_CONSECUTIVE_CLASSIFICATION_FAILURES:
+        raise RepeatedLlmClassificationFailure(failure_count=count)
+
+
+def _error_details(error: Exception) -> dict[str, Any]:
+    message = str(error)
+    details: dict[str, Any] = {"exception_type": error.__class__.__name__}
+    if message:
+        details["message"] = message[:1000]
+    return details

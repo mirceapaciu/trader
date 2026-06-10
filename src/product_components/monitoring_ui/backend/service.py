@@ -7,6 +7,9 @@ from .models import (
     BacklogResponse,
     DeadLetterResponse,
     DependencyHealth,
+    FilterQualityIncorrectlyRejectedResponse,
+    FilterQualityStartRunResponse,
+    FilterQualityStatusResponse,
     HealthResponse,
     ProvidersResponse,
     ThroughputResponse,
@@ -25,11 +28,40 @@ class MonitoringDataSource(Protocol):
 
     def list_dead_letters(self, *, limit: int, offset: int) -> DeadLetterResponse: ...
 
+    def get_filter_quality_status(self) -> FilterQualityStatusResponse: ...
+
+    def list_filter_quality_incorrectly_rejected(
+        self,
+        *,
+        run_id: str,
+    ) -> FilterQualityIncorrectlyRejectedResponse: ...
+
+    def get_running_filter_quality_run(self): ...
+
+    def mark_stale_filter_quality_runs_failed(self, *, timeout_seconds: int) -> int: ...
+
+
+class FilterQualityRunner(Protocol):
+    def start_last_24h_run(self) -> str: ...
+
+
+class FilterQualityRunAlreadyActive(RuntimeError):
+    def __init__(self, run_id: str) -> None:
+        super().__init__("filter_quality_run_already_active")
+        self.run_id = run_id
+
 
 class MonitoringService:
-    def __init__(self, *, settings: MonitoringUiSettings, data_source: MonitoringDataSource) -> None:
+    def __init__(
+        self,
+        *,
+        settings: MonitoringUiSettings,
+        data_source: MonitoringDataSource,
+        filter_quality_runner: FilterQualityRunner | None = None,
+    ) -> None:
         self._settings = settings
         self._data_source = data_source
+        self._filter_quality_runner = filter_quality_runner
 
     def get_health(self) -> HealthResponse:
         now = _utc_now()
@@ -74,6 +106,30 @@ class MonitoringService:
         bounded_limit = max(1, min(limit, self._settings.ui_export_max_rows))
         bounded_offset = max(0, offset)
         return self._data_source.list_dead_letters(limit=bounded_limit, offset=bounded_offset)
+
+    def get_filter_quality_status(self) -> FilterQualityStatusResponse:
+        self._data_source.mark_stale_filter_quality_runs_failed(
+            timeout_seconds=self._settings.filter_quality_run_timeout_seconds,
+        )
+        return self._data_source.get_filter_quality_status()
+
+    def list_filter_quality_incorrectly_rejected(self, *, run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
+        return self._data_source.list_filter_quality_incorrectly_rejected(run_id=run_id)
+
+    def start_filter_quality_run(self) -> FilterQualityStartRunResponse:
+        if self._filter_quality_runner is None:
+            raise RuntimeError("filter_quality_runner_unavailable")
+        self._data_source.mark_stale_filter_quality_runs_failed(
+            timeout_seconds=self._settings.filter_quality_run_timeout_seconds,
+        )
+        active_run = self._data_source.get_running_filter_quality_run()
+        if active_run is not None:
+            raise FilterQualityRunAlreadyActive(active_run.run_id)
+        try:
+            run_id = self._filter_quality_runner.start_last_24h_run()
+        except FilterQualityRunAlreadyActive:
+            raise
+        return FilterQualityStartRunResponse(run_id=run_id, status="running")
 
 
 def _dependency_healthy(dependencies: list[DependencyHealth], kind: str) -> bool:

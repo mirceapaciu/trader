@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 import pytest
 
 from src.core_components.event_ingestion_engine.models import FilterOutcome, FilterResult
-from src.product_components.filter_quality_evaluator.llm_classifier import LlmClassifier, TokenBudgetExhausted
+from src.product_components.filter_quality_evaluator.llm_classifier import (
+    LlmClassifier,
+    TokenBudgetExhausted,
+    _load_json_object,
+)
 from src.product_components.filter_quality_evaluator.models import ComparisonItem, EvaluationScope, InputArticle
 
 
@@ -82,3 +86,9 @@ def test_llm_classifier_fails_closed_on_budget() -> None:
             scope=EvaluationScope.REJECTED_POPULATION,
             filter_config_snapshot_json={},
         )
+
+
+def test_load_json_object_accepts_wrapped_json_object() -> None:
+    payload = _load_json_object('```json\n{"classification_label": "correctly_rejected"}\n```')
+
+    assert payload == {"classification_label": "correctly_rejected"}
