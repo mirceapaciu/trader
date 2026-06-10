@@ -10,7 +10,9 @@ from .models import (
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityStartRunResponse,
     FilterQualityStatusResponse,
+    FilterConfigSimulationStartResponse,
     HealthResponse,
+    NewsFilterConfigPayload,
     ProvidersResponse,
     ThroughputResponse,
 )
@@ -36,6 +38,14 @@ class MonitoringDataSource(Protocol):
         run_id: str,
     ) -> FilterQualityIncorrectlyRejectedResponse: ...
 
+    def get_production_filter_config(self) -> NewsFilterConfigPayload: ...
+
+    def get_test_filter_config(self) -> NewsFilterConfigPayload: ...
+
+    def save_test_filter_config(self, payload: NewsFilterConfigPayload) -> NewsFilterConfigPayload: ...
+
+    def promote_test_filter_config(self) -> NewsFilterConfigPayload: ...
+
     def get_running_filter_quality_run(self): ...
 
     def mark_stale_filter_quality_runs_failed(self, *, timeout_seconds: int) -> int: ...
@@ -43,6 +53,8 @@ class MonitoringDataSource(Protocol):
 
 class FilterQualityRunner(Protocol):
     def start_last_24h_run(self) -> str: ...
+
+    def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str: ...
 
 
 class FilterQualityRunAlreadyActive(RuntimeError):
@@ -116,6 +128,31 @@ class MonitoringService:
     def list_filter_quality_incorrectly_rejected(self, *, run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
         return self._data_source.list_filter_quality_incorrectly_rejected(run_id=run_id)
 
+    def get_production_filter_config(self) -> NewsFilterConfigPayload:
+        return self._data_source.get_production_filter_config()
+
+    def get_test_filter_config(self) -> NewsFilterConfigPayload:
+        return self._data_source.get_test_filter_config()
+
+    def save_test_filter_config(self, payload: NewsFilterConfigPayload) -> NewsFilterConfigPayload:
+        return self._data_source.save_test_filter_config(payload)
+
+    def start_test_filter_simulation(self) -> FilterConfigSimulationStartResponse:
+        if self._filter_quality_runner is None:
+            raise RuntimeError("filter_quality_runner_unavailable")
+        self._data_source.mark_stale_filter_quality_runs_failed(
+            timeout_seconds=self._settings.filter_quality_run_timeout_seconds,
+        )
+        active_run = self._data_source.get_running_filter_quality_run()
+        if active_run is not None:
+            raise FilterQualityRunAlreadyActive(active_run.run_id)
+        test_filter = self._data_source.get_test_filter_config()
+        run_id = self._filter_quality_runner.start_last_24h_run_with_snapshot(_config_snapshot(test_filter))
+        return FilterConfigSimulationStartResponse(run_id=run_id, status="running")
+
+    def promote_test_filter_config(self) -> NewsFilterConfigPayload:
+        return self._data_source.promote_test_filter_config()
+
     def start_filter_quality_run(self) -> FilterQualityStartRunResponse:
         if self._filter_quality_runner is None:
             raise RuntimeError("filter_quality_runner_unavailable")
@@ -138,3 +175,14 @@ def _dependency_healthy(dependencies: list[DependencyHealth], kind: str) -> bool
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _config_snapshot(config: NewsFilterConfigPayload) -> dict:
+    return {
+        "include_keywords": config.include_keywords,
+        "exclude_keywords": config.exclude_keywords,
+        "watchlist_tickers": config.watchlist_tickers,
+        "dedupe_algorithm": config.dedupe_algorithm,
+        "dedupe_similarity_threshold": config.dedupe_similarity_threshold,
+        "dedupe_lookback_hours": config.dedupe_lookback_hours,
+    }

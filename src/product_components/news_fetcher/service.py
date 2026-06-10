@@ -38,6 +38,7 @@ class NewsFetcherService:
     def run_once(self) -> dict[str, ProcessResult]:
         results: dict[str, ProcessResult] = {}
         watchlist = self._storage.load_active_watchlist_tickers()
+        filter_config = self._production_filter_config(watchlist)
         providers = self._configured_providers()
 
         for source_key, provider in providers.items():
@@ -65,9 +66,9 @@ class NewsFetcherService:
                 provider=provider,
                 timeout_seconds=self._settings.provider_timeout_seconds,
                 filter_config=SourceFilterConfig(
-                    watchlist_tickers=watchlist,
-                    include_keywords=self._settings.include_keywords,
-                    exclude_keywords=self._settings.exclude_keywords,
+                    watchlist_tickers=set(filter_config.watchlist_tickers),
+                    include_keywords=filter_config.include_keywords,
+                    exclude_keywords=filter_config.exclude_keywords,
                 ),
             )
             engine = EventIngestionEngine(
@@ -76,13 +77,13 @@ class NewsFetcherService:
                 publisher=self._publisher,
                 producer="news_fetcher",
                 event_type="news.article.created",
-                filter_run=self._settings.production_filter_run(watchlist),
+                filter_run=filter_config.production_filter_run(),
                 dedupe_policy=SoftDedupePolicy(
                     enabled=True,
-                    algorithm=self._settings.dedupe_algorithm,
-                    threshold=self._settings.dedupe_similarity_threshold,
-                    lookback_window=timedelta(hours=self._settings.dedupe_lookback_hours),
-                    max_time_delta_hours=self._settings.dedupe_lookback_hours,
+                    algorithm=filter_config.dedupe_algorithm,
+                    threshold=filter_config.dedupe_similarity_threshold,
+                    lookback_window=timedelta(hours=filter_config.dedupe_lookback_hours),
+                    max_time_delta_hours=filter_config.dedupe_lookback_hours,
                 ),
             )
             try:
@@ -126,6 +127,19 @@ class NewsFetcherService:
                 continue
 
         return results
+
+    def _production_filter_config(self, watchlist: set[str]):
+        loader = getattr(self._storage, "seed_production_filter_config_if_missing", None)
+        if loader is None:
+            return _settings_filter_config(self._settings, watchlist)
+        return loader(
+            include_keywords=self._settings.include_keywords,
+            exclude_keywords=self._settings.exclude_keywords,
+            watchlist_tickers=watchlist,
+            dedupe_algorithm=self._settings.dedupe_algorithm,
+            dedupe_similarity_threshold=self._settings.dedupe_similarity_threshold,
+            dedupe_lookback_hours=self._settings.dedupe_lookback_hours,
+        )
 
     def _configured_providers(self) -> dict[str, NewsProvider]:
         providers = dict(self._providers)
@@ -222,4 +236,21 @@ def build_service(
         providers=providers,
         storage=storage,
         publisher=publisher,
+    )
+
+
+def _settings_filter_config(settings: NewsFetcherSettings, watchlist: set[str]):
+    from src.product_components.news_fetcher.filter_config import NewsFilterConfig, normalize_keywords, normalize_tickers
+
+    return NewsFilterConfig(
+        filter_config_id="env_fallback",
+        config_name="Environment fallback",
+        config_role="production",
+        status="active",
+        include_keywords=normalize_keywords(settings.include_keywords),
+        exclude_keywords=normalize_keywords(settings.exclude_keywords),
+        watchlist_tickers=normalize_tickers(watchlist),
+        dedupe_algorithm=settings.dedupe_algorithm,
+        dedupe_similarity_threshold=settings.dedupe_similarity_threshold,
+        dedupe_lookback_hours=settings.dedupe_lookback_hours,
     )

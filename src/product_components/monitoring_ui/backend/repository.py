@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import psycopg
 from psycopg import errors
 import redis
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
+from src.product_components.news_fetcher.filter_config import (
+    NewsFilterConfig,
+    config_from_snapshot,
+    new_filter_config_id,
+    normalize_keywords,
+    normalize_tickers,
+)
+from src.product_components.news_fetcher.settings import NewsFetcherSettings
 
 from .models import (
     BacklogResponse,
@@ -18,6 +28,7 @@ from .models import (
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityRunSummary,
     FilterQualityStatusResponse,
+    NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
     ThroughputBucket,
@@ -82,6 +93,11 @@ class PostgresRedisMonitoringDataSource:
             )
 
         return dependencies
+
+    def bootstrap_news_schema(self, *, repo_root: Path) -> None:
+        schema_file = repo_root / "src" / "product_components" / "news_fetcher" / "db" / "schema.sql"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(schema_file.read_text(encoding="utf-8"))
 
     def list_providers(self) -> ProvidersResponse:
         sql = (
@@ -229,6 +245,79 @@ class PostgresRedisMonitoringDataSource:
             generated_at=_utc_now(),
         )
 
+    def get_production_filter_config(self) -> NewsFilterConfigPayload:
+        config = self._load_filter_config(role="production")
+        if config is None:
+            config = self._seed_production_filter_from_env()
+        return _filter_config_payload(config)
+
+    def get_test_filter_config(self) -> NewsFilterConfigPayload:
+        config = self._load_filter_config(role="test")
+        if config is not None:
+            return _filter_config_payload(config)
+        production = self.get_production_filter_config()
+        return self.save_test_filter_config(
+            NewsFilterConfigPayload(
+                config_name="Test filter",
+                include_keywords=production.include_keywords,
+                exclude_keywords=production.exclude_keywords,
+                watchlist_tickers=production.watchlist_tickers,
+                dedupe_algorithm=production.dedupe_algorithm,
+                dedupe_similarity_threshold=production.dedupe_similarity_threshold,
+                dedupe_lookback_hours=production.dedupe_lookback_hours,
+            )
+        )
+
+    def save_test_filter_config(self, payload: NewsFilterConfigPayload) -> NewsFilterConfigPayload:
+        config = config_from_snapshot(
+            _payload_snapshot(payload),
+            filter_config_id=payload.filter_config_id or new_filter_config_id(),
+            config_name=payload.config_name or "Test filter",
+            config_role="test",
+            status="active",
+            created_from_run_id=payload.created_from_run_id,
+        )
+        self._upsert_filter_config(config)
+        return _filter_config_payload(config)
+
+    def promote_test_filter_config(self) -> NewsFilterConfigPayload:
+        test = self._load_filter_config(role="test")
+        if test is None:
+            raise ValueError("missing_test_filter_config")
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {self._news_schema}.t_news_filter_configs "
+                f"SET status = 'archived', updated_at = NOW() "
+                f"WHERE config_role = 'production' AND status = 'active'"
+            )
+            production = config_from_snapshot(
+                test.snapshot(),
+                filter_config_id=new_filter_config_id(),
+                config_name="Production filter",
+                config_role="production",
+                status="active",
+                created_from_run_id=test.created_from_run_id,
+            )
+            cur.execute(
+                f"INSERT INTO {self._news_schema}.t_news_filter_configs "
+                f"(filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+                f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+                f"created_from_run_id, activated_at) "
+                f"VALUES (%s, %s, 'production', 'active', %s, %s, %s, %s, %s, %s, %s, NOW())",
+                (
+                    production.filter_config_id,
+                    production.config_name,
+                    Json(list(production.include_keywords)),
+                    Json(list(production.exclude_keywords)),
+                    Json(list(production.watchlist_tickers)),
+                    production.dedupe_algorithm,
+                    production.dedupe_similarity_threshold,
+                    production.dedupe_lookback_hours,
+                    production.created_from_run_id,
+                ),
+            )
+        return _filter_config_payload(production)
+
     def get_running_filter_quality_run(self) -> FilterQualityRunSummary | None:
         sql = (
             f"SELECT {_filter_quality_run_columns(self._filter_quality_schema)} "
@@ -295,6 +384,84 @@ class PostgresRedisMonitoringDataSource:
             row = cur.fetchone()
         return _filter_quality_run(row) if row else None
 
+    def _load_filter_config(self, *, role: str) -> NewsFilterConfig | None:
+        sql = (
+            f"SELECT filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+            f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+            f"created_from_run_id "
+            f"FROM {self._news_schema}.t_news_filter_configs "
+            f"WHERE config_role = %s AND status = 'active' "
+            f"ORDER BY activated_at DESC NULLS LAST, updated_at DESC LIMIT 1"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            try:
+                cur.execute(sql, (role,))
+            except (errors.InvalidSchemaName, errors.UndefinedTable):
+                return None
+            row = cur.fetchone()
+        return _news_filter_config(row) if row else None
+
+    def _seed_production_filter_from_env(self) -> NewsFilterConfig:
+        settings = NewsFetcherSettings.from_env()
+        config = NewsFilterConfig(
+            filter_config_id=new_filter_config_id(),
+            config_name="Production filter",
+            config_role="production",
+            status="active",
+            include_keywords=normalize_keywords(settings.include_keywords),
+            exclude_keywords=normalize_keywords(settings.exclude_keywords),
+            watchlist_tickers=normalize_tickers(self._load_active_watchlist_tickers(settings)),
+            dedupe_algorithm=settings.dedupe_algorithm,
+            dedupe_similarity_threshold=settings.dedupe_similarity_threshold,
+            dedupe_lookback_hours=settings.dedupe_lookback_hours,
+        )
+        self._upsert_filter_config(config)
+        return config
+
+    def _upsert_filter_config(self, config: NewsFilterConfig) -> None:
+        sql = (
+            f"INSERT INTO {self._news_schema}.t_news_filter_configs "
+            f"(filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+            f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+            f"created_from_run_id, activated_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s = 'active' THEN NOW() ELSE NULL END) "
+            f"ON CONFLICT (filter_config_id) DO UPDATE SET "
+            f"config_name = EXCLUDED.config_name, status = EXCLUDED.status, "
+            f"include_keywords = EXCLUDED.include_keywords, exclude_keywords = EXCLUDED.exclude_keywords, "
+            f"watchlist_tickers = EXCLUDED.watchlist_tickers, dedupe_algorithm = EXCLUDED.dedupe_algorithm, "
+            f"dedupe_similarity_threshold = EXCLUDED.dedupe_similarity_threshold, "
+            f"dedupe_lookback_hours = EXCLUDED.dedupe_lookback_hours, updated_at = NOW()"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    config.filter_config_id,
+                    config.config_name,
+                    config.config_role,
+                    config.status,
+                    Json(list(config.include_keywords)),
+                    Json(list(config.exclude_keywords)),
+                    Json(list(config.watchlist_tickers)),
+                    config.dedupe_algorithm,
+                    config.dedupe_similarity_threshold,
+                    config.dedupe_lookback_hours,
+                    config.created_from_run_id,
+                    config.status,
+                ),
+            )
+
+    def _load_active_watchlist_tickers(self, settings: NewsFetcherSettings) -> set[str]:
+        safe_shared = _safe_identifier(settings.shared_db_schema)
+        safe_table = _safe_identifier(settings.watchlist_table)
+        sql = f"SELECT ticker FROM {safe_shared}.{safe_table} WHERE is_active = TRUE"
+        with self._connect() as conn, conn.cursor() as cur:
+            try:
+                cur.execute(sql)
+            except (errors.InvalidSchemaName, errors.UndefinedTable):
+                return set()
+            return {str(row[0]).strip().upper() for row in cur.fetchall() if str(row[0]).strip()}
+
 
 def _safe_identifier(value: str) -> str:
     if not _IDENTIFIER.match(value):
@@ -340,6 +507,25 @@ def _filter_quality_run_columns(schema: str) -> str:
 
 
 def _filter_quality_run(row: dict[str, Any]) -> FilterQualityRunSummary:
+    summary_json = dict(row["summary_json"] or {})
+    dataset_input_count = int(row["dataset_input_count"])
+    dataset_accepted_count = int(row["dataset_accepted_count"])
+    accepted_items_sampled = int(row["accepted_items_sampled"])
+    correctly_rejected_count = int(row["correctly_rejected_count"])
+    correctly_accepted_count = int(row["correctly_accepted_count"])
+    assumed_correct_accepted_count = int(
+        summary_json.get("assumed_correct_accepted_count")
+        if summary_json.get("assumed_correct_accepted_count") is not None
+        else max(0, dataset_accepted_count - accepted_items_sampled)
+    )
+    total_correct_count = int(
+        summary_json.get("total_correct_count")
+        if summary_json.get("total_correct_count") is not None
+        else correctly_rejected_count + correctly_accepted_count + assumed_correct_accepted_count
+    )
+    total_filter_quality = summary_json.get("total_filter_quality")
+    if total_filter_quality is None and dataset_input_count > 0:
+        total_filter_quality = total_correct_count / dataset_input_count
     return FilterQualityRunSummary(
         run_id=str(row["run_id"]),
         status=row["status"],
@@ -351,23 +537,28 @@ def _filter_quality_run(row: dict[str, Any]) -> FilterQualityRunSummary:
         error_code=row["error_code"],
         rejection_precision_proxy=_optional_float(row["rejection_precision_proxy"]),
         incorrectly_accepted_rate_estimate=_optional_float(row["incorrectly_accepted_rate_estimate"]),
-        dataset_input_count=int(row["dataset_input_count"]),
+        dataset_input_count=dataset_input_count,
         dataset_rejected_count=int(row["dataset_rejected_count"]),
-        dataset_accepted_count=int(row["dataset_accepted_count"]),
+        dataset_accepted_count=dataset_accepted_count,
         rejected_items_evaluated=int(row["rejected_items_evaluated"]),
-        accepted_items_sampled=int(row["accepted_items_sampled"]),
-        correctly_rejected_count=int(row["correctly_rejected_count"]),
+        accepted_items_sampled=accepted_items_sampled,
+        correctly_rejected_count=correctly_rejected_count,
         incorrectly_rejected_count=int(row["incorrectly_rejected_count"]),
-        correctly_accepted_count=int(row["correctly_accepted_count"]),
+        correctly_accepted_count=correctly_accepted_count,
         incorrectly_accepted_count=int(row["incorrectly_accepted_count"]),
         item_failed_count=int(row["item_failed_count"] or 0),
         item_error_codes={str(key): int(value) for key, value in dict(row["item_error_codes"] or {}).items()},
-        summary_json=dict(row["summary_json"] or {}),
+        total_filter_quality=_optional_float(total_filter_quality),
+        total_correct_count=total_correct_count,
+        assumed_correct_accepted_count=assumed_correct_accepted_count,
+        evaluation_subject=str(summary_json.get("evaluation_subject") or "unknown"),
+        summary_json=summary_json,
         recommendation_summary_md=str(row["recommendation_summary_md"] or ""),
     )
 
 
 def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyRejectedItem:
+    suggestion_json = dict(row["suggestion_json"] or {})
     return FilterQualityIncorrectlyRejectedItem(
         assessment_id=str(row["assessment_id"]),
         run_id=str(row["run_id"]),
@@ -383,6 +574,56 @@ def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyR
         improvement_suggestion=row["improvement_suggestion"],
         rationale=row["rationale"],
         classification_confidence=_optional_float(row["classification_confidence"]),
-        suggestion_json=dict(row["suggestion_json"] or {}),
+        suggestion_json=suggestion_json,
+        recommended_include_keywords=normalize_keywords(_string_list(suggestion_json.get("recommended_include_keywords"))),
         evaluated_at=_to_utc(row["evaluated_at"]),
     )
+
+
+def _news_filter_config(row: dict[str, Any]) -> NewsFilterConfig:
+    return NewsFilterConfig(
+        filter_config_id=str(row["filter_config_id"]),
+        config_name=str(row["config_name"]),
+        config_role=str(row["config_role"]),
+        status=str(row["status"]),
+        include_keywords=normalize_keywords(_string_list(row["include_keywords"])),
+        exclude_keywords=normalize_keywords(_string_list(row["exclude_keywords"])),
+        watchlist_tickers=normalize_tickers(_string_list(row["watchlist_tickers"])),
+        dedupe_algorithm=str(row["dedupe_algorithm"]),
+        dedupe_similarity_threshold=float(row["dedupe_similarity_threshold"]),
+        dedupe_lookback_hours=int(row["dedupe_lookback_hours"]),
+        created_from_run_id=row["created_from_run_id"],
+    )
+
+
+def _filter_config_payload(config: NewsFilterConfig) -> NewsFilterConfigPayload:
+    return NewsFilterConfigPayload(
+        filter_config_id=config.filter_config_id,
+        config_name=config.config_name,
+        config_role=config.config_role,
+        status=config.status,
+        include_keywords=list(config.include_keywords),
+        exclude_keywords=list(config.exclude_keywords),
+        watchlist_tickers=list(config.watchlist_tickers),
+        dedupe_algorithm=config.dedupe_algorithm,
+        dedupe_similarity_threshold=config.dedupe_similarity_threshold,
+        dedupe_lookback_hours=config.dedupe_lookback_hours,
+        created_from_run_id=config.created_from_run_id,
+    )
+
+
+def _payload_snapshot(payload: NewsFilterConfigPayload) -> dict[str, Any]:
+    return {
+        "include_keywords": payload.include_keywords,
+        "exclude_keywords": payload.exclude_keywords,
+        "watchlist_tickers": payload.watchlist_tickers,
+        "dedupe_algorithm": payload.dedupe_algorithm,
+        "dedupe_similarity_threshold": payload.dedupe_similarity_threshold,
+        "dedupe_lookback_hours": payload.dedupe_lookback_hours,
+    }
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple | set):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]

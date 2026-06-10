@@ -173,6 +173,10 @@ class RunSummary:
     incorrectly_accepted_count: int
     rejection_precision_proxy: Decimal | None
     incorrectly_accepted_rate_estimate: Decimal | None
+    total_filter_quality: Decimal | None
+    total_correct_count: int
+    assumed_correct_accepted_count: int
+    evaluation_subject: str
     summary_json: dict[str, Any]
     recommendation_summary_md: str
 

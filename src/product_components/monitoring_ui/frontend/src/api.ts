@@ -87,6 +87,10 @@ export type FilterQualityRunSummary = {
   error_code?: string | null;
   rejection_precision_proxy?: number | null;
   incorrectly_accepted_rate_estimate?: number | null;
+  total_filter_quality?: number | null;
+  total_correct_count: number;
+  assumed_correct_accepted_count: number;
+  evaluation_subject: string;
   dataset_input_count: number;
   dataset_rejected_count: number;
   dataset_accepted_count: number;
@@ -124,6 +128,7 @@ export type FilterQualityIncorrectlyRejectedItem = {
   rationale?: string | null;
   classification_confidence?: number | null;
   suggestion_json: Record<string, unknown>;
+  recommended_include_keywords: string[];
   evaluated_at: string;
 };
 
@@ -134,6 +139,25 @@ export type FilterQualityIncorrectlyRejectedResponse = {
 };
 
 export type FilterQualityStartRunResponse = {
+  run_id: string;
+  status: "running";
+};
+
+export type NewsFilterConfigPayload = {
+  filter_config_id?: string | null;
+  config_name: string;
+  config_role: string;
+  status: string;
+  include_keywords: string[];
+  exclude_keywords: string[];
+  watchlist_tickers: string[];
+  dedupe_algorithm: string;
+  dedupe_similarity_threshold: number;
+  dedupe_lookback_hours: number;
+  created_from_run_id?: string | null;
+};
+
+export type FilterConfigSimulationStartResponse = {
   run_id: string;
   status: "running";
 };
@@ -177,6 +201,18 @@ async function postJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 export function fetchHealth(): Promise<HealthResponse> {
   return getJson<HealthResponse>("/api/health");
 }
@@ -211,4 +247,24 @@ export function fetchFilterQualityIncorrectlyRejected(
 
 export function startFilterQualityRun(): Promise<FilterQualityStartRunResponse> {
   return postJson<FilterQualityStartRunResponse>("/api/filter-quality/runs");
+}
+
+export function fetchProductionFilterConfig(): Promise<NewsFilterConfigPayload> {
+  return getJson<NewsFilterConfigPayload>("/api/filter-configs/production");
+}
+
+export function fetchTestFilterConfig(): Promise<NewsFilterConfigPayload> {
+  return getJson<NewsFilterConfigPayload>("/api/filter-configs/test");
+}
+
+export function saveTestFilterConfig(config: NewsFilterConfigPayload): Promise<NewsFilterConfigPayload> {
+  return putJson<NewsFilterConfigPayload>("/api/filter-configs/test", config);
+}
+
+export function runTestFilterSimulation(): Promise<FilterConfigSimulationStartResponse> {
+  return postJson<FilterConfigSimulationStartResponse>("/api/filter-configs/test/simulations");
+}
+
+export function promoteTestFilterConfig(): Promise<NewsFilterConfigPayload> {
+  return postJson<NewsFilterConfigPayload>("/api/filter-configs/test/promote");
 }

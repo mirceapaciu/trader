@@ -38,6 +38,13 @@ class FilterQualityRunCoordinator:
 
     def start_last_24h_run(self) -> str:
         params = self._build_last_24h_params()
+        return self._start(params)
+
+    def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
+        params = self._build_last_24h_params(filter_config_snapshot_json=snapshot)
+        return self._start(params)
+
+    def _start(self, params: FilterQualityRunParams) -> str:
         with self._lock:
             if self._active_run_id is not None:
                 raise FilterQualityRunAlreadyActive(self._active_run_id)
@@ -52,12 +59,13 @@ class FilterQualityRunCoordinator:
         thread.start()
         return params.run_id
 
-    def _build_last_24h_params(self) -> FilterQualityRunParams:
+    def _build_last_24h_params(self, filter_config_snapshot_json: dict | None = None) -> FilterQualityRunParams:
         now = self._now_factory()
         return FilterQualityRunParams(
             run_id=self._run_id_factory(),
             news_window_start_at=now - timedelta(hours=24),
             news_window_end_at=now,
+            filter_config_snapshot_json=filter_config_snapshot_json,
             run_note="Started from Monitoring UI",
             accepted_audit_enabled=False,
             accepted_audit_sample_size=None,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -6,18 +6,25 @@ import {
   fetchDeadLetters,
   fetchFilterQualityIncorrectlyRejected,
   fetchHealth,
+  fetchProductionFilterConfig,
   fetchFilterQualityStatus,
   fetchProviders,
+  fetchTestFilterConfig,
   fetchThroughput,
+  promoteTestFilterConfig,
+  runTestFilterSimulation,
+  saveTestFilterConfig,
   startFilterQualityRun,
   type FilterQualityIncorrectlyRejectedItem,
   type FilterQualityRunSummary,
-  type HealthState
+  type HealthState,
+  type NewsFilterConfigPayload
 } from "./api";
 
 export function App() {
   const queryClient = useQueryClient();
   const [incorrectlyRejectedOpen, setIncorrectlyRejectedOpen] = useState(false);
+  const [filterQualityStartRequested, setFilterQualityStartRequested] = useState(false);
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
   const providers = useQuery({ queryKey: ["providers"], queryFn: fetchProviders, refetchInterval: 10000 });
   const throughput = useQuery({ queryKey: ["throughput", "1h"], queryFn: () => fetchThroughput("1h") });
@@ -34,13 +41,47 @@ export function App() {
     queryFn: () => fetchFilterQualityIncorrectlyRejected(lastFilterQualityRunId ?? ""),
     enabled: incorrectlyRejectedOpen && Boolean(lastFilterQualityRunId)
   });
-  const startFilterQuality = useMutation({
-    mutationFn: startFilterQualityRun,
+  const productionFilter = useQuery({
+    queryKey: ["filter-config", "production"],
+    queryFn: fetchProductionFilterConfig
+  });
+  const testFilter = useQuery({
+    queryKey: ["filter-config", "test"],
+    queryFn: fetchTestFilterConfig
+  });
+  const saveTestFilter = useMutation({
+    mutationFn: saveTestFilterConfig,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filter-config", "test"] })
+  });
+  const runSimulation = useMutation({
+    mutationFn: runTestFilterSimulation,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filter-quality"] })
+  });
+  const promoteFilter = useMutation({
+    mutationFn: promoteTestFilterConfig,
     onSuccess: () => {
-      setIncorrectlyRejectedOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["filter-config"] });
       queryClient.invalidateQueries({ queryKey: ["filter-quality"] });
     }
   });
+  const startFilterQuality = useMutation({
+    mutationFn: startFilterQualityRun,
+    onMutate: () => {
+      setFilterQualityStartRequested(true);
+    },
+    onSuccess: () => {
+      setIncorrectlyRejectedOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["filter-quality"] });
+    },
+    onError: () => {
+      setFilterQualityStartRequested(false);
+    }
+  });
+  useEffect(() => {
+    if (filterQuality.data?.running_run) {
+      setFilterQualityStartRequested(false);
+    }
+  }, [filterQuality.data?.running_run]);
 
   const chartRows =
     throughput.data?.buckets.map((bucket) => ({
@@ -184,17 +225,22 @@ export function App() {
         <div className="panel-heading">
           <div className="heading-with-state">
             <h2>Filter Quality</h2>
-            <span className={`state-pill ${filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}`}>
-              {filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}
+            <span className={`state-pill ${filterQualityStartRequested ? "starting" : filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}`}>
+              {filterQualityStartRequested ? "starting" : filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}
             </span>
+            {filterQuality.data?.last_run && (
+              <span className="state-pill subject-pill">
+                {formatEvaluationSubject(filterQuality.data.last_run.evaluation_subject)}
+              </span>
+            )}
           </div>
           <button
             type="button"
             className="primary-button"
-            disabled={Boolean(filterQuality.data?.running_run) || startFilterQuality.isPending}
+            disabled={Boolean(filterQuality.data?.running_run) || startFilterQuality.isPending || filterQualityStartRequested}
             onClick={() => startFilterQuality.mutate()}
           >
-            {startFilterQuality.isPending ? "Starting" : "Run filter quality"}
+            {startFilterQuality.isPending || filterQualityStartRequested ? "Starting" : "Run filter quality"}
           </button>
         </div>
         {startFilterQuality.isError && (
@@ -205,8 +251,16 @@ export function App() {
             run={filterQuality.data.last_run}
             incorrectlyRejectedOpen={incorrectlyRejectedOpen}
             incorrectlyRejectedItems={incorrectlyRejected.data?.items ?? []}
-            incorrectlyRejectedLoading={incorrectlyRejected.isLoading || incorrectlyRejected.isFetching}
+            incorrectlyRejectedLoading={!incorrectlyRejected.data && incorrectlyRejected.isFetching}
             incorrectlyRejectedError={incorrectlyRejected.isError}
+            testFilter={testFilter.data}
+            productionFilter={productionFilter.data}
+            saveTestFilter={(config) => saveTestFilter.mutate(config)}
+            savePending={saveTestFilter.isPending}
+            runSimulation={() => runSimulation.mutate()}
+            runSimulationPending={runSimulation.isPending}
+            promoteFilter={() => promoteFilter.mutate()}
+            promotePending={promoteFilter.isPending}
             onToggleIncorrectlyRejected={() => setIncorrectlyRejectedOpen((open) => !open)}
           />
         ) : (
@@ -246,6 +300,14 @@ function FilterQualityMetrics({
   incorrectlyRejectedItems,
   incorrectlyRejectedLoading,
   incorrectlyRejectedError,
+  testFilter,
+  productionFilter,
+  saveTestFilter,
+  savePending,
+  runSimulation,
+  runSimulationPending,
+  promoteFilter,
+  promotePending,
   onToggleIncorrectlyRejected
 }: {
   run: FilterQualityRunSummary;
@@ -253,11 +315,20 @@ function FilterQualityMetrics({
   incorrectlyRejectedItems: FilterQualityIncorrectlyRejectedItem[];
   incorrectlyRejectedLoading: boolean;
   incorrectlyRejectedError: boolean;
+  testFilter?: NewsFilterConfigPayload;
+  productionFilter?: NewsFilterConfigPayload;
+  saveTestFilter: (config: NewsFilterConfigPayload) => void;
+  savePending: boolean;
+  runSimulation: () => void;
+  runSimulationPending: boolean;
+  promoteFilter: () => void;
+  promotePending: boolean;
   onToggleIncorrectlyRejected: () => void;
 }) {
   return (
     <div className="quality-section">
       <div className="quality-grid">
+        <QualityValue label="Total quality" value={formatRate(run.total_filter_quality)} />
         <QualityValue label="Rejection precision" value={formatRate(run.rejection_precision_proxy)} />
         <QualityValue label="Incorrectly accepted" value={formatRate(run.incorrectly_accepted_rate_estimate)} />
         <QualityValue
@@ -268,6 +339,7 @@ function FilterQualityMetrics({
         />
         <QualityValue label="Rejected evaluated" value={run.rejected_items_evaluated} />
         <QualityValue label="Accepted sampled" value={run.accepted_items_sampled} />
+        <QualityValue label="Accepted assumed correct" value={run.assumed_correct_accepted_count} />
         <QualityValue label="Item failures" value={run.item_failed_count} />
         <QualityValue label="Dataset input" value={run.dataset_input_count} />
         <QualityValue label="Last finished" value={formatDate(run.finished_at)} />
@@ -279,6 +351,14 @@ function FilterQualityMetrics({
           items={incorrectlyRejectedItems}
           loading={incorrectlyRejectedLoading}
           error={incorrectlyRejectedError}
+          testFilter={testFilter}
+          productionFilter={productionFilter}
+          saveTestFilter={saveTestFilter}
+          savePending={savePending}
+          runSimulation={runSimulation}
+          runSimulationPending={runSimulationPending}
+          promoteFilter={promoteFilter}
+          promotePending={promotePending}
         />
       )}
     </div>
@@ -313,12 +393,34 @@ function QualityValue({
 function IncorrectlyRejectedTable({
   items,
   loading,
-  error
+  error,
+  testFilter,
+  productionFilter,
+  saveTestFilter,
+  savePending,
+  runSimulation,
+  runSimulationPending,
+  promoteFilter,
+  promotePending
 }: {
   items: FilterQualityIncorrectlyRejectedItem[];
   loading: boolean;
   error: boolean;
+  testFilter?: NewsFilterConfigPayload;
+  productionFilter?: NewsFilterConfigPayload;
+  saveTestFilter: (config: NewsFilterConfigPayload) => void;
+  savePending: boolean;
+  runSimulation: () => void;
+  runSimulationPending: boolean;
+  promoteFilter: () => void;
+  promotePending: boolean;
 }) {
+  const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+  const [manualKeyword, setManualKeyword] = useState("");
+  const mergedKeywords = mergeRecommendedKeywords(items);
+  const selectedKeywordList = Array.from(selectedKeywords).sort();
+  const activeTestFilter = testFilter ?? productionFilter;
+
   if (loading) {
     return <EmptyState text="Loading incorrectly rejected records" />;
   }
@@ -328,37 +430,192 @@ function IncorrectlyRejectedTable({
   if (!items.length) {
     return <EmptyState text="No incorrectly rejected records" />;
   }
+  const updateSelected = (keyword: string, checked: boolean) => {
+    setSelectedKeywords((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(keyword);
+      } else {
+        next.delete(keyword);
+      }
+      return next;
+    });
+  };
+  const selectAll = () => {
+    setSelectedKeywords(new Set(mergedKeywords.map((item) => item.keyword)));
+  };
+  const addManualKeyword = () => {
+    const normalized = manualKeyword.trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+    setSelectedKeywords((current) => new Set([...current, normalized]));
+    setManualKeyword("");
+  };
+  const saveSelectedToTestFilter = () => {
+    if (!activeTestFilter) {
+      return;
+    }
+    const include = normalizeList([...activeTestFilter.include_keywords, ...selectedKeywordList]);
+    saveTestFilter({ ...activeTestFilter, config_role: "test", status: "active", include_keywords: include });
+  };
   return (
-    <div className="quality-details table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Article</th>
-            <th>Published</th>
-            <th>Source</th>
-            <th>Rejection reason</th>
-            <th>Cause</th>
-            <th>Solution</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={item.assessment_id}>
-              <td className="article-cell">
-                <a href={item.url} target="_blank" rel="noreferrer">
-                  {item.headline}
-                </a>
-                {item.rationale && <small>{item.rationale}</small>}
-              </td>
-              <td>{formatDate(item.published_at)}</td>
-              <td>{item.source}</td>
-              <td>{item.rejection_reason_code ?? "n/a"}</td>
-              <td>{formatCause(item.probable_cause)}</td>
-              <td className="solution-cell">{item.improvement_suggestion ?? "n/a"}</td>
+    <div className="quality-details">
+      <div className="keyword-actions">
+        <div>
+          <strong>Recommended include keywords</strong>
+          <div className="keyword-list">
+            {mergedKeywords.map((item) => (
+              <label className="keyword-chip" key={item.keyword}>
+                <input
+                  type="checkbox"
+                  checked={selectedKeywords.has(item.keyword)}
+                  onChange={(event) => updateSelected(item.keyword, event.target.checked)}
+                />
+                {item.keyword} ({item.count})
+              </label>
+            ))}
+            {!mergedKeywords.length && <span className="muted">No structured keyword recommendations</span>}
+          </div>
+        </div>
+        <div className="keyword-entry">
+          <input
+            value={manualKeyword}
+            onChange={(event) => setManualKeyword(event.target.value)}
+            placeholder="New include keyword"
+          />
+          <button type="button" className="secondary-button" onClick={addManualKeyword}>Add</button>
+          <button type="button" className="secondary-button" onClick={selectAll} disabled={!mergedKeywords.length}>
+            Select all
+          </button>
+          <button type="button" className="primary-button" onClick={saveSelectedToTestFilter} disabled={!selectedKeywordList.length || !activeTestFilter || savePending}>
+            {savePending ? "Saving" : "Add to test filter"}
+          </button>
+        </div>
+        {activeTestFilter && (
+          <FilterConfigEditor
+            config={activeTestFilter}
+            saveTestFilter={saveTestFilter}
+            savePending={savePending}
+            runSimulation={runSimulation}
+            runSimulationPending={runSimulationPending}
+            promoteFilter={promoteFilter}
+            promotePending={promotePending}
+          />
+        )}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Article</th>
+              <th>Keywords</th>
+              <th>Published</th>
+              <th>Source</th>
+              <th>Rejection reason</th>
+              <th>Cause</th>
+              <th>Solution</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.assessment_id}>
+                <td className="article-cell">
+                  <a href={item.url} target="_blank" rel="noreferrer">
+                    {item.headline}
+                  </a>
+                  {item.rationale && <small>{item.rationale}</small>}
+                </td>
+                <td className="keyword-cell">
+                  {item.recommended_include_keywords.map((keyword) => (
+                    <label className="keyword-chip compact-chip" key={`${item.assessment_id}-${keyword}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedKeywords.has(keyword)}
+                        onChange={(event) => updateSelected(keyword, event.target.checked)}
+                      />
+                      {keyword}
+                    </label>
+                  ))}
+                  {!item.recommended_include_keywords.length && "n/a"}
+                </td>
+                <td>{formatDate(item.published_at)}</td>
+                <td>{item.source}</td>
+                <td>{item.rejection_reason_code ?? "n/a"}</td>
+                <td>{formatCause(item.probable_cause)}</td>
+                <td className="solution-cell">{item.improvement_suggestion ?? "n/a"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FilterConfigEditor({
+  config,
+  saveTestFilter,
+  savePending,
+  runSimulation,
+  runSimulationPending,
+  promoteFilter,
+  promotePending
+}: {
+  config: NewsFilterConfigPayload;
+  saveTestFilter: (config: NewsFilterConfigPayload) => void;
+  savePending: boolean;
+  runSimulation: () => void;
+  runSimulationPending: boolean;
+  promoteFilter: () => void;
+  promotePending: boolean;
+}) {
+  const [draft, setDraft] = useState(config);
+  useEffect(() => {
+    setDraft(config);
+  }, [config]);
+  const updateList = (key: "include_keywords" | "exclude_keywords" | "watchlist_tickers", value: string) => {
+    setDraft({ ...draft, [key]: normalizeList(value.split(",")) });
+  };
+  return (
+    <div className="filter-editor">
+      <label>
+        Include keywords
+        <textarea value={draft.include_keywords.join(", ")} onChange={(event) => updateList("include_keywords", event.target.value)} />
+      </label>
+      <label>
+        Exclude keywords
+        <textarea value={draft.exclude_keywords.join(", ")} onChange={(event) => updateList("exclude_keywords", event.target.value)} />
+      </label>
+      <label>
+        Watchlist tickers
+        <textarea value={draft.watchlist_tickers.join(", ")} onChange={(event) => updateList("watchlist_tickers", event.target.value.toUpperCase())} />
+      </label>
+      <div className="filter-editor-row">
+        <label>
+          Dedupe algorithm
+          <input value={draft.dedupe_algorithm} onChange={(event) => setDraft({ ...draft, dedupe_algorithm: event.target.value })} />
+        </label>
+        <label>
+          Threshold
+          <input type="number" min="0" max="1" step="0.01" value={draft.dedupe_similarity_threshold} onChange={(event) => setDraft({ ...draft, dedupe_similarity_threshold: Number(event.target.value) })} />
+        </label>
+        <label>
+          Lookback hours
+          <input type="number" min="1" step="1" value={draft.dedupe_lookback_hours} onChange={(event) => setDraft({ ...draft, dedupe_lookback_hours: Number(event.target.value) })} />
+        </label>
+      </div>
+      <div className="filter-editor-actions">
+        <button type="button" className="primary-button" onClick={() => saveTestFilter({ ...draft, config_role: "test", status: "active" })} disabled={savePending}>
+          {savePending ? "Saving" : "Save test filter"}
+        </button>
+        <button type="button" className="secondary-button" onClick={runSimulation} disabled={runSimulationPending}>
+          {runSimulationPending ? "Running" : "Run simulation"}
+        </button>
+        <button type="button" className="secondary-button" onClick={promoteFilter} disabled={promotePending}>
+          {promotePending ? "Saving" : "Save as production"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -394,6 +651,16 @@ function filterQualityState(running?: FilterQualityRunSummary | null, last?: Fil
   return last?.status ?? "no runs";
 }
 
+function formatEvaluationSubject(value?: string | null) {
+  if (value === "simulation") {
+    return "Evaluation: Simulation";
+  }
+  if (value === "production") {
+    return "Evaluation: Production";
+  }
+  return "Evaluation: Unknown";
+}
+
 function formatErrorCodes(codes: Record<string, number>) {
   const entries = Object.entries(codes);
   if (!entries.length) {
@@ -410,4 +677,26 @@ function formatCause(value?: string | null) {
     return "n/a";
   }
   return value.replaceAll("_", " ");
+}
+
+function mergeRecommendedKeywords(items: FilterQualityIncorrectlyRejectedItem[]) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    for (const keyword of item.recommended_include_keywords) {
+      const normalized = keyword.trim().toLowerCase();
+      if (!normalized) {
+        continue;
+      }
+      counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([keyword, count]) => ({ keyword, count }))
+    .sort((left, right) => right.count - left.count || left.keyword.localeCompare(right.keyword));
+}
+
+function normalizeList(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
+  ).sort();
 }

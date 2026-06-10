@@ -196,14 +196,20 @@ class FilterQualityRepository:
         self,
         *,
         articles: list[InputArticle],
-        production_filter_run_id: str,
+        production_filter_run_id: str | None,
         simulation_filter_run_id: str,
     ) -> list[ComparisonItem]:
         article_by_id = {article.id: article for article in articles}
-        production = self._load_filter_results(
-            filter_run_id=production_filter_run_id,
-            article_ids=list(article_by_id),
-        )
+        if production_filter_run_id is None:
+            production = self._load_latest_production_filter_results(article_ids=list(article_by_id))
+        else:
+            production = {
+                article_id: (production_filter_run_id, result)
+                for article_id, result in self._load_filter_results(
+                    filter_run_id=production_filter_run_id,
+                    article_ids=list(article_by_id),
+                ).items()
+            }
         simulation = self._load_filter_results(
             filter_run_id=simulation_filter_run_id,
             article_ids=list(article_by_id),
@@ -211,9 +217,9 @@ class FilterQualityRepository:
         return [
             ComparisonItem(
                 article=article,
-                filter_run_id_production=production_filter_run_id,
+                filter_run_id_production=production[article.id][0] if article.id in production else "",
                 filter_run_id_simulation=simulation_filter_run_id,
-                production_result=production.get(article.id),
+                production_result=production[article.id][1] if article.id in production else None,
                 simulation_result=simulation.get(article.id),
             )
             for article in articles
@@ -315,6 +321,41 @@ class FilterQualityRepository:
                 matched_article_id=row["matched_article_id"],
                 similarity_score=row["similarity_score"],
                 details=dict(row["details_json"] or {}),
+            )
+            for row in rows
+        }
+
+    def _load_latest_production_filter_results(
+        self,
+        *,
+        article_ids: list[str],
+    ) -> dict[str, tuple[str, FilterResult]]:
+        if not article_ids:
+            return {}
+        sql = (
+            f"SELECT DISTINCT ON (r.article_id) "
+            f"r.filter_run_id, r.article_id, r.filter_outcome, r.rejection_reason_code, "
+            f"r.matched_article_id, r.similarity_score, r.details_json "
+            f"FROM {self._news_schema}.t_news_filter_results r "
+            f"JOIN {self._news_schema}.t_news_filter_runs fr "
+            f"ON fr.filter_run_id = r.filter_run_id "
+            f"WHERE fr.run_mode = 'production' AND r.article_id = ANY(%s) "
+            f"ORDER BY r.article_id, r.created_at DESC, fr.updated_at DESC, fr.created_at DESC, r.filter_run_id DESC"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (article_ids,))
+            rows = cur.fetchall()
+        return {
+            str(row["article_id"]): (
+                str(row["filter_run_id"]),
+                FilterResult(
+                    article_id=str(row["article_id"]),
+                    outcome=FilterOutcome(str(row["filter_outcome"])),
+                    rejection_reason_code=row["rejection_reason_code"],
+                    matched_article_id=row["matched_article_id"],
+                    similarity_score=row["similarity_score"],
+                    details=dict(row["details_json"] or {}),
+                ),
             )
             for row in rows
         }

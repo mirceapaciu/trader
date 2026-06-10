@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,10 +10,12 @@ from .filter_quality_runner import FilterQualityRunCoordinator
 from .models import (
     BacklogResponse,
     DeadLetterResponse,
+    FilterConfigSimulationStartResponse,
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityStartRunResponse,
     FilterQualityStatusResponse,
     HealthResponse,
+    NewsFilterConfigPayload,
     ProvidersResponse,
     ThroughputResponse,
 )
@@ -25,6 +28,10 @@ def _local_dev_origin_regex() -> str:
     return r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
 def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     resolved_settings = settings or MonitoringUiSettings.from_env()
     data_source = PostgresRedisMonitoringDataSource(
@@ -35,6 +42,11 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         news_raw_queue=resolved_settings.news_raw_queue,
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
     )
+    try:
+        data_source.bootstrap_news_schema(repo_root=_repo_root())
+    except Exception:
+        # The API still starts in degraded mode; dependency health reports database issues separately.
+        pass
     service = MonitoringService(
         settings=resolved_settings,
         data_source=data_source,
@@ -46,7 +58,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origin_regex=_local_dev_origin_regex(),
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["*"],
     )
 
@@ -83,6 +95,36 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     )
     def list_filter_quality_incorrectly_rejected(run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
         return service.list_filter_quality_incorrectly_rejected(run_id=run_id)
+
+    @app.get("/api/filter-configs/production", response_model=NewsFilterConfigPayload)
+    def get_production_filter_config() -> NewsFilterConfigPayload:
+        return service.get_production_filter_config()
+
+    @app.get("/api/filter-configs/test", response_model=NewsFilterConfigPayload)
+    def get_test_filter_config() -> NewsFilterConfigPayload:
+        return service.get_test_filter_config()
+
+    @app.put("/api/filter-configs/test", response_model=NewsFilterConfigPayload)
+    def save_test_filter_config(payload: NewsFilterConfigPayload) -> NewsFilterConfigPayload:
+        return service.save_test_filter_config(payload)
+
+    @app.post(
+        "/api/filter-configs/test/simulations",
+        response_model=FilterConfigSimulationStartResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def start_test_filter_simulation() -> FilterConfigSimulationStartResponse:
+        try:
+            return service.start_test_filter_simulation()
+        except FilterQualityRunAlreadyActive as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
+            ) from exc
+
+    @app.post("/api/filter-configs/test/promote", response_model=NewsFilterConfigPayload)
+    def promote_test_filter_config() -> NewsFilterConfigPayload:
+        return service.promote_test_filter_config()
 
     @app.post(
         "/api/filter-quality/runs",

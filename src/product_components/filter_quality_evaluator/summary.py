@@ -19,6 +19,7 @@ def build_run_summary(
     dataset_accepted_count: int,
     accepted_audit_enabled: bool,
     accepted_audit_sample_size: int | None,
+    evaluation_subject: str,
     assessments: list[ItemAssessment],
 ) -> RunSummary:
     evaluated = [item for item in assessments if item.item_status == ItemStatus.EVALUATED]
@@ -46,6 +47,9 @@ def build_run_summary(
     rejection_precision = quantize_rate(correctly_rejected, rejected_items_evaluated)
     incorrectly_accepted_rate = quantize_rate(incorrectly_accepted, accepted_items_sampled)
     accepted_coverage = quantize_rate(accepted_items_sampled, dataset_accepted_count)
+    assumed_correct_accepted_count = dataset_accepted_count - accepted_items_sampled
+    total_correct_count = correctly_rejected + correctly_accepted + assumed_correct_accepted_count
+    total_filter_quality = quantize_rate(total_correct_count, dataset_input_count)
     error_drivers = _top_rejection_reason_error_drivers(rejected)
     grouped_recommendations = _grouped_recommendations(rejected)
     summary_json = {
@@ -59,6 +63,10 @@ def build_run_summary(
         "incorrectly_accepted_rate_estimate": _decimal_or_none(incorrectly_accepted_rate),
         "accepted_audit_coverage_ratio": _decimal_or_none(accepted_coverage),
         "accepted_audit_enabled_effective": bool(accepted_audit_enabled and accepted_items_sampled > 0),
+        "assumed_correct_accepted_count": assumed_correct_accepted_count,
+        "total_correct_count": total_correct_count,
+        "total_filter_quality": _decimal_or_none(total_filter_quality),
+        "evaluation_subject": evaluation_subject,
     }
 
     return RunSummary(
@@ -73,6 +81,10 @@ def build_run_summary(
         incorrectly_accepted_count=incorrectly_accepted,
         rejection_precision_proxy=rejection_precision,
         incorrectly_accepted_rate_estimate=incorrectly_accepted_rate,
+        total_filter_quality=total_filter_quality,
+        total_correct_count=total_correct_count,
+        assumed_correct_accepted_count=assumed_correct_accepted_count,
+        evaluation_subject=evaluation_subject,
         summary_json=summary_json,
         recommendation_summary_md=_recommendation_markdown(
             rejection_precision=rejection_precision,

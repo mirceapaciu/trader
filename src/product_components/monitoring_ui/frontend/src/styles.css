@@ -164,6 +164,11 @@ h2 {
   background: #f6e2c4;
 }
 
+.state-pill.starting {
+  color: #7a4a16;
+  background: #f6e2c4;
+}
+
 .state-pill.completed {
   color: #176f58;
   background: #d9efe7;
@@ -172,6 +177,11 @@ h2 {
 .state-pill.failed {
   color: #973030;
   background: #f2d8d8;
+}
+
+.subject-pill {
+  color: #33423c;
+  background: #edf4f1;
 }
 
 .primary-button {
@@ -190,6 +200,24 @@ h2 {
   border-color: #b8c4bd;
   color: #637069;
   background: #dce5df;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #b8c4bd;
+  border-radius: 6px;
+  color: #26342f;
+  background: #f6faf7;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.secondary-button:disabled {
+  color: #7a857f;
+  background: #eef3ed;
   cursor: not-allowed;
 }
 
@@ -348,6 +376,95 @@ th {
   border: 1px solid #dbe3dc;
   border-radius: 6px;
   background: #fbfdfb;
+}
+
+.keyword-actions {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border-bottom: 1px solid #dbe3dc;
+}
+
+.keyword-list,
+.keyword-entry,
+.filter-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.keyword-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #d0dbd4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #26342f;
+  font-size: 0.86rem;
+}
+
+.compact-chip {
+  margin: 0 4px 4px 0;
+}
+
+.keyword-entry input,
+.filter-editor input,
+.filter-editor textarea {
+  border: 1px solid #c5d1ca;
+  border-radius: 6px;
+  color: #18221f;
+  background: #ffffff;
+  font: inherit;
+}
+
+.keyword-entry input {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.filter-editor {
+  display: grid;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.filter-editor label {
+  display: grid;
+  gap: 6px;
+  color: #64726c;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.filter-editor textarea {
+  min-height: 58px;
+  padding: 8px 10px;
+  resize: vertical;
+  text-transform: none;
+}
+
+.filter-editor input {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.filter-editor-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(120px, 160px) minmax(120px, 160px);
+  gap: 10px;
+}
+
+.keyword-cell {
+  min-width: 220px;
+}
+
+.muted {
+  color: #64726c;
 }
 
 .quality-details td {

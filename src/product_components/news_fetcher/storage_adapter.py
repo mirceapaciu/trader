@@ -17,6 +17,13 @@ from src.core_components.event_ingestion_engine.models import (
     PublicationObligation,
     PublicationStatus,
 )
+from src.product_components.news_fetcher.filter_config import (
+    NewsFilterConfig,
+    config_from_snapshot,
+    new_filter_config_id,
+    normalize_keywords,
+    normalize_tickers,
+)
 from src.product_components.news_fetcher.rss_feeds import (
     RssFeedSpec,
     RssTickerMatch,
@@ -363,6 +370,131 @@ class PostgresNewsStorageAdapter(StorageAdapter):
     def load_active_watchlist_tickers(self) -> set[str]:
         return {row.ticker for row in self.load_active_watchlist_rows()}
 
+    def load_active_production_filter_config(self) -> NewsFilterConfig | None:
+        sql = (
+            f"SELECT filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+            f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+            f"created_from_run_id "
+            f"FROM {self._news_schema}.t_news_filter_configs "
+            f"WHERE config_role = 'production' AND status = 'active' "
+            f"ORDER BY activated_at DESC NULLS LAST, updated_at DESC LIMIT 1"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+        return _filter_config(row) if row else None
+
+    def seed_production_filter_config_if_missing(
+        self,
+        *,
+        include_keywords: tuple[str, ...],
+        exclude_keywords: tuple[str, ...],
+        watchlist_tickers: set[str],
+        dedupe_algorithm: str,
+        dedupe_similarity_threshold: float,
+        dedupe_lookback_hours: int,
+    ) -> NewsFilterConfig:
+        existing = self.load_active_production_filter_config()
+        if existing is not None:
+            return existing
+        config = NewsFilterConfig(
+            filter_config_id=new_filter_config_id(),
+            config_name="Production filter",
+            config_role="production",
+            status="active",
+            include_keywords=normalize_keywords(include_keywords),
+            exclude_keywords=normalize_keywords(exclude_keywords),
+            watchlist_tickers=normalize_tickers(watchlist_tickers),
+            dedupe_algorithm=dedupe_algorithm,
+            dedupe_similarity_threshold=dedupe_similarity_threshold,
+            dedupe_lookback_hours=dedupe_lookback_hours,
+        )
+        self.save_filter_config(config)
+        return config
+
+    def save_filter_config(self, config: NewsFilterConfig) -> NewsFilterConfig:
+        sql = (
+            f"INSERT INTO {self._news_schema}.t_news_filter_configs "
+            f"(filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+            f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+            f"created_from_run_id, activated_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s = 'active' THEN NOW() ELSE NULL END) "
+            f"ON CONFLICT (filter_config_id) DO UPDATE SET "
+            f"config_name = EXCLUDED.config_name, status = EXCLUDED.status, "
+            f"include_keywords = EXCLUDED.include_keywords, exclude_keywords = EXCLUDED.exclude_keywords, "
+            f"watchlist_tickers = EXCLUDED.watchlist_tickers, dedupe_algorithm = EXCLUDED.dedupe_algorithm, "
+            f"dedupe_similarity_threshold = EXCLUDED.dedupe_similarity_threshold, "
+            f"dedupe_lookback_hours = EXCLUDED.dedupe_lookback_hours, "
+            f"created_from_run_id = EXCLUDED.created_from_run_id, updated_at = NOW()"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    config.filter_config_id,
+                    config.config_name,
+                    config.config_role,
+                    config.status,
+                    Json(list(config.include_keywords)),
+                    Json(list(config.exclude_keywords)),
+                    Json(list(config.watchlist_tickers)),
+                    config.dedupe_algorithm,
+                    config.dedupe_similarity_threshold,
+                    config.dedupe_lookback_hours,
+                    config.created_from_run_id,
+                    config.status,
+                ),
+            )
+            conn.commit()
+        return config
+
+    def promote_test_filter_config(self, *, filter_config_id: str) -> NewsFilterConfig:
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+                f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+                f"created_from_run_id FROM {self._news_schema}.t_news_filter_configs "
+                f"WHERE filter_config_id = %s AND config_role = 'test'",
+                (filter_config_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError("missing_test_filter_config")
+            test_config = _filter_config(row)
+            cur.execute(
+                f"UPDATE {self._news_schema}.t_news_filter_configs "
+                f"SET status = 'archived', updated_at = NOW() "
+                f"WHERE config_role = 'production' AND status = 'active'"
+            )
+            production = config_from_snapshot(
+                test_config.snapshot(),
+                filter_config_id=new_filter_config_id(),
+                config_name="Production filter",
+                config_role="production",
+                status="active",
+                created_from_run_id=test_config.created_from_run_id,
+            )
+            cur.execute(
+                f"INSERT INTO {self._news_schema}.t_news_filter_configs "
+                f"(filter_config_id, config_name, config_role, status, include_keywords, exclude_keywords, "
+                f"watchlist_tickers, dedupe_algorithm, dedupe_similarity_threshold, dedupe_lookback_hours, "
+                f"created_from_run_id, activated_at) "
+                f"VALUES (%s, %s, 'production', 'active', %s, %s, %s, %s, %s, %s, %s, NOW())",
+                (
+                    production.filter_config_id,
+                    production.config_name,
+                    Json(list(production.include_keywords)),
+                    Json(list(production.exclude_keywords)),
+                    Json(list(production.watchlist_tickers)),
+                    production.dedupe_algorithm,
+                    production.dedupe_similarity_threshold,
+                    production.dedupe_lookback_hours,
+                    production.created_from_run_id,
+                ),
+            )
+            conn.commit()
+        return production
+
     def load_active_watchlist_rows(self) -> list[WatchlistTicker]:
         sql = (
             f"SELECT ticker, exchange_code FROM {self._shared_schema}.{self._watchlist_table} "
@@ -586,6 +718,22 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _filter_config(row: dict[str, Any]) -> NewsFilterConfig:
+    return NewsFilterConfig(
+        filter_config_id=str(row["filter_config_id"]),
+        config_name=str(row["config_name"]),
+        config_role=str(row["config_role"]),
+        status=str(row["status"]),
+        include_keywords=normalize_keywords(_string_list(row["include_keywords"])),
+        exclude_keywords=normalize_keywords(_string_list(row["exclude_keywords"])),
+        watchlist_tickers=normalize_tickers(_string_list(row["watchlist_tickers"])),
+        dedupe_algorithm=str(row["dedupe_algorithm"]),
+        dedupe_similarity_threshold=float(row["dedupe_similarity_threshold"]),
+        dedupe_lookback_hours=int(row["dedupe_lookback_hours"]),
+        created_from_run_id=row["created_from_run_id"],
+    )
 
 
 def _ticker_match(row: dict[str, Any]) -> RssTickerMatch:

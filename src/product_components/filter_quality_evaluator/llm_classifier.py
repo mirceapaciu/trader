@@ -93,13 +93,42 @@ def _build_prompt(
     production = item.production_result
     return json.dumps(
         {
-            "task": "Evaluate financial news filtering quality.",
+            "task": (
+                "Evaluate whether the news filter made the right decision for stock-market trading. "
+                "The target accepted set is news that could plausibly impact stock prices or market "
+                "prices for watched securities."
+            ),
+            "relevance_standard": {
+                "accept_if": [
+                    "Company-specific catalysts such as earnings, guidance, revenue, margins, orders, contracts, product launches, leadership changes, layoffs, buybacks, dividends, debt, liquidity, bankruptcy, M&A, IPOs, spinoffs, litigation, investigations, regulatory approvals, regulatory actions, analyst actions, ratings changes, price target changes, insider or institutional activity.",
+                    "Sector, commodity, rate, currency, credit, inflation, jobs, GDP, central-bank, geopolitical, supply-chain, or policy news likely to move broad markets, sectors, or watched tickers.",
+                    "News that names or clearly implicates a tradable company, ticker, sector, commodity, or macro driver and provides a plausible near- or medium-term price catalyst.",
+                ],
+                "reject_if": [
+                    "Personal finance, retirement planning, wealth management, tax advice, budgeting, real estate advice, relationship money advice, generic investing education, evergreen explainers, opinion without a tradable catalyst, or consumer advice.",
+                    "Articles that mention money, investing, or retirement but do not identify a market-moving event, tradable asset, ticker, sector, or macro catalyst.",
+                    "Low-value duplicates, stale summaries, advertisements, newsletters, or broad commentary with no actionable stock-price impact.",
+                ],
+                "label_guidance": {
+                    "correctly_rejected": "Use when a rejected article lacks a plausible stock-price or market-price catalyst.",
+                    "incorrectly_rejected": "Use only when a rejected article contains a plausible stock-price or market-price catalyst and should have passed the filter.",
+                    "correctly_accepted": "Use when an accepted article contains a plausible stock-price or market-price catalyst.",
+                    "incorrectly_accepted": "Use when an accepted article is only general finance, personal finance, evergreen education, opinion, or other non-catalyst content.",
+                },
+                "keyword_recommendation_guidance": (
+                    "Recommend include keywords only for terms that would improve detection of stock-price-impacting "
+                    "news. Do not recommend broad personal-finance terms such as personal finance, retirement "
+                    "planning, wealth management, financial compatibility, budgeting, or relationship money advice "
+                    "unless the article also contains a concrete market-moving catalyst."
+                ),
+            },
             "required_json_fields": [
                 "classification_label",
                 "classification_confidence",
                 "rationale",
                 "probable_cause",
                 "improvement_suggestion",
+                "suggestion_json",
             ],
             "scope": scope.value,
             "article": {
@@ -194,6 +223,7 @@ _CLASSIFIER_RESPONSE_FORMAT: dict[str, Any] = {
             "rationale",
             "probable_cause",
             "improvement_suggestion",
+            "suggestion_json",
             "estimated_tokens",
         ],
         "properties": {
@@ -223,6 +253,17 @@ _CLASSIFIER_RESPONSE_FORMAT: dict[str, Any] = {
                 ],
             },
             "improvement_suggestion": {"type": "string"},
+            "suggestion_json": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "recommended_include_keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    }
+                },
+                "required": ["recommended_include_keywords"],
+            },
             "estimated_tokens": {"type": "integer", "minimum": 0},
         },
     },

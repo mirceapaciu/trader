@@ -128,6 +128,10 @@ class FilterQualityRunSummary(BaseModel):
     incorrectly_accepted_count: int
     item_failed_count: int = 0
     item_error_codes: dict[str, int] = Field(default_factory=dict)
+    total_filter_quality: float | None = None
+    total_correct_count: int = 0
+    assumed_correct_accepted_count: int = 0
+    evaluation_subject: str = "unknown"
     summary_json: dict[str, Any]
     recommendation_summary_md: str
 
@@ -158,7 +162,31 @@ class FilterQualityIncorrectlyRejectedItem(BaseModel):
     rationale: str | None = None
     classification_confidence: float | None = None
     suggestion_json: dict[str, Any] = Field(default_factory=dict)
+    recommended_include_keywords: list[str] = Field(default_factory=list)
     evaluated_at: datetime
+
+
+class NewsFilterConfigPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    filter_config_id: str | None = None
+    config_name: str = "Test filter"
+    config_role: str = "test"
+    status: str = "active"
+    include_keywords: list[str] = Field(default_factory=list)
+    exclude_keywords: list[str] = Field(default_factory=list)
+    watchlist_tickers: list[str] = Field(default_factory=list)
+    dedupe_algorithm: str = "rapidfuzz_ratio"
+    dedupe_similarity_threshold: float = 0.9
+    dedupe_lookback_hours: int = 24
+    created_from_run_id: str | None = None
+
+
+class FilterConfigSimulationStartResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    status: Literal["running"]
 
 
 class FilterQualityIncorrectlyRejectedResponse(BaseModel):

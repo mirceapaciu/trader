@@ -93,11 +93,13 @@ class FilterQualityEvaluatorService:
                 )
             snapshot = simulation_config.snapshot()
             fingerprint = params.filter_config_fingerprint or fingerprint_for_snapshot(snapshot)
-            production_filter_run_id = self._repository.resolve_production_filter_run_id(
-                filter_config_fingerprint=params.filter_config_fingerprint,
-                window_start_at=params.news_window_start_at,
-                window_end_at=params.news_window_end_at,
-            )
+            production_filter_run_id = None
+            if params.filter_config_fingerprint:
+                production_filter_run_id = self._repository.resolve_production_filter_run_id(
+                    filter_config_fingerprint=params.filter_config_fingerprint,
+                    window_start_at=params.news_window_start_at,
+                    window_end_at=params.news_window_end_at,
+                )
             simulation_filter_run_id = f"sim_{params.run_id}"
             simulation_run = FilterRun(
                 filter_run_id=simulation_filter_run_id,
@@ -139,6 +141,7 @@ class FilterQualityEvaluatorService:
                 dataset_accepted_count=dataset_accepted_count,
                 accepted_audit_enabled=params.accepted_audit_enabled,
                 accepted_audit_sample_size=params.accepted_audit_sample_size,
+                evaluation_subject="simulation" if params.filter_config_snapshot_json else "production",
                 assessments=assessments,
             )
             self._repository.finalize_run_success(run_id=params.run_id, summary=summary)

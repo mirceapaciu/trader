@@ -18,6 +18,38 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_input_news_articles (
 CREATE INDEX IF NOT EXISTS idx_input_news_articles_published_at
     ON news_fetcher.t_input_news_articles (published_at DESC);
 
+CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_configs (
+    filter_config_id TEXT PRIMARY KEY,
+    config_name TEXT NOT NULL,
+    config_role TEXT NOT NULL,
+    status TEXT NOT NULL,
+    include_keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+    exclude_keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+    watchlist_tickers JSONB NOT NULL DEFAULT '[]'::jsonb,
+    dedupe_algorithm TEXT NOT NULL,
+    dedupe_similarity_threshold DOUBLE PRECISION NOT NULL,
+    dedupe_lookback_hours INTEGER NOT NULL,
+    created_from_run_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    activated_at TIMESTAMPTZ,
+    CONSTRAINT ck_news_filter_configs_role
+        CHECK (config_role IN ('production', 'test')),
+    CONSTRAINT ck_news_filter_configs_status
+        CHECK (status IN ('active', 'archived')),
+    CONSTRAINT ck_news_filter_configs_threshold
+        CHECK (dedupe_similarity_threshold >= 0 AND dedupe_similarity_threshold <= 1),
+    CONSTRAINT ck_news_filter_configs_lookback
+        CHECK (dedupe_lookback_hours > 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_news_filter_configs_active_production
+    ON news_fetcher.t_news_filter_configs (config_role)
+    WHERE config_role = 'production' AND status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_news_filter_configs_role_status_updated
+    ON news_fetcher.t_news_filter_configs (config_role, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_runs (
     filter_run_id TEXT PRIMARY KEY,
     run_mode TEXT NOT NULL,

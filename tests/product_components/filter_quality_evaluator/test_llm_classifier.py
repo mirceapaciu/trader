@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -16,8 +17,10 @@ from src.product_components.filter_quality_evaluator.models import ComparisonIte
 class FakeClient:
     def __init__(self, payload):
         self.payload = payload
+        self.prompt = None
 
     def classify(self, *, model: str, prompt: str, max_output_tokens: int):
+        self.prompt = prompt
         return dict(self.payload)
 
 
@@ -43,18 +46,19 @@ def _item() -> ComparisonItem:
 
 
 def test_llm_classifier_validates_structured_response() -> None:
+    client = FakeClient(
+        {
+            "classification_label": "incorrectly_rejected",
+            "classification_confidence": 0.75,
+            "rationale": "Relevant to watched ticker.",
+            "probable_cause": "keyword_gap",
+            "improvement_suggestion": "Add guidance keyword.",
+            "suggestion_json": {"recommended_include_keywords": ["guidance"]},
+            "estimated_tokens": 10,
+        }
+    )
     classifier = LlmClassifier(
-        client=FakeClient(
-            {
-                "classification_label": "incorrectly_rejected",
-                "classification_confidence": 0.75,
-                "rationale": "Relevant to watched ticker.",
-                "probable_cause": "keyword_gap",
-                "improvement_suggestion": "Add guidance keyword.",
-                "suggestion_json": {"keyword": "guidance"},
-                "estimated_tokens": 10,
-            }
-        ),
+        client=client,
         model="test-model",
         max_tokens_per_run=1000,
         max_tokens_per_item=100,
@@ -69,6 +73,14 @@ def test_llm_classifier_validates_structured_response() -> None:
 
     assert result.classification_label.value == "incorrectly_rejected"
     assert result.llm_model == "test-model"
+    assert result.suggestion_json["recommended_include_keywords"] == ["guidance"]
+
+    prompt = json.loads(client.prompt or "{}")
+    relevance_standard = prompt["relevance_standard"]
+    assert "stock-market trading" in prompt["task"]
+    assert "Company-specific catalysts" in relevance_standard["accept_if"][0]
+    assert "Personal finance" in relevance_standard["reject_if"][0]
+    assert "retirement planning" in relevance_standard["keyword_recommendation_guidance"]
 
 
 def test_llm_classifier_fails_closed_on_budget() -> None:

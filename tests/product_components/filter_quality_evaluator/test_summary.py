@@ -49,6 +49,7 @@ def test_build_run_summary_applies_normative_rates_and_rankings() -> None:
         dataset_accepted_count=1,
         accepted_audit_enabled=True,
         accepted_audit_sample_size=1,
+        evaluation_subject="simulation",
         assessments=[
             _assessment(ClassificationLabel.CORRECTLY_REJECTED),
             _assessment(ClassificationLabel.INCORRECTLY_REJECTED, reason="b_reason"),
@@ -59,7 +60,13 @@ def test_build_run_summary_applies_normative_rates_and_rankings() -> None:
 
     assert summary.rejection_precision_proxy == Decimal("0.33333")
     assert summary.incorrectly_accepted_rate_estimate == Decimal("1.00000")
+    assert summary.total_filter_quality == Decimal("0.25000")
+    assert summary.total_correct_count == 1
+    assert summary.assumed_correct_accepted_count == 0
+    assert summary.evaluation_subject == "simulation"
     assert summary.summary_json["accepted_audit_coverage_ratio"] == 1.0
+    assert summary.summary_json["total_filter_quality"] == 0.25
+    assert summary.summary_json["evaluation_subject"] == "simulation"
     assert summary.summary_json["top_rejection_reason_error_drivers"] == [
         {"rejection_reason_code": "a_reason", "count": 1},
         {"rejection_reason_code": "b_reason", "count": 1},
@@ -74,5 +81,22 @@ def test_build_run_summary_fails_inconsistent_counts() -> None:
             dataset_accepted_count=0,
             accepted_audit_enabled=False,
             accepted_audit_sample_size=None,
+            evaluation_subject="production",
             assessments=[_assessment(ClassificationLabel.CORRECTLY_REJECTED)],
         )
+
+
+def test_build_run_summary_assumes_unaudited_accepted_items_are_correct() -> None:
+    summary = build_run_summary(
+        dataset_input_count=4,
+        dataset_rejected_count=1,
+        dataset_accepted_count=3,
+        accepted_audit_enabled=False,
+        accepted_audit_sample_size=None,
+        evaluation_subject="simulation",
+        assessments=[_assessment(ClassificationLabel.CORRECTLY_REJECTED)],
+    )
+
+    assert summary.assumed_correct_accepted_count == 3
+    assert summary.total_correct_count == 4
+    assert summary.total_filter_quality == Decimal("1.00000")

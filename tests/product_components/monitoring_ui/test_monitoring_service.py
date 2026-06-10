@@ -10,6 +10,7 @@ from src.product_components.monitoring_ui.backend.models import (
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityRunSummary,
     FilterQualityStatusResponse,
+    NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
     ThroughputResponse,
@@ -34,6 +35,8 @@ class FakeDataSource:
         self.last_filter_quality_run: FilterQualityRunSummary | None = None
         self.incorrectly_rejected_run_id: str | None = None
         self.stale_timeout_seconds: int | None = None
+        self.test_filter = _filter_config("test_cfg", "test")
+        self.production_filter = _filter_config("prod_cfg", "production")
 
     def check_dependencies(self) -> list[DependencyHealth]:
         return self.dependencies
@@ -97,6 +100,22 @@ class FakeDataSource:
         self.stale_timeout_seconds = timeout_seconds
         return 0
 
+    def get_production_filter_config(self) -> NewsFilterConfigPayload:
+        return self.production_filter
+
+    def get_test_filter_config(self) -> NewsFilterConfigPayload:
+        return self.test_filter
+
+    def save_test_filter_config(self, payload: NewsFilterConfigPayload) -> NewsFilterConfigPayload:
+        self.test_filter = payload
+        return payload
+
+    def promote_test_filter_config(self) -> NewsFilterConfigPayload:
+        self.production_filter = self.test_filter.model_copy(
+            update={"config_role": "production", "filter_config_id": "prod_promoted"}
+        )
+        return self.production_filter
+
 
 class FailingProviderDataSource(FakeDataSource):
     def list_providers(self) -> ProvidersResponse:
@@ -109,6 +128,10 @@ class FakeFilterQualityRunner:
         self.starts = 0
 
     def start_last_24h_run(self) -> str:
+        self.starts += 1
+        return self.run_id
+
+    def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
         self.starts += 1
         return self.run_id
 
@@ -246,6 +269,20 @@ def test_start_filter_quality_run_raises_when_run_is_already_running() -> None:
     assert runner.starts == 0
 
 
+def test_filter_config_workflow_delegates_to_data_source() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source, filter_quality_runner=FakeFilterQualityRunner())
+
+    test_filter = service.get_test_filter_config()
+    saved = service.save_test_filter_config(test_filter.model_copy(update={"include_keywords": ["guidance", "outlook"]}))
+    simulation = service.start_test_filter_simulation()
+    production = service.promote_test_filter_config()
+
+    assert saved.include_keywords == ["guidance", "outlook"]
+    assert simulation.status == "running"
+    assert production.config_role == "production"
+
+
 def test_filter_quality_coordinator_builds_last_24h_params_with_accepted_audit_disabled() -> None:
     now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
     coordinator = FilterQualityRunCoordinator(
@@ -309,6 +346,25 @@ def _filter_quality_run(run_id: str, status: str) -> FilterQualityRunSummary:
         incorrectly_accepted_count=0,
         item_failed_count=0,
         item_error_codes={},
+        total_filter_quality=0.9,
+        total_correct_count=11,
+        assumed_correct_accepted_count=5,
+        evaluation_subject="simulation",
         summary_json={},
         recommendation_summary_md="",
+    )
+
+
+def _filter_config(config_id: str, role: str) -> NewsFilterConfigPayload:
+    return NewsFilterConfigPayload(
+        filter_config_id=config_id,
+        config_name=f"{role} filter",
+        config_role=role,
+        status="active",
+        include_keywords=["guidance"],
+        exclude_keywords=[],
+        watchlist_tickers=["AAPL"],
+        dedupe_algorithm="rapidfuzz_ratio",
+        dedupe_similarity_threshold=0.9,
+        dedupe_lookback_hours=24,
     )

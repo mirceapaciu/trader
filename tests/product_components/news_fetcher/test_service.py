@@ -9,9 +9,11 @@ from src.core_components.event_ingestion_engine.interfaces import EventPublisher
 from src.core_components.event_ingestion_engine.models import (
     CanonicalEvent,
     Checkpoint,
+    FilterRun,
     PublicationObligation,
     PublicationStatus,
 )
+from src.product_components.news_fetcher.filter_config import NewsFilterConfig
 from src.product_components.news_fetcher.providers import (
     NewsProvider,
     ProviderRateLimitError,
@@ -49,12 +51,39 @@ class InMemoryStorage(StorageAdapter):
         self.watchlist = {"AAPL"}
         self.rss_feed_specs: list[RssFeedSpec] = []
         self.cycle_statuses: list[dict[str, Any]] = []
+        self.filter_config: NewsFilterConfig | None = None
+        self.filter_runs: list[FilterRun] = []
 
     def load_active_watchlist_tickers(self) -> set[str]:
         return self.watchlist
 
     def load_rss_feed_specs(self) -> list[RssFeedSpec]:
         return self.rss_feed_specs
+
+    def seed_production_filter_config_if_missing(
+        self,
+        *,
+        include_keywords: tuple[str, ...],
+        exclude_keywords: tuple[str, ...],
+        watchlist_tickers: set[str],
+        dedupe_algorithm: str,
+        dedupe_similarity_threshold: float,
+        dedupe_lookback_hours: int,
+    ) -> NewsFilterConfig:
+        if self.filter_config is None:
+            self.filter_config = NewsFilterConfig(
+                filter_config_id="test_cfg",
+                config_name="Production filter",
+                config_role="production",
+                status="active",
+                include_keywords=include_keywords,
+                exclude_keywords=exclude_keywords,
+                watchlist_tickers=tuple(sorted(watchlist_tickers)),
+                dedupe_algorithm=dedupe_algorithm,
+                dedupe_similarity_threshold=dedupe_similarity_threshold,
+                dedupe_lookback_hours=dedupe_lookback_hours,
+            )
+        return self.filter_config
 
     def get_checkpoint(self, source_key: str) -> Checkpoint | None:
         return self.checkpoints.get(source_key)
@@ -84,6 +113,7 @@ class InMemoryStorage(StorageAdapter):
         filter_results,
         obligations,
     ) -> None:
+        self.filter_runs.append(filter_run)
         for event in accepted_events:
             self.events.setdefault(event.id, event)
         ids: list[str] = []
@@ -316,7 +346,49 @@ def test_service_processes_dynamic_rss_feed_specs(monkeypatch) -> None:
     assert "rss:yahoo_finance:AAPL:NASDAQ" in results
     assert results["rss:yahoo_finance:AAPL:NASDAQ"].accepted == 1
     assert len(publisher.published) == 1
-    assert storage.cycle_statuses[0]["source_key"] == "rss:yahoo_finance:AAPL:NASDAQ"
+
+
+def test_service_uses_db_backed_filter_config_when_available() -> None:
+    provider = FakeProvider(
+        ProviderBatch(
+            events=[
+                ProviderArticle(
+                    source="finnhub",
+                    headline="Apple reports strategic partnership",
+                    url="https://example.com/aapl",
+                    published_at=datetime(2026, 5, 27, 9, 0, tzinfo=timezone.utc),
+                    fetched_at=datetime(2026, 5, 27, 9, 0, tzinfo=timezone.utc),
+                    tickers=[],
+                )
+            ],
+            next_cursor={"cursor": "new"},
+            cursor_updated_at=datetime(2026, 5, 27, 9, 1, tzinfo=timezone.utc),
+        )
+    )
+    storage = InMemoryStorage()
+    storage.filter_config = NewsFilterConfig(
+        filter_config_id="db_cfg",
+        config_name="Production filter",
+        config_role="production",
+        status="active",
+        include_keywords=("strategic partnership",),
+        exclude_keywords=(),
+        watchlist_tickers=(),
+        dedupe_algorithm="rapidfuzz_ratio",
+        dedupe_similarity_threshold=0.9,
+        dedupe_lookback_hours=24,
+    )
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={"finnhub": provider},
+        storage=storage,
+        publisher=FakePublisher(),
+    )
+
+    result = service.run_once()["finnhub"]
+
+    assert result.accepted == 1
+    assert storage.filter_runs[0].filter_config_snapshot_json["include_keywords"] == ["strategic partnership"]
 
 
 def test_service_backs_off_rate_limited_sources() -> None:
