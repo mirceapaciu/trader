@@ -224,6 +224,16 @@ class PostgresRedisMonitoringDataSource:
     ) -> FilterQualityIncorrectlyRejectedResponse:
         sql = (
             f"SELECT a.assessment_id, a.run_id, a.article_id, i.headline, i.summary, i.url, a.source, a.published_at, "
+            f"pfr.matched_article_id AS production_matched_article_id, "
+            f"matched_pfr_i.headline AS production_matched_article_headline, "
+            f"matched_pfr_i.url AS production_matched_article_url, "
+            f"matched_pfr_i.source AS production_matched_article_source, "
+            f"matched_pfr_i.published_at AS production_matched_article_published_at, "
+            f"sfr_result.matched_article_id AS simulation_matched_article_id, "
+            f"matched_sfr_i.headline AS simulation_matched_article_headline, "
+            f"matched_sfr_i.url AS simulation_matched_article_url, "
+            f"matched_sfr_i.source AS simulation_matched_article_source, "
+            f"matched_sfr_i.published_at AS simulation_matched_article_published_at, "
             f"a.production_filter_outcome, a.simulation_filter_outcome, a.rejection_reason_code, "
             f"pfr.rejection_reason_code AS production_rejection_reason_code, "
             f"sfr_result.rejection_reason_code AS simulation_rejection_reason_code, "
@@ -236,6 +246,10 @@ class PostgresRedisMonitoringDataSource:
             f"ON pfr.filter_run_id = a.filter_run_id_production AND pfr.article_id = a.article_id "
             f"LEFT JOIN {self._news_schema}.t_news_filter_results sfr_result "
             f"ON sfr_result.filter_run_id = a.filter_run_id_simulation AND sfr_result.article_id = a.article_id "
+            f"LEFT JOIN {self._news_schema}.t_input_news_articles matched_pfr_i "
+            f"ON matched_pfr_i.id = pfr.matched_article_id "
+            f"LEFT JOIN {self._news_schema}.t_input_news_articles matched_sfr_i "
+            f"ON matched_sfr_i.id = sfr_result.matched_article_id "
             f"WHERE a.run_id = %s "
             f"AND a.item_status = 'evaluated' "
             f"AND a.classification_label = 'incorrectly_rejected' "
@@ -587,6 +601,56 @@ def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyR
         url=str(row["url"]),
         source=str(row["source"]),
         published_at=_to_utc(row["published_at"]),
+        production_matched_article_id=(
+            str(row["production_matched_article_id"])
+            if row.get("production_matched_article_id")
+            else None
+        ),
+        production_matched_article_headline=(
+            str(row["production_matched_article_headline"])
+            if row.get("production_matched_article_headline")
+            else None
+        ),
+        production_matched_article_url=(
+            str(row["production_matched_article_url"])
+            if row.get("production_matched_article_url")
+            else None
+        ),
+        production_matched_article_source=(
+            str(row["production_matched_article_source"])
+            if row.get("production_matched_article_source")
+            else None
+        ),
+        production_matched_article_published_at=(
+            _to_utc(row["production_matched_article_published_at"])
+            if row.get("production_matched_article_published_at")
+            else None
+        ),
+        simulation_matched_article_id=(
+            str(row["simulation_matched_article_id"])
+            if row.get("simulation_matched_article_id")
+            else None
+        ),
+        simulation_matched_article_headline=(
+            str(row["simulation_matched_article_headline"])
+            if row.get("simulation_matched_article_headline")
+            else None
+        ),
+        simulation_matched_article_url=(
+            str(row["simulation_matched_article_url"])
+            if row.get("simulation_matched_article_url")
+            else None
+        ),
+        simulation_matched_article_source=(
+            str(row["simulation_matched_article_source"])
+            if row.get("simulation_matched_article_source")
+            else None
+        ),
+        simulation_matched_article_published_at=(
+            _to_utc(row["simulation_matched_article_published_at"])
+            if row.get("simulation_matched_article_published_at")
+            else None
+        ),
         production_filter_outcome=row["production_filter_outcome"],
         simulation_filter_outcome=row["simulation_filter_outcome"],
         rejection_reason_code=row["rejection_reason_code"],

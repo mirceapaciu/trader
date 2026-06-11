@@ -171,6 +171,16 @@ class FilterQualityIncorrectlyRejectedItem(BaseModel):
     url: str
     source: str
     published_at: datetime
+    production_matched_article_id: str | None = None
+    production_matched_article_headline: str | None = None
+    production_matched_article_url: str | None = None
+    production_matched_article_source: str | None = None
+    production_matched_article_published_at: datetime | None = None
+    simulation_matched_article_id: str | None = None
+    simulation_matched_article_headline: str | None = None
+    simulation_matched_article_url: str | None = None
+    simulation_matched_article_source: str | None = None
+    simulation_matched_article_published_at: datetime | None = None
     production_filter_outcome: str | None = None
     simulation_filter_outcome: str | None = None
     rejection_reason_code: str | None = None

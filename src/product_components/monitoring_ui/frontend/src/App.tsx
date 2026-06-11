@@ -563,6 +563,20 @@ function IncorrectlyRejectedTable({
                   <a href={item.url} target="_blank" rel="noreferrer">
                     {item.headline}
                   </a>
+                  {displayedMatchedArticle(item, lastRun).url && displayedMatchedArticle(item, lastRun).headline && (
+                    <small>
+                      Duplicate of{" "}
+                      <a href={displayedMatchedArticle(item, lastRun).url ?? undefined} target="_blank" rel="noreferrer">
+                        {displayedMatchedArticle(item, lastRun).headline}
+                      </a>
+                      {displayedMatchedArticle(item, lastRun).source
+                        ? ` (${displayedMatchedArticle(item, lastRun).source})`
+                        : ""}
+                      {displayedMatchedArticle(item, lastRun).published_at
+                        ? `, ${formatDate(displayedMatchedArticle(item, lastRun).published_at)}`
+                        : ""}
+                    </small>
+                  )}
                   {item.rationale && <small>{item.rationale}</small>}
                 </td>
                 <td className="keyword-cell">
@@ -757,6 +771,35 @@ function displayedRejectionReason(item: FilterQualityIncorrectlyRejectedItem, ru
     return item.simulation_rejection_reason_code ?? item.rejection_reason_code;
   }
   return item.rejection_reason_code;
+}
+
+function displayedMatchedArticle(item: FilterQualityIncorrectlyRejectedItem, run: FilterQualityRunSummary) {
+  if (run.evaluation_subject === "production") {
+    return {
+      id: item.production_matched_article_id,
+      headline: item.production_matched_article_headline,
+      url: item.production_matched_article_url,
+      source: item.production_matched_article_source,
+      published_at: item.production_matched_article_published_at
+    };
+  }
+  if (run.evaluation_subject === "simulation") {
+    return {
+      id: item.simulation_matched_article_id,
+      headline: item.simulation_matched_article_headline,
+      url: item.simulation_matched_article_url,
+      source: item.simulation_matched_article_source,
+      published_at: item.simulation_matched_article_published_at
+    };
+  }
+  return {
+    id: item.production_matched_article_id ?? item.simulation_matched_article_id,
+    headline: item.production_matched_article_headline ?? item.simulation_matched_article_headline,
+    url: item.production_matched_article_url ?? item.simulation_matched_article_url,
+    source: item.production_matched_article_source ?? item.simulation_matched_article_source,
+    published_at:
+      item.production_matched_article_published_at ?? item.simulation_matched_article_published_at
+  };
 }
 
 function displayedCause(item: FilterQualityIncorrectlyRejectedItem, run: FilterQualityRunSummary) {

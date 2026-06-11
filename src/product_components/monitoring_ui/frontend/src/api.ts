@@ -121,6 +121,16 @@ export type FilterQualityIncorrectlyRejectedItem = {
   url: string;
   source: string;
   published_at: string;
+  production_matched_article_id?: string | null;
+  production_matched_article_headline?: string | null;
+  production_matched_article_url?: string | null;
+  production_matched_article_source?: string | null;
+  production_matched_article_published_at?: string | null;
+  simulation_matched_article_id?: string | null;
+  simulation_matched_article_headline?: string | null;
+  simulation_matched_article_url?: string | null;
+  simulation_matched_article_source?: string | null;
+  simulation_matched_article_published_at?: string | null;
   production_filter_outcome?: string | null;
   simulation_filter_outcome?: string | null;
   rejection_reason_code?: string | null;

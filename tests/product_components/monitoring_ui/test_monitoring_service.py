@@ -80,6 +80,11 @@ class FakeDataSource:
                     url="https://example.test/article",
                     source="example",
                     published_at=_now(),
+                    production_matched_article_id="article_accepted",
+                    production_matched_article_headline="Revenue outlook improves after guidance reset",
+                    production_matched_article_url="https://example.test/article-accepted",
+                    production_matched_article_source="finnhub",
+                    production_matched_article_published_at=_now(),
                     production_filter_outcome="accepted",
                     simulation_filter_outcome="rejected",
                     rejection_reason_code="rejected_not_relevant",
@@ -242,6 +247,7 @@ def test_list_filter_quality_incorrectly_rejected_delegates_to_data_source() -> 
     assert response.run_id == "fqe_done"
     assert response.items[0].probable_cause == "keyword_gap"
     assert response.items[0].improvement_suggestion == "Add revenue outlook language to include keywords."
+    assert response.items[0].production_matched_article_id == "article_accepted"
 
 
 def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() -> None:
@@ -255,6 +261,11 @@ def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() ->
             "url": "https://example.com/a1",
             "source": "rss",
             "published_at": datetime(2026, 6, 10, tzinfo=timezone.utc),
+            "production_matched_article_id": "a2",
+            "production_matched_article_headline": "How investor euphoria turned one stock-market bull cautious",
+            "production_matched_article_url": "https://example.com/a2",
+            "production_matched_article_source": "rss",
+            "production_matched_article_published_at": datetime(2026, 6, 10, 1, tzinfo=timezone.utc),
             "production_filter_outcome": "rejected",
             "simulation_filter_outcome": "rejected",
             "rejection_reason_code": "rejected_not_relevant",
@@ -276,6 +287,7 @@ def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() ->
     assert item.suggestion_json["recommended_include_keywords"] == ["leveraged etfs"]
     assert item.production_rejection_reason_code == "rejected_soft_duplicate"
     assert item.simulation_rejection_reason_code == "rejected_not_relevant"
+    assert item.production_matched_article_headline == "How investor euphoria turned one stock-market bull cautious"
 
 
 def test_start_filter_quality_run_returns_running_when_no_active_run_exists() -> None:
