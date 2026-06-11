@@ -25,7 +25,6 @@ from .simulation import (
     deterministic_sample,
     fingerprint_for_snapshot,
     simulate_filter_results,
-    simulation_config_from_news_settings,
     simulation_config_from_snapshot,
 )
 from .summary import build_run_summary
@@ -88,26 +87,27 @@ class FilterQualityEvaluatorService:
             if len(articles) > self._settings.max_items_per_run:
                 raise ValueError("dataset_exceeds_max_items_per_run")
 
-            watchlist = self._repository.load_active_watchlist_tickers(
-                shared_schema=self._settings.shared_db_schema,
-                watchlist_table=self._settings.watchlist_table,
-            )
+            production_filter_run_id = None
             if params.filter_config_snapshot_json:
                 simulation_config = simulation_config_from_snapshot(params.filter_config_snapshot_json)
+                if params.filter_config_fingerprint:
+                    production_filter_run_id = self._repository.resolve_production_filter_run_id(
+                        filter_config_fingerprint=params.filter_config_fingerprint,
+                        window_start_at=params.news_window_start_at,
+                        window_end_at=params.news_window_end_at,
+                    )
             else:
-                simulation_config = simulation_config_from_news_settings(
-                    self._news_settings,
-                    watchlist_tickers=watchlist,
-                )
-            snapshot = simulation_config.snapshot()
-            fingerprint = params.filter_config_fingerprint or fingerprint_for_snapshot(snapshot)
-            production_filter_run_id = None
-            if params.filter_config_fingerprint:
                 production_filter_run_id = self._repository.resolve_production_filter_run_id(
                     filter_config_fingerprint=params.filter_config_fingerprint,
                     window_start_at=params.news_window_start_at,
                     window_end_at=params.news_window_end_at,
                 )
+                production_snapshot = self._repository.load_filter_run_snapshot(
+                    filter_run_id=production_filter_run_id,
+                )
+                simulation_config = simulation_config_from_snapshot(production_snapshot)
+            snapshot = simulation_config.snapshot()
+            fingerprint = params.filter_config_fingerprint or fingerprint_for_snapshot(snapshot)
             simulation_filter_run_id = f"sim_{params.run_id}"
             simulation_run = FilterRun(
                 filter_run_id=simulation_filter_run_id,

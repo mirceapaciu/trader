@@ -15,6 +15,7 @@ from src.product_components.filter_quality_evaluator.models import (
     ClassificationResult,
     ComparisonItem,
     EvaluationScope,
+    FilterQualityRunParams,
     InputArticle,
     ProbableCause,
 )
@@ -67,6 +68,132 @@ class RecordingRepository:
 
     def insert_item_assessment(self, assessment) -> None:
         self.assessments.append(assessment)
+
+
+class ReplayRepository:
+    def __init__(
+        self,
+        *,
+        articles: list[InputArticle],
+        production_snapshot: dict,
+        production_results: dict[str, FilterResult],
+    ) -> None:
+        self.articles = articles
+        self.production_snapshot = production_snapshot
+        self.production_results = production_results
+        self.simulation_results: dict[str, FilterResult] = {}
+        self.simulation_snapshot: dict | None = None
+        self.final_summary = None
+        self.failure_code = None
+        self.assessments = []
+
+    def load_input_articles(self, **_kwargs) -> list[InputArticle]:
+        return self.articles
+
+    def create_run(self, **_kwargs) -> None:
+        return None
+
+    def resolve_production_filter_run_id(self, **_kwargs) -> str:
+        return "prod_snapshot"
+
+    def load_filter_run_snapshot(self, *, filter_run_id: str) -> dict:
+        assert filter_run_id == "prod_snapshot"
+        return self.production_snapshot
+
+    def persist_simulation_results(self, *, filter_run, results) -> None:
+        self.simulation_snapshot = filter_run.filter_config_snapshot_json
+        self.simulation_results = {result.article_id: result for result in results}
+
+    def load_comparison_items(self, *, articles, production_filter_run_id, simulation_filter_run_id):
+        return [
+            ComparisonItem(
+                article=article,
+                filter_run_id_production=production_filter_run_id,
+                filter_run_id_simulation=simulation_filter_run_id,
+                production_result=self.production_results.get(article.id),
+                simulation_result=self.simulation_results.get(article.id),
+            )
+            for article in articles
+        ]
+
+    def insert_item_assessment(self, assessment) -> None:
+        self.assessments.append(assessment)
+
+    def finalize_run_success(self, *, run_id: str, summary) -> None:
+        self.final_summary = summary
+
+    def finalize_run_failure(self, *, run_id: str, error_code: str, error_details_json=None) -> None:
+        self.failure_code = error_code
+
+
+def test_production_run_replays_persisted_production_filter_snapshot_not_env_settings() -> None:
+    article = _input_article(
+        "a1",
+        headline="Micron enters a bearish phase",
+        summary="The tech sector correction accelerated.",
+        published_at=datetime(2026, 6, 4, 10, tzinfo=timezone.utc),
+    )
+    repository = ReplayRepository(
+        articles=[article],
+        production_snapshot=_snapshot(include_keywords=["bearish"]),
+        production_results={"a1": FilterResult(article_id="a1", outcome=FilterOutcome.ACCEPTED)},
+    )
+    service = FilterQualityEvaluatorService(
+        settings=_settings(),
+        news_settings=SimpleNamespace(include_keywords=(), exclude_keywords=()),
+        repository=repository,
+        classifier=SlowRecordingClassifier(),
+    )
+
+    service.run(_run_params())
+
+    assert repository.failure_code is None
+    assert repository.simulation_snapshot is not None
+    assert repository.simulation_snapshot["include_keywords"] == ["bearish"]
+    assert repository.simulation_results["a1"].outcome == FilterOutcome.ACCEPTED
+    assert repository.final_summary.evaluation_subject == "production"
+
+
+def test_production_run_replays_dedupe_with_persisted_production_filter_snapshot() -> None:
+    earlier = _input_article(
+        "a1",
+        headline="Micron, Intel drag the tech sector into a new bearish phase. Will the correction last this time?",
+        summary="The selloff in the tech sector graduated to a new phase: it is now officially a correction.",
+        url="https://example.test/marketwatch",
+        published_at=datetime(2026, 6, 4, 10, tzinfo=timezone.utc),
+    )
+    later = _input_article(
+        "a2",
+        headline="Micron, Marvell drag the tech sector into a new bearish phase. Will the correction last this time?",
+        summary="The selloff in the tech sector graduated to a new phase: it is now officially a correction.",
+        url="https://example.test/marketwatch",
+        published_at=datetime(2026, 6, 4, 11, tzinfo=timezone.utc),
+    )
+    repository = ReplayRepository(
+        articles=[earlier, later],
+        production_snapshot=_snapshot(include_keywords=["bearish"]),
+        production_results={
+            "a1": FilterResult(article_id="a1", outcome=FilterOutcome.ACCEPTED),
+            "a2": FilterResult(
+                article_id="a2",
+                outcome=FilterOutcome.REJECTED,
+                rejection_reason_code="rejected_soft_duplicate",
+            ),
+        },
+    )
+    service = FilterQualityEvaluatorService(
+        settings=_settings(),
+        news_settings=SimpleNamespace(include_keywords=(), exclude_keywords=()),
+        repository=repository,
+        classifier=SlowRecordingClassifier(),
+    )
+
+    service.run(_run_params())
+
+    assert repository.failure_code is None
+    assert repository.simulation_results["a1"].outcome == FilterOutcome.ACCEPTED
+    assert repository.simulation_results["a2"].outcome == FilterOutcome.REJECTED
+    assert repository.simulation_results["a2"].rejection_reason_code == "rejected_soft_duplicate"
 
 
 def test_evaluate_items_fails_fast_after_repeated_llm_classification_failures() -> None:
@@ -166,17 +293,7 @@ def test_evaluate_items_concurrency_one_stays_sequential() -> None:
 
 def _comparison(index: int) -> ComparisonItem:
     article_id = f"a{index}"
-    article = InputArticle(
-        id=article_id,
-        source="rss",
-        headline=f"Headline {index}",
-        summary="Summary",
-        url=f"https://example.com/{index}",
-        tickers=[],
-        published_at=datetime(2026, 6, 4, tzinfo=timezone.utc),
-        fetched_at=datetime(2026, 6, 4, tzinfo=timezone.utc),
-        sentiment_source=None,
-    )
+    article = _input_article(article_id, headline=f"Headline {index}", url=f"https://example.com/{index}")
     return ComparisonItem(
         article=article,
         filter_run_id_production="prod",
@@ -187,4 +304,55 @@ def _comparison(index: int) -> ComparisonItem:
             outcome=FilterOutcome.REJECTED,
             rejection_reason_code="rejected_not_relevant",
         ),
+    )
+
+
+def _input_article(
+    article_id: str,
+    *,
+    headline: str,
+    summary: str | None = "Summary",
+    url: str = "https://example.test/article",
+    published_at: datetime = datetime(2026, 6, 4, tzinfo=timezone.utc),
+) -> InputArticle:
+    return InputArticle(
+        id=article_id,
+        source="rss",
+        headline=headline,
+        summary=summary,
+        url=url,
+        tickers=[],
+        published_at=published_at,
+        fetched_at=published_at,
+        sentiment_source=None,
+    )
+
+
+def _snapshot(*, include_keywords: list[str]) -> dict:
+    return {
+        "include_keywords": include_keywords,
+        "exclude_keywords": [],
+        "watchlist_tickers": [],
+        "dedupe_algorithm": "rapidfuzz_ratio",
+        "dedupe_similarity_threshold": 0.9,
+        "dedupe_lookback_hours": 24,
+    }
+
+
+def _settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        max_items_per_run=100,
+        llm_max_tokens_per_run=1000,
+        accepted_audit_sample_size=200,
+        classification_concurrency=2,
+    )
+
+
+def _run_params() -> FilterQualityRunParams:
+    return FilterQualityRunParams(
+        run_id="fqe_test",
+        news_window_start_at=datetime(2026, 6, 4, tzinfo=timezone.utc),
+        news_window_end_at=datetime(2026, 6, 5, tzinfo=timezone.utc),
+        accepted_audit_enabled=False,
+        accepted_audit_sample_size=None,
     )

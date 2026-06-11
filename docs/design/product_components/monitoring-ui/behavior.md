@@ -95,7 +95,7 @@ The panel must display:
 
 The Run filter quality button starts one evaluator run for the last 24 hours. UI-triggered runs use the active NewsFetcher filter configuration, set `accepted_audit_enabled=false`, and write their status and summary to `filter_quality_evaluator.t_filter_quality_runs`. If a run is already active, the API returns `409` with the active `run_id`.
 
-When the latest terminal filter quality run evaluated production, the UI seeds the displayed test-filter draft from the active production filter. This is a display-only draft; the persisted test filter is updated only when the operator saves the test filter.
+The UI seeds the displayed test-filter draft from the latest run's evaluated filter snapshot when available. For production evaluations, incorrectly rejected details display the production rejection reason; for simulation evaluations, they display the simulation rejection reason. Deterministic rejection reasons such as duplicates and excluded keywords take precedence over persisted LLM cause and solution text when displaying the cause and solution columns. The displayed draft is not persisted until the operator saves the test filter.
 
 ### 4.4 Backlog and Dead-Letter Panels
 

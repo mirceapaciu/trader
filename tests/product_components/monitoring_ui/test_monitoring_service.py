@@ -83,6 +83,8 @@ class FakeDataSource:
                     production_filter_outcome="accepted",
                     simulation_filter_outcome="rejected",
                     rejection_reason_code="rejected_not_relevant",
+                    production_rejection_reason_code=None,
+                    simulation_rejection_reason_code="rejected_not_relevant",
                     probable_cause="keyword_gap",
                     improvement_suggestion="Add revenue outlook language to include keywords.",
                     rationale="The article contains material financial guidance.",
@@ -256,6 +258,8 @@ def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() ->
             "production_filter_outcome": "rejected",
             "simulation_filter_outcome": "rejected",
             "rejection_reason_code": "rejected_not_relevant",
+            "production_rejection_reason_code": "rejected_soft_duplicate",
+            "simulation_rejection_reason_code": "rejected_not_relevant",
             "probable_cause": "keyword_gap",
             "improvement_suggestion": "Add market phrases.",
             "rationale": "Market-wide catalyst.",
@@ -270,6 +274,8 @@ def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() ->
 
     assert item.recommended_include_keywords == ["leveraged etfs"]
     assert item.suggestion_json["recommended_include_keywords"] == ["leveraged etfs"]
+    assert item.production_rejection_reason_code == "rejected_soft_duplicate"
+    assert item.simulation_rejection_reason_code == "rejected_not_relevant"
 
 
 def test_start_filter_quality_run_returns_running_when_no_active_run_exists() -> None:

@@ -580,9 +580,9 @@ function IncorrectlyRejectedTable({
                 </td>
                 <td>{formatDate(item.published_at)}</td>
                 <td>{item.source}</td>
-                <td>{item.rejection_reason_code ?? "n/a"}</td>
-                <td>{formatCause(item.probable_cause)}</td>
-                <td className="solution-cell">{item.improvement_suggestion ?? "n/a"}</td>
+                <td>{displayedRejectionReason(item, lastRun) ?? "n/a"}</td>
+                <td>{formatCause(displayedCause(item, lastRun))}</td>
+                <td className="solution-cell">{displayedSolution(item, lastRun) ?? "n/a"}</td>
               </tr>
             ))}
           </tbody>
@@ -719,31 +719,69 @@ function displayedTestFilterDraft({
   testFilter?: NewsFilterConfigPayload;
   productionFilter?: NewsFilterConfigPayload;
 }) {
+  if (lastRun.evaluated_filter_config) {
+    return testDraftFromSource(lastRun.evaluated_filter_config, testFilter, lastRun.run_id);
+  }
   if (lastRun.evaluation_subject === "production" && productionFilter) {
-    return testDraftFromProduction(productionFilter, testFilter, lastRun.run_id);
+    return testDraftFromSource(productionFilter, testFilter, lastRun.run_id);
   }
   if (testFilter) {
     return testFilter;
   }
-  return productionFilter ? testDraftFromProduction(productionFilter, undefined, undefined) : undefined;
+  return productionFilter ? testDraftFromSource(productionFilter, undefined, undefined) : undefined;
 }
 
-function testDraftFromProduction(
-  productionFilter: NewsFilterConfigPayload,
+function testDraftFromSource(
+  sourceFilter: NewsFilterConfigPayload,
   testFilter: NewsFilterConfigPayload | undefined,
   createdFromRunId: string | undefined
 ): NewsFilterConfigPayload {
   return {
-    ...productionFilter,
+    ...sourceFilter,
     filter_config_id: testFilter?.filter_config_id,
     config_name: testFilter?.config_name ?? "Test filter",
     config_role: "test",
     status: "active",
-    include_keywords: [...productionFilter.include_keywords],
-    exclude_keywords: [...productionFilter.exclude_keywords],
-    watchlist_tickers: [...productionFilter.watchlist_tickers],
+    include_keywords: [...sourceFilter.include_keywords],
+    exclude_keywords: [...sourceFilter.exclude_keywords],
+    watchlist_tickers: [...sourceFilter.watchlist_tickers],
     created_from_run_id: createdFromRunId
   };
+}
+
+function displayedRejectionReason(item: FilterQualityIncorrectlyRejectedItem, run: FilterQualityRunSummary) {
+  if (run.evaluation_subject === "production") {
+    return item.production_rejection_reason_code ?? item.rejection_reason_code;
+  }
+  if (run.evaluation_subject === "simulation") {
+    return item.simulation_rejection_reason_code ?? item.rejection_reason_code;
+  }
+  return item.rejection_reason_code;
+}
+
+function displayedCause(item: FilterQualityIncorrectlyRejectedItem, run: FilterQualityRunSummary) {
+  const reason = displayedRejectionReason(item, run);
+  if (reason === "rejected_soft_duplicate" || reason === "rejected_strong_duplicate") {
+    return "dedupe_threshold_issue";
+  }
+  if (reason === "rejected_not_relevant") {
+    return item.probable_cause;
+  }
+  if (reason === "rejected_excluded_keyword") {
+    return "rule_conflict";
+  }
+  return item.probable_cause;
+}
+
+function displayedSolution(item: FilterQualityIncorrectlyRejectedItem, run: FilterQualityRunSummary) {
+  const reason = displayedRejectionReason(item, run);
+  if (reason === "rejected_soft_duplicate" || reason === "rejected_strong_duplicate") {
+    return "Review dedupe scoring or threshold for this article pair before changing include keywords.";
+  }
+  if (reason === "rejected_excluded_keyword") {
+    return "Review the matching exclude keyword before changing include keywords.";
+  }
+  return item.improvement_suggestion;
 }
 
 function formatErrorCodes(codes: Record<string, number>) {

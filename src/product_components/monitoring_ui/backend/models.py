@@ -104,6 +104,22 @@ class DeadLetterResponse(BaseModel):
 FilterQualityRunStatus = Literal["running", "completed", "failed"]
 
 
+class NewsFilterConfigPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    filter_config_id: str | None = None
+    config_name: str = "Test filter"
+    config_role: str = "test"
+    status: str = "active"
+    include_keywords: list[str] = Field(default_factory=list)
+    exclude_keywords: list[str] = Field(default_factory=list)
+    watchlist_tickers: list[str] = Field(default_factory=list)
+    dedupe_algorithm: str = "rapidfuzz_ratio"
+    dedupe_similarity_threshold: float = 0.9
+    dedupe_lookback_hours: int = 24
+    created_from_run_id: str | None = None
+
+
 class FilterQualityRunSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -132,6 +148,7 @@ class FilterQualityRunSummary(BaseModel):
     total_correct_count: int = 0
     assumed_correct_accepted_count: int = 0
     evaluation_subject: str = "unknown"
+    evaluated_filter_config: NewsFilterConfigPayload | None = None
     summary_json: dict[str, Any]
     recommendation_summary_md: str
 
@@ -157,6 +174,8 @@ class FilterQualityIncorrectlyRejectedItem(BaseModel):
     production_filter_outcome: str | None = None
     simulation_filter_outcome: str | None = None
     rejection_reason_code: str | None = None
+    production_rejection_reason_code: str | None = None
+    simulation_rejection_reason_code: str | None = None
     probable_cause: str | None = None
     improvement_suggestion: str | None = None
     rationale: str | None = None
@@ -164,22 +183,6 @@ class FilterQualityIncorrectlyRejectedItem(BaseModel):
     suggestion_json: dict[str, Any] = Field(default_factory=dict)
     recommended_include_keywords: list[str] = Field(default_factory=list)
     evaluated_at: datetime
-
-
-class NewsFilterConfigPayload(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    filter_config_id: str | None = None
-    config_name: str = "Test filter"
-    config_role: str = "test"
-    status: str = "active"
-    include_keywords: list[str] = Field(default_factory=list)
-    exclude_keywords: list[str] = Field(default_factory=list)
-    watchlist_tickers: list[str] = Field(default_factory=list)
-    dedupe_algorithm: str = "rapidfuzz_ratio"
-    dedupe_similarity_threshold: float = 0.9
-    dedupe_lookback_hours: int = 24
-    created_from_run_id: str | None = None
 
 
 class FilterConfigSimulationStartResponse(BaseModel):

@@ -82,6 +82,7 @@ Dataset join and matching rules:
 - Baseline rows are selected from exactly one production filter run:
 	- if `filter_config_fingerprint` is provided, use the unique production run with the same fingerprint;
 	- otherwise use the most recently created production run that covers the selected news window.
+- Production evaluations without an explicit `filter_config_snapshot_json` replay the selected production filter run's stored `filter_config_snapshot_json`; they must not rebuild simulation config from current environment settings.
 - Simulation rows are selected from the single simulation run created for the current evaluator run id.
 - A row participates in comparison only when the input article exists and both baseline and simulation rows can be matched by `(filter_run_id, article_id)`.
 - If the baseline row is missing, the item is recorded as a failed item with `item_error_code = missing_production_result`.

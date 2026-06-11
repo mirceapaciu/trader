@@ -91,6 +91,7 @@ export type FilterQualityRunSummary = {
   total_correct_count: number;
   assumed_correct_accepted_count: number;
   evaluation_subject: string;
+  evaluated_filter_config?: NewsFilterConfigPayload | null;
   dataset_input_count: number;
   dataset_rejected_count: number;
   dataset_accepted_count: number;
@@ -123,6 +124,8 @@ export type FilterQualityIncorrectlyRejectedItem = {
   production_filter_outcome?: string | null;
   simulation_filter_outcome?: string | null;
   rejection_reason_code?: string | null;
+  production_rejection_reason_code?: string | null;
+  simulation_rejection_reason_code?: string | null;
   probable_cause?: string | null;
   improvement_suggestion?: string | null;
   rationale?: string | null;

@@ -137,6 +137,21 @@ class FilterQualityRepository:
             raise ValueError("missing_production_filter_run")
         return str(row[0])
 
+    def load_filter_run_snapshot(self, *, filter_run_id: str) -> dict[str, Any]:
+        sql = (
+            f"SELECT filter_config_snapshot_json FROM {self._news_schema}.t_news_filter_runs "
+            f"WHERE filter_run_id = %s"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (filter_run_id,))
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError("missing_filter_run_snapshot")
+        snapshot = dict(row[0] or {})
+        if not snapshot:
+            raise ValueError("empty_filter_run_snapshot")
+        return snapshot
+
     def persist_simulation_results(
         self,
         *,

@@ -225,11 +225,17 @@ class PostgresRedisMonitoringDataSource:
         sql = (
             f"SELECT a.assessment_id, a.run_id, a.article_id, i.headline, i.summary, i.url, a.source, a.published_at, "
             f"a.production_filter_outcome, a.simulation_filter_outcome, a.rejection_reason_code, "
+            f"pfr.rejection_reason_code AS production_rejection_reason_code, "
+            f"sfr_result.rejection_reason_code AS simulation_rejection_reason_code, "
             f"a.probable_cause, a.improvement_suggestion, a.rationale, a.classification_confidence, "
             f"a.suggestion_json, sfr.filter_config_snapshot_json, a.evaluated_at "
             f"FROM {self._filter_quality_schema}.t_filter_quality_item_assessments a "
             f"JOIN {self._news_schema}.t_input_news_articles i ON i.id = a.article_id "
             f"LEFT JOIN {self._news_schema}.t_news_filter_runs sfr ON sfr.filter_run_id = a.filter_run_id_simulation "
+            f"LEFT JOIN {self._news_schema}.t_news_filter_results pfr "
+            f"ON pfr.filter_run_id = a.filter_run_id_production AND pfr.article_id = a.article_id "
+            f"LEFT JOIN {self._news_schema}.t_news_filter_results sfr_result "
+            f"ON sfr_result.filter_run_id = a.filter_run_id_simulation AND sfr_result.article_id = a.article_id "
             f"WHERE a.run_id = %s "
             f"AND a.item_status = 'evaluated' "
             f"AND a.classification_label = 'incorrectly_rejected' "
@@ -322,7 +328,7 @@ class PostgresRedisMonitoringDataSource:
 
     def get_running_filter_quality_run(self) -> FilterQualityRunSummary | None:
         sql = (
-            f"SELECT {_filter_quality_run_columns(self._filter_quality_schema)} "
+            f"SELECT {_filter_quality_run_columns(self._filter_quality_schema, self._news_schema)} "
             f"FROM {self._filter_quality_schema}.t_filter_quality_runs r "
             f"WHERE r.status = 'running' "
             f"ORDER BY r.created_at DESC LIMIT 1"
@@ -331,7 +337,7 @@ class PostgresRedisMonitoringDataSource:
 
     def get_last_filter_quality_run(self) -> FilterQualityRunSummary | None:
         sql = (
-            f"SELECT {_filter_quality_run_columns(self._filter_quality_schema)} "
+            f"SELECT {_filter_quality_run_columns(self._filter_quality_schema, self._news_schema)} "
             f"FROM {self._filter_quality_schema}.t_filter_quality_runs r "
             f"WHERE r.status IN ('completed', 'failed') "
             f"ORDER BY r.finished_at DESC NULLS LAST, r.created_at DESC LIMIT 1"
@@ -491,7 +497,7 @@ def _optional_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
-def _filter_quality_run_columns(schema: str) -> str:
+def _filter_quality_run_columns(schema: str, news_schema: str) -> str:
     return (
         "r.run_id, r.status, r.news_window_start_at, r.news_window_end_at, r.created_at, r.started_at, "
         "r.finished_at, r.error_code, r.rejection_precision_proxy, r.incorrectly_accepted_rate_estimate, "
@@ -504,6 +510,8 @@ def _filter_quality_run_columns(schema: str) -> str:
         "FROM (SELECT COALESCE(a.item_error_code, 'unknown') AS error_code, COUNT(1) AS error_count "
         f"FROM {schema}.t_filter_quality_item_assessments a "
         "WHERE a.run_id = r.run_id AND a.item_status = 'failed' GROUP BY 1) errors) AS item_error_codes, "
+        f"(SELECT fr.filter_config_snapshot_json FROM {news_schema}.t_news_filter_runs fr "
+        "WHERE fr.filter_run_id = CONCAT('sim_', r.run_id) LIMIT 1) AS evaluated_filter_config_snapshot_json, "
         "r.summary_json, r.recommendation_summary_md"
     )
 
@@ -554,6 +562,10 @@ def _filter_quality_run(row: dict[str, Any]) -> FilterQualityRunSummary:
         total_correct_count=total_correct_count,
         assumed_correct_accepted_count=assumed_correct_accepted_count,
         evaluation_subject=str(summary_json.get("evaluation_subject") or "unknown"),
+        evaluated_filter_config=_filter_config_payload_from_snapshot(
+            row["evaluated_filter_config_snapshot_json"],
+            created_from_run_id=str(row["run_id"]),
+        ),
         summary_json=summary_json,
         recommendation_summary_md=str(row["recommendation_summary_md"] or ""),
     )
@@ -578,6 +590,8 @@ def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyR
         production_filter_outcome=row["production_filter_outcome"],
         simulation_filter_outcome=row["simulation_filter_outcome"],
         rejection_reason_code=row["rejection_reason_code"],
+        production_rejection_reason_code=row.get("production_rejection_reason_code"),
+        simulation_rejection_reason_code=row.get("simulation_rejection_reason_code"),
         probable_cause=row["probable_cause"],
         improvement_suggestion=row["improvement_suggestion"],
         rationale=row["rationale"],
@@ -618,6 +632,26 @@ def _filter_config_payload(config: NewsFilterConfig) -> NewsFilterConfigPayload:
         dedupe_lookback_hours=config.dedupe_lookback_hours,
         created_from_run_id=config.created_from_run_id,
     )
+
+
+def _filter_config_payload_from_snapshot(
+    snapshot: Any,
+    *,
+    created_from_run_id: str | None,
+) -> NewsFilterConfigPayload | None:
+    snapshot_dict = dict(snapshot or {})
+    if not snapshot_dict:
+        return None
+    config = config_from_snapshot(
+        snapshot_dict,
+        filter_config_id="",
+        config_name="Evaluated filter",
+        config_role="test",
+        status="active",
+        created_from_run_id=created_from_run_id,
+    )
+    payload = _filter_config_payload(config)
+    return payload.model_copy(update={"filter_config_id": None})
 
 
 def _payload_snapshot(payload: NewsFilterConfigPayload) -> dict[str, Any]:
