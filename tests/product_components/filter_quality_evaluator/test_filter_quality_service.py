@@ -194,6 +194,83 @@ def test_production_run_replays_dedupe_with_persisted_production_filter_snapshot
     assert repository.simulation_results["a1"].outcome == FilterOutcome.ACCEPTED
     assert repository.simulation_results["a2"].outcome == FilterOutcome.REJECTED
     assert repository.simulation_results["a2"].rejection_reason_code == "rejected_soft_duplicate"
+    assessment_by_article = {assessment.article_id: assessment for assessment in repository.assessments}
+    assert assessment_by_article["a2"].classification_label == ClassificationLabel.CORRECTLY_REJECTED
+    assert assessment_by_article["a2"].probable_cause == ProbableCause.LOW_VALUE_NOISE
+
+
+def test_duplicate_rejection_is_incorrect_when_matched_article_was_not_accepted() -> None:
+    service = FilterQualityEvaluatorService(
+        settings=SimpleNamespace(accepted_audit_sample_size=200, classification_concurrency=1),
+        news_settings=SimpleNamespace(),
+        repository=RecordingRepository(),
+        classifier=FailingClassifier(),
+    )
+
+    assessments = service._evaluate_items(
+        params=SimpleNamespace(
+            run_id="fqe_test",
+            accepted_audit_enabled=False,
+            accepted_audit_sample_size=None,
+        ),
+        comparisons=[
+            _duplicate_comparison(
+                "accepted_target",
+                headline="Micron bearish phase",
+                simulation_outcome=FilterOutcome.REJECTED,
+                reason="rejected_not_relevant",
+            ),
+            _duplicate_comparison(
+                "rejected_duplicate",
+                headline="Micron bearish phase update",
+                simulation_outcome=FilterOutcome.REJECTED,
+                reason="rejected_soft_duplicate",
+                matched_article_id="accepted_target",
+            ),
+        ],
+        filter_config_snapshot_json=_snapshot(include_keywords=["bearish"]),
+    )
+
+    duplicate = next(assessment for assessment in assessments if assessment.article_id == "rejected_duplicate")
+    assert duplicate.classification_label == ClassificationLabel.INCORRECTLY_REJECTED
+    assert duplicate.probable_cause == ProbableCause.DEDUPE_THRESHOLD_ISSUE
+
+
+def test_duplicate_rejection_is_incorrect_when_rejected_article_adds_watched_ticker() -> None:
+    service = FilterQualityEvaluatorService(
+        settings=SimpleNamespace(accepted_audit_sample_size=200, classification_concurrency=1),
+        news_settings=SimpleNamespace(),
+        repository=RecordingRepository(),
+        classifier=FailingClassifier(),
+    )
+
+    assessments = service._evaluate_items(
+        params=SimpleNamespace(
+            run_id="fqe_test",
+            accepted_audit_enabled=False,
+            accepted_audit_sample_size=None,
+        ),
+        comparisons=[
+            _duplicate_comparison(
+                "accepted_target",
+                headline="Micron drags the tech sector into a bearish phase",
+                simulation_outcome=FilterOutcome.ACCEPTED,
+            ),
+            _duplicate_comparison(
+                "rejected_duplicate",
+                headline="Micron and MRVL drag the tech sector into a bearish phase",
+                simulation_outcome=FilterOutcome.REJECTED,
+                reason="rejected_soft_duplicate",
+                matched_article_id="accepted_target",
+                tickers=["MRVL"],
+            ),
+        ],
+        filter_config_snapshot_json=_snapshot(include_keywords=["bearish"], watchlist_tickers=["MRVL"]),
+    )
+
+    duplicate = next(assessment for assessment in assessments if assessment.article_id == "rejected_duplicate")
+    assert duplicate.classification_label == ClassificationLabel.INCORRECTLY_REJECTED
+    assert duplicate.probable_cause == ProbableCause.WATCHLIST_COVERAGE_GAP
 
 
 def test_evaluate_items_fails_fast_after_repeated_llm_classification_failures() -> None:
@@ -307,6 +384,37 @@ def _comparison(index: int) -> ComparisonItem:
     )
 
 
+def _duplicate_comparison(
+    article_id: str,
+    *,
+    headline: str,
+    simulation_outcome: FilterOutcome,
+    reason: str | None = None,
+    matched_article_id: str | None = None,
+    tickers: list[str] | None = None,
+) -> ComparisonItem:
+    return ComparisonItem(
+        article=_input_article(
+            article_id,
+            headline=headline,
+            summary="The selloff in the tech sector graduated to a new phase.",
+            url=f"https://example.test/{article_id}",
+            tickers=tickers or [],
+        ),
+        filter_run_id_production="prod",
+        filter_run_id_simulation="sim",
+        production_result=FilterResult(article_id=article_id, outcome=simulation_outcome),
+        simulation_result=FilterResult(
+            article_id=article_id,
+            outcome=simulation_outcome,
+            rejection_reason_code=reason,
+            matched_article_id=matched_article_id,
+            similarity_score=0.95 if matched_article_id else None,
+            details={"threshold": 0.9, "score": 0.95} if matched_article_id else {},
+        ),
+    )
+
+
 def _input_article(
     article_id: str,
     *,
@@ -314,6 +422,7 @@ def _input_article(
     summary: str | None = "Summary",
     url: str = "https://example.test/article",
     published_at: datetime = datetime(2026, 6, 4, tzinfo=timezone.utc),
+    tickers: list[str] | None = None,
 ) -> InputArticle:
     return InputArticle(
         id=article_id,
@@ -321,18 +430,18 @@ def _input_article(
         headline=headline,
         summary=summary,
         url=url,
-        tickers=[],
+        tickers=tickers or [],
         published_at=published_at,
         fetched_at=published_at,
         sentiment_source=None,
     )
 
 
-def _snapshot(*, include_keywords: list[str]) -> dict:
+def _snapshot(*, include_keywords: list[str], watchlist_tickers: list[str] | None = None) -> dict:
     return {
         "include_keywords": include_keywords,
         "exclude_keywords": [],
-        "watchlist_tickers": [],
+        "watchlist_tickers": watchlist_tickers or [],
         "dedupe_algorithm": "rapidfuzz_ratio",
         "dedupe_similarity_threshold": 0.9,
         "dedupe_lookback_hours": 24,

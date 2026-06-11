@@ -110,6 +110,12 @@ For each rejected item, the analyzer produces:
 - rationale: concise explanation referencing observable article attributes
 - improvement_suggestion: concrete filter adjustment suggestion
 
+Duplicate rejection classification uses deterministic duplicate context before LLM classification:
+- If a duplicate rejection matched an article that was not accepted or is missing from the evaluated dataset, classify it as `incorrectly_rejected` with `probable_cause=dedupe_threshold_issue`.
+- If the rejected article introduces a watched ticker or entity absent from the accepted duplicate target, classify it as `incorrectly_rejected` with `probable_cause=watchlist_coverage_gap`.
+- If the rejected article matches an already accepted same-story article without adding a watched ticker or entity, classify it as `correctly_rejected`.
+- Ambiguous duplicate cases fall back to the standard LLM classification path.
+
 When accepted audit mode is enabled, the analyzer also evaluates a sampled subset of accepted items and produces:
 - classification_label: correctly_accepted or incorrectly_accepted
 - classification_confidence: normalized value in [0, 1]

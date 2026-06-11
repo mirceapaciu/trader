@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 import uuid
+import re
 from collections.abc import Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from src.core_components.event_ingestion_engine.models import FilterRun, FilterRunMode
+from src.core_components.event_ingestion_engine.canonicalization import normalize_canonical_locator
 from src.product_components.news_fetcher.settings import NewsFetcherSettings
 
 from .llm_classifier import LlmClassifier, OpenAIResponsesClient, TokenBudgetExhausted
 from .models import (
+    ClassificationLabel,
     ClassificationResult,
     ComparisonItem,
     EvaluationScope,
     FilterQualityRunParams,
     ItemAssessment,
     ItemStatus,
+    ProbableCause,
 )
 from .repository import FilterQualityRepository, dataset_snapshot_hash
 from .settings import FilterQualityEvaluatorSettings
@@ -202,6 +207,7 @@ class FilterQualityEvaluatorService:
             accepted_sample = []
 
         consecutive_classification_failures = 0
+        comparison_by_id = {item.article.id: item for item in comparisons}
         tasks = [
             _EvaluationTask(item=item, scope=EvaluationScope.REJECTED_POPULATION)
             for item in rejected
@@ -213,6 +219,7 @@ class FilterQualityEvaluatorService:
             run_id=params.run_id,
             tasks=tasks,
             filter_config_snapshot_json=filter_config_snapshot_json,
+            comparison_by_id=comparison_by_id,
         ):
             assessment = self._record_assessment(
                 assessments,
@@ -231,6 +238,7 @@ class FilterQualityEvaluatorService:
         run_id: str,
         tasks: list[_EvaluationTask],
         filter_config_snapshot_json: dict[str, Any],
+        comparison_by_id: dict[str, ComparisonItem],
     ) -> Iterator[ItemAssessment]:
         concurrency = max(1, int(getattr(self._settings, "classification_concurrency", 1)))
         if concurrency == 1:
@@ -240,6 +248,7 @@ class FilterQualityEvaluatorService:
                     task.item,
                     task.scope,
                     filter_config_snapshot_json,
+                    comparison_by_id,
                 )
             return
 
@@ -258,6 +267,7 @@ class FilterQualityEvaluatorService:
                             task.item,
                             task.scope,
                             filter_config_snapshot_json,
+                            comparison_by_id,
                         )
                         next_to_submit += 1
 
@@ -284,8 +294,17 @@ class FilterQualityEvaluatorService:
         item: ComparisonItem,
         scope: EvaluationScope,
         filter_config_snapshot_json: dict[str, Any],
+        comparison_by_id: dict[str, ComparisonItem],
     ) -> ItemAssessment:
         try:
+            deterministic = _deterministic_duplicate_result(
+                item,
+                scope=scope,
+                filter_config_snapshot_json=filter_config_snapshot_json,
+                comparison_by_id=comparison_by_id,
+            )
+            if deterministic is not None:
+                return self._evaluated_assessment(run_id, item, scope, deterministic)
             result = self._classifier.classify_item(
                 item=item,
                 scope=scope,
@@ -398,6 +417,134 @@ def _next_consecutive_classification_failures(
 def _raise_if_repeated_classification_failures(count: int) -> None:
     if count >= _MAX_CONSECUTIVE_CLASSIFICATION_FAILURES:
         raise RepeatedLlmClassificationFailure(failure_count=count)
+
+
+def _deterministic_duplicate_result(
+    item: ComparisonItem,
+    *,
+    scope: EvaluationScope,
+    filter_config_snapshot_json: dict[str, Any],
+    comparison_by_id: dict[str, ComparisonItem],
+) -> ClassificationResult | None:
+    if scope != EvaluationScope.REJECTED_POPULATION or item.simulation_result is None:
+        return None
+    reason = item.simulation_result.rejection_reason_code
+    if reason not in {"rejected_soft_duplicate", "rejected_strong_duplicate"}:
+        return None
+
+    matched_id = item.simulation_result.matched_article_id or str(
+        item.simulation_result.details.get("matched_event_id") or ""
+    )
+    matched = comparison_by_id.get(matched_id)
+    if matched is None or matched.simulation_result is None:
+        return _duplicate_classification(
+            ClassificationLabel.INCORRECTLY_REJECTED,
+            ProbableCause.DEDUPE_THRESHOLD_ISSUE,
+            "The duplicate target is not present in the evaluated dataset, so the rejected article may be the only available copy.",
+            "Review dedupe result persistence for this article pair before changing include keywords.",
+        )
+    if matched.simulation_result.outcome.value != "accepted":
+        return _duplicate_classification(
+            ClassificationLabel.INCORRECTLY_REJECTED,
+            ProbableCause.DEDUPE_THRESHOLD_ISSUE,
+            "The duplicate target was not accepted, so dedupe suppressed this article without an accepted replacement.",
+            "Ensure duplicate suppression only targets articles that already have an accepted equivalent.",
+        )
+
+    new_watched = _new_watched_entities(
+        item.article,
+        matched.article,
+        filter_config_snapshot_json=filter_config_snapshot_json,
+    )
+    if new_watched:
+        formatted = ", ".join(sorted(new_watched))
+        return _duplicate_classification(
+            ClassificationLabel.INCORRECTLY_REJECTED,
+            ProbableCause.WATCHLIST_COVERAGE_GAP,
+            f"The rejected article introduced watched entity or ticker {formatted} that was absent from the accepted duplicate target.",
+            "Review entity extraction and dedupe handling for same-story updates that introduce watched securities.",
+        )
+
+    if _same_story_duplicate(item, matched):
+        return _duplicate_classification(
+            ClassificationLabel.CORRECTLY_REJECTED,
+            ProbableCause.LOW_VALUE_NOISE,
+            "The rejected article matched an already accepted article with the same story context, so accepting both would add little new signal.",
+            "No include-keyword change is needed; keep dedupe behavior for this duplicate pair.",
+        )
+
+    return None
+
+
+def _duplicate_classification(
+    label: ClassificationLabel,
+    probable_cause: ProbableCause,
+    rationale: str,
+    improvement_suggestion: str,
+) -> ClassificationResult:
+    return ClassificationResult(
+        classification_label=label,
+        classification_confidence=Decimal("1.00"),
+        rationale=rationale,
+        probable_cause=probable_cause,
+        improvement_suggestion=improvement_suggestion,
+        suggestion_json={"recommended_include_keywords": []},
+        llm_model="deterministic_duplicate_rule",
+    )
+
+
+def _new_watched_entities(
+    article,
+    matched_article,
+    *,
+    filter_config_snapshot_json: dict[str, Any],
+) -> set[str]:
+    watched = {
+        str(value).strip().upper()
+        for value in filter_config_snapshot_json.get("watchlist_tickers", [])
+        if str(value).strip()
+    }
+    if not watched:
+        return set()
+    article_entities = _article_watched_entities(article, watched)
+    matched_entities = _article_watched_entities(matched_article, watched)
+    return article_entities - matched_entities
+
+
+def _article_watched_entities(article, watched: set[str]) -> set[str]:
+    ticker_entities = {str(value).strip().upper() for value in article.tickers if str(value).strip()}
+    text = f"{article.headline}\n{article.summary or ''}".upper()
+    text_entities = {
+        ticker
+        for ticker in watched
+        if re.search(rf"(?<![A-Z0-9]){re.escape(ticker)}(?![A-Z0-9])", text)
+    }
+    return (ticker_entities | text_entities) & watched
+
+
+def _same_story_duplicate(item: ComparisonItem, matched: ComparisonItem) -> bool:
+    if (
+        normalize_canonical_locator(item.article.url)
+        and normalize_canonical_locator(item.article.url) == normalize_canonical_locator(matched.article.url)
+    ):
+        return True
+    result = item.simulation_result
+    if result is None:
+        return False
+    threshold = _optional_float(result.details.get("threshold"))
+    score = result.similarity_score if result.similarity_score is not None else _optional_float(result.details.get("score"))
+    if threshold is not None and score is not None and score >= threshold:
+        return True
+    return False
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _error_details(error: Exception) -> dict[str, Any]:
