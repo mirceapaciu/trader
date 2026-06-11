@@ -429,7 +429,34 @@ th {
 .filter-editor {
   display: grid;
   gap: 10px;
-  padding-top: 6px;
+}
+
+.filter-config-group {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #d0dbd4;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.filter-config-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.filter-config-heading strong {
+  color: #18221f;
+  font-size: 0.98rem;
+}
+
+.filter-config-heading span {
+  color: #64726c;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .filter-editor label {

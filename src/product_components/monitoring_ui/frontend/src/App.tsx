@@ -373,6 +373,7 @@ function FilterQualityMetrics({
       {incorrectlyRejectedOpen && (
         <IncorrectlyRejectedTable
           items={incorrectlyRejectedItems}
+          lastRun={run}
           loading={incorrectlyRejectedLoading}
           error={incorrectlyRejectedError}
           testFilter={testFilter}
@@ -418,6 +419,7 @@ function QualityValue({
 
 function IncorrectlyRejectedTable({
   items,
+  lastRun,
   loading,
   error,
   testFilter,
@@ -432,6 +434,7 @@ function IncorrectlyRejectedTable({
   promotePending
 }: {
   items: FilterQualityIncorrectlyRejectedItem[];
+  lastRun: FilterQualityRunSummary;
   loading: boolean;
   error: boolean;
   testFilter?: NewsFilterConfigPayload;
@@ -449,7 +452,11 @@ function IncorrectlyRejectedTable({
   const [manualKeyword, setManualKeyword] = useState("");
   const mergedKeywords = mergeRecommendedKeywords(items);
   const selectedKeywordList = Array.from(selectedKeywords).sort();
-  const activeTestFilter = testFilter ?? productionFilter;
+  const activeTestFilter = displayedTestFilterDraft({
+    lastRun,
+    testFilter,
+    productionFilter
+  });
 
   if (loading) {
     return <EmptyState text="Loading incorrectly rejected records" />;
@@ -614,43 +621,49 @@ function FilterConfigEditor({
     setDraft({ ...draft, [key]: normalizeList(value.split(",")) });
   };
   return (
-    <div className="filter-editor">
-      <label>
-        Include keywords
-        <textarea value={draft.include_keywords.join(", ")} onChange={(event) => updateList("include_keywords", event.target.value)} />
-      </label>
-      <label>
-        Exclude keywords
-        <textarea value={draft.exclude_keywords.join(", ")} onChange={(event) => updateList("exclude_keywords", event.target.value)} />
-      </label>
-      <label>
-        Watchlist tickers
-        <textarea value={draft.watchlist_tickers.join(", ")} onChange={(event) => updateList("watchlist_tickers", event.target.value.toUpperCase())} />
-      </label>
-      <div className="filter-editor-row">
-        <label>
-          Dedupe algorithm
-          <input value={draft.dedupe_algorithm} onChange={(event) => setDraft({ ...draft, dedupe_algorithm: event.target.value })} />
-        </label>
-        <label>
-          Threshold
-          <input type="number" min="0" max="1" step="0.01" value={draft.dedupe_similarity_threshold} onChange={(event) => setDraft({ ...draft, dedupe_similarity_threshold: Number(event.target.value) })} />
-        </label>
-        <label>
-          Lookback hours
-          <input type="number" min="1" step="1" value={draft.dedupe_lookback_hours} onChange={(event) => setDraft({ ...draft, dedupe_lookback_hours: Number(event.target.value) })} />
-        </label>
+    <div className="filter-config-group">
+      <div className="filter-config-heading">
+        <strong>Filter config</strong>
+        <span>Test filter</span>
       </div>
-      <div className="filter-editor-actions">
-        <button type="button" className="primary-button" onClick={() => saveTestFilter({ ...draft, config_role: "test", status: "active" })} disabled={savePending}>
-          {savePending ? "Saving" : "Save test filter"}
-        </button>
-        <button type="button" className="secondary-button" onClick={runSimulation} disabled={evaluationRunningOrStarting}>
-          {runSimulationPending || simulationStartRequested ? "Running" : "Run simulation"}
-        </button>
-        <button type="button" className="secondary-button" onClick={promoteFilter} disabled={promotePending}>
-          {promotePending ? "Saving" : "Save as production"}
-        </button>
+      <div className="filter-editor">
+        <label>
+          Include keywords
+          <textarea value={draft.include_keywords.join(", ")} onChange={(event) => updateList("include_keywords", event.target.value)} />
+        </label>
+        <label>
+          Exclude keywords
+          <textarea value={draft.exclude_keywords.join(", ")} onChange={(event) => updateList("exclude_keywords", event.target.value)} />
+        </label>
+        <label>
+          Watchlist tickers
+          <textarea value={draft.watchlist_tickers.join(", ")} onChange={(event) => updateList("watchlist_tickers", event.target.value.toUpperCase())} />
+        </label>
+        <div className="filter-editor-row">
+          <label>
+            Dedupe algorithm
+            <input value={draft.dedupe_algorithm} onChange={(event) => setDraft({ ...draft, dedupe_algorithm: event.target.value })} />
+          </label>
+          <label>
+            Threshold
+            <input type="number" min="0" max="1" step="0.01" value={draft.dedupe_similarity_threshold} onChange={(event) => setDraft({ ...draft, dedupe_similarity_threshold: Number(event.target.value) })} />
+          </label>
+          <label>
+            Lookback hours
+            <input type="number" min="1" step="1" value={draft.dedupe_lookback_hours} onChange={(event) => setDraft({ ...draft, dedupe_lookback_hours: Number(event.target.value) })} />
+          </label>
+        </div>
+        <div className="filter-editor-actions">
+          <button type="button" className="primary-button" onClick={() => saveTestFilter({ ...draft, config_role: "test", status: "active" })} disabled={savePending}>
+            {savePending ? "Saving" : "Save test filter"}
+          </button>
+          <button type="button" className="secondary-button" onClick={runSimulation} disabled={evaluationRunningOrStarting}>
+            {runSimulationPending || simulationStartRequested ? "Running" : "Run simulation"}
+          </button>
+          <button type="button" className="secondary-button" onClick={promoteFilter} disabled={promotePending}>
+            {promotePending ? "Saving" : "Save as production"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -695,6 +708,42 @@ function formatEvaluationSubject(value?: string | null) {
     return "Evaluation: Production";
   }
   return "Evaluation: Unknown";
+}
+
+function displayedTestFilterDraft({
+  lastRun,
+  testFilter,
+  productionFilter
+}: {
+  lastRun: FilterQualityRunSummary;
+  testFilter?: NewsFilterConfigPayload;
+  productionFilter?: NewsFilterConfigPayload;
+}) {
+  if (lastRun.evaluation_subject === "production" && productionFilter) {
+    return testDraftFromProduction(productionFilter, testFilter, lastRun.run_id);
+  }
+  if (testFilter) {
+    return testFilter;
+  }
+  return productionFilter ? testDraftFromProduction(productionFilter, undefined, undefined) : undefined;
+}
+
+function testDraftFromProduction(
+  productionFilter: NewsFilterConfigPayload,
+  testFilter: NewsFilterConfigPayload | undefined,
+  createdFromRunId: string | undefined
+): NewsFilterConfigPayload {
+  return {
+    ...productionFilter,
+    filter_config_id: testFilter?.filter_config_id,
+    config_name: testFilter?.config_name ?? "Test filter",
+    config_role: "test",
+    status: "active",
+    include_keywords: [...productionFilter.include_keywords],
+    exclude_keywords: [...productionFilter.exclude_keywords],
+    watchlist_tickers: [...productionFilter.watchlist_tickers],
+    created_from_run_id: createdFromRunId
+  };
 }
 
 function formatErrorCodes(codes: Record<string, number>) {

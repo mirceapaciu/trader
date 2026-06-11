@@ -95,6 +95,8 @@ The panel must display:
 
 The Run filter quality button starts one evaluator run for the last 24 hours. UI-triggered runs use the active NewsFetcher filter configuration, set `accepted_audit_enabled=false`, and write their status and summary to `filter_quality_evaluator.t_filter_quality_runs`. If a run is already active, the API returns `409` with the active `run_id`.
 
+When the latest terminal filter quality run evaluated production, the UI seeds the displayed test-filter draft from the active production filter. This is a display-only draft; the persisted test filter is updated only when the operator saves the test filter.
+
 ### 4.4 Backlog and Dead-Letter Panels
 
 Must display:
