@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Protocol
@@ -54,6 +55,9 @@ class LlmClassifier:
     min_confidence_threshold: float
     tokens_used: int = 0
 
+    def __post_init__(self) -> None:
+        self._budget_lock = threading.Lock()
+
     def classify_item(
         self,
         *,
@@ -66,26 +70,46 @@ class LlmClassifier:
             item.article.summary or "",
             json.dumps(filter_config_snapshot_json, sort_keys=True),
         ) + self.max_tokens_per_item
-        if self.tokens_used + estimated_prompt_tokens > self.max_tokens_per_run:
-            raise TokenBudgetExhausted("token_budget_exhausted")
+        self._reserve_tokens(estimated_prompt_tokens)
 
-        raw = self.client.classify(
-            model=self.model,
-            prompt=_build_prompt(
-                item=item,
-                scope=scope,
-                filter_config_snapshot_json=filter_config_snapshot_json,
-            ),
-            max_output_tokens=self.max_tokens_per_item,
-        )
+        try:
+            raw = self.client.classify(
+                model=self.model,
+                prompt=_build_prompt(
+                    item=item,
+                    scope=scope,
+                    filter_config_snapshot_json=filter_config_snapshot_json,
+                ),
+                max_output_tokens=self.max_tokens_per_item,
+            )
+        except Exception:
+            self._release_reserved_tokens(estimated_prompt_tokens)
+            raise
         result = _parse_result(raw, scope=scope, model=self.model)
         result = _sanitize_result_recommendations(
             result,
             item=item,
             filter_config_snapshot_json=filter_config_snapshot_json,
         )
-        self.tokens_used += int(raw.get("estimated_tokens") or estimated_prompt_tokens)
+        self._settle_tokens(
+            reserved_tokens=estimated_prompt_tokens,
+            actual_tokens=int(raw.get("estimated_tokens") or estimated_prompt_tokens),
+        )
         return result
+
+    def _reserve_tokens(self, estimated_tokens: int) -> None:
+        with self._budget_lock:
+            if self.tokens_used + estimated_tokens > self.max_tokens_per_run:
+                raise TokenBudgetExhausted("token_budget_exhausted")
+            self.tokens_used += estimated_tokens
+
+    def _release_reserved_tokens(self, reserved_tokens: int) -> None:
+        with self._budget_lock:
+            self.tokens_used -= reserved_tokens
+
+    def _settle_tokens(self, *, reserved_tokens: int, actual_tokens: int) -> None:
+        with self._budget_lock:
+            self.tokens_used += actual_tokens - reserved_tokens
 
 
 def _build_prompt(

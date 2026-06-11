@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import replace
+from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -35,6 +37,12 @@ class RepeatedLlmClassificationFailure(RuntimeError):
     def __init__(self, *, failure_count: int) -> None:
         super().__init__("repeated_llm_classification_failed")
         self.failure_count = failure_count
+
+
+@dataclass(frozen=True)
+class _EvaluationTask:
+    item: ComparisonItem
+    scope: EvaluationScope
 
 
 class FilterQualityEvaluatorService:
@@ -194,30 +202,21 @@ class FilterQualityEvaluatorService:
             accepted_sample = []
 
         consecutive_classification_failures = 0
-        for item in rejected:
+        tasks = [
+            _EvaluationTask(item=item, scope=EvaluationScope.REJECTED_POPULATION)
+            for item in rejected
+        ] + [
+            _EvaluationTask(item=item, scope=EvaluationScope.ACCEPTED_AUDIT)
+            for item in accepted_sample
+        ]
+        for assessment in self._classify_tasks_in_order(
+            run_id=params.run_id,
+            tasks=tasks,
+            filter_config_snapshot_json=filter_config_snapshot_json,
+        ):
             assessment = self._record_assessment(
                 assessments,
-                self._classify_or_fail(
-                    params.run_id,
-                    item,
-                    EvaluationScope.REJECTED_POPULATION,
-                    filter_config_snapshot_json,
-                ),
-            )
-            consecutive_classification_failures = _next_consecutive_classification_failures(
                 assessment,
-                consecutive_classification_failures,
-            )
-            _raise_if_repeated_classification_failures(consecutive_classification_failures)
-        for item in accepted_sample:
-            assessment = self._record_assessment(
-                assessments,
-                self._classify_or_fail(
-                    params.run_id,
-                    item,
-                    EvaluationScope.ACCEPTED_AUDIT,
-                    filter_config_snapshot_json,
-                ),
             )
             consecutive_classification_failures = _next_consecutive_classification_failures(
                 assessment,
@@ -225,6 +224,50 @@ class FilterQualityEvaluatorService:
             )
             _raise_if_repeated_classification_failures(consecutive_classification_failures)
         return assessments
+
+    def _classify_tasks_in_order(
+        self,
+        *,
+        run_id: str,
+        tasks: list[_EvaluationTask],
+        filter_config_snapshot_json: dict[str, Any],
+    ) -> Iterator[ItemAssessment]:
+        concurrency = max(1, int(getattr(self._settings, "classification_concurrency", 1)))
+        if concurrency == 1:
+            for task in tasks:
+                yield self._classify_or_fail(
+                    run_id,
+                    task.item,
+                    task.scope,
+                    filter_config_snapshot_json,
+                )
+            return
+
+        futures: dict[int, Future[ItemAssessment]] = {}
+        next_to_submit = 0
+        next_to_commit = 0
+
+        with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="filter-quality-item") as executor:
+            try:
+                while next_to_commit < len(tasks):
+                    while next_to_submit < len(tasks) and len(futures) < concurrency:
+                        task = tasks[next_to_submit]
+                        futures[next_to_submit] = executor.submit(
+                            self._classify_or_fail,
+                            run_id,
+                            task.item,
+                            task.scope,
+                            filter_config_snapshot_json,
+                        )
+                        next_to_submit += 1
+
+                    future = futures.pop(next_to_commit)
+                    yield future.result()
+                    next_to_commit += 1
+            except BaseException:
+                for future in futures.values():
+                    future.cancel()
+                raise
 
     def _record_assessment(
         self,

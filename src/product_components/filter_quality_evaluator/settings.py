@@ -15,6 +15,7 @@ class FilterQualityEvaluatorSettings:
     allow_config_fingerprint_filter: bool
     accepted_audit_enabled: bool
     accepted_audit_sample_size: int
+    classification_concurrency: int
     llm_model: str
     llm_max_tokens_per_run: int
     llm_max_tokens_per_item: int
@@ -52,6 +53,7 @@ class FilterQualityEvaluatorSettings:
             allow_config_fingerprint_filter=_bool_env("FILTER_QUALITY_ALLOW_CONFIG_FINGERPRINT_FILTER", True),
             accepted_audit_enabled=_bool_env("FILTER_QUALITY_ACCEPTED_AUDIT_ENABLED", False),
             accepted_audit_sample_size=_int_env("FILTER_QUALITY_ACCEPTED_AUDIT_SAMPLE_SIZE", 200),
+            classification_concurrency=max(1, _int_env("FILTER_QUALITY_CLASSIFICATION_CONCURRENCY", 4)),
             llm_model=os.getenv("FILTER_QUALITY_LLM_MODEL", "gpt-4o-mini"),
             llm_max_tokens_per_run=_int_env("FILTER_QUALITY_LLM_MAX_TOKENS_PER_RUN", 200000),
             llm_max_tokens_per_item=_int_env("FILTER_QUALITY_LLM_MAX_TOKENS_PER_ITEM", 1500),

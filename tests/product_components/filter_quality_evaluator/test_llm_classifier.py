@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pytest
@@ -22,6 +25,27 @@ class FakeClient:
     def classify(self, *, model: str, prompt: str, max_output_tokens: int):
         self.prompt = prompt
         return dict(self.payload)
+
+
+class BlockingClient:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+
+    def classify(self, *, model: str, prompt: str, max_output_tokens: int):
+        with self._lock:
+            self.calls += 1
+        self.release.wait(timeout=2)
+        return {
+            "classification_label": "incorrectly_rejected",
+            "classification_confidence": 0.75,
+            "rationale": "Relevant to watched ticker.",
+            "probable_cause": "keyword_gap",
+            "improvement_suggestion": "Add guidance keyword.",
+            "suggestion_json": {"recommended_include_keywords": ["guidance"]},
+            "estimated_tokens": 10,
+        }
 
 
 def _item() -> ComparisonItem:
@@ -204,6 +228,41 @@ def test_llm_classifier_fails_closed_on_budget() -> None:
             scope=EvaluationScope.REJECTED_POPULATION,
             filter_config_snapshot_json={},
         )
+
+
+def test_llm_classifier_reserves_token_budget_across_concurrent_calls() -> None:
+    client = BlockingClient()
+    classifier = LlmClassifier(
+        client=client,
+        model="test-model",
+        max_tokens_per_run=100,
+        max_tokens_per_item=80,
+        min_confidence_threshold=0.6,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            classifier.classify_item,
+            item=_item(),
+            scope=EvaluationScope.REJECTED_POPULATION,
+            filter_config_snapshot_json={},
+        )
+        deadline = time.monotonic() + 2
+        while client.calls < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        second = executor.submit(
+            classifier.classify_item,
+            item=_item(),
+            scope=EvaluationScope.REJECTED_POPULATION,
+            filter_config_snapshot_json={},
+        )
+        with pytest.raises(TokenBudgetExhausted):
+            second.result(timeout=2)
+        client.release.set()
+        first.result(timeout=2)
+
+    assert client.calls == 1
 
 
 def test_load_json_object_accepts_wrapped_json_object() -> None:
