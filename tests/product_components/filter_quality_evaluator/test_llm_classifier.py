@@ -25,13 +25,21 @@ class FakeClient:
 
 
 def _item() -> ComparisonItem:
+    return _item_with_text(
+        headline="Apple raises guidance",
+        summary="Revenue outlook improved",
+        tickers=["AAPL"],
+    )
+
+
+def _item_with_text(*, headline: str, summary: str | None, tickers: list[str] | None = None) -> ComparisonItem:
     article = InputArticle(
         id="a1",
         source="finnhub",
-        headline="Apple raises guidance",
-        summary="Revenue outlook improved",
+        headline=headline,
+        summary=summary,
         url="https://example.com/a1",
-        tickers=["AAPL"],
+        tickers=tickers or [],
         published_at=datetime(2026, 5, 27, tzinfo=timezone.utc),
         fetched_at=datetime(2026, 5, 27, tzinfo=timezone.utc),
         sentiment_source=None,
@@ -81,6 +89,104 @@ def test_llm_classifier_validates_structured_response() -> None:
     assert "Company-specific catalysts" in relevance_standard["accept_if"][0]
     assert "Personal finance" in relevance_standard["reject_if"][0]
     assert "retirement planning" in relevance_standard["keyword_recommendation_guidance"]
+    assert "exact phrase appears" in relevance_standard["keyword_recommendation_guidance"]
+
+
+def test_llm_classifier_keeps_only_recommended_keywords_present_in_article_text() -> None:
+    classifier = LlmClassifier(
+        client=FakeClient(
+            {
+                "classification_label": "incorrectly_rejected",
+                "classification_confidence": 0.75,
+                "rationale": "Market-wide catalyst.",
+                "probable_cause": "keyword_gap",
+                "improvement_suggestion": "Add market phrase.",
+                "suggestion_json": {
+                    "recommended_include_keywords": [
+                        "investor sentiment",
+                        "leveraged ETFs",
+                        "stock-market bull",
+                        "leveraged etfs",
+                    ]
+                },
+                "estimated_tokens": 10,
+            }
+        ),
+        model="test-model",
+        max_tokens_per_run=1000,
+        max_tokens_per_item=100,
+        min_confidence_threshold=0.6,
+    )
+
+    result = classifier.classify_item(
+        item=_item_with_text(
+            headline="How exploding investor euphoria and leveraged ETFs turned one stock-market bull cautious",
+            summary="A Barclays strategist explains why it is time to turn cautious on U.S. stocks.",
+        ),
+        scope=EvaluationScope.REJECTED_POPULATION,
+        filter_config_snapshot_json={"include_keywords": []},
+    )
+
+    assert result.suggestion_json["recommended_include_keywords"] == ["leveraged etfs", "stock-market bull"]
+
+
+def test_llm_classifier_rejects_non_contiguous_keyword_recommendations() -> None:
+    classifier = LlmClassifier(
+        client=FakeClient(
+            {
+                "classification_label": "incorrectly_rejected",
+                "classification_confidence": 0.75,
+                "rationale": "Market-wide catalyst.",
+                "probable_cause": "keyword_gap",
+                "improvement_suggestion": "Add exact phrase.",
+                "suggestion_json": {"recommended_include_keywords": ["apple outlook", "revenue outlook"]},
+                "estimated_tokens": 10,
+            }
+        ),
+        model="test-model",
+        max_tokens_per_run=1000,
+        max_tokens_per_item=100,
+        min_confidence_threshold=0.6,
+    )
+
+    result = classifier.classify_item(
+        item=_item_with_text(headline="Apple raises guidance", summary="Revenue outlook improved"),
+        scope=EvaluationScope.REJECTED_POPULATION,
+        filter_config_snapshot_json={"include_keywords": []},
+    )
+
+    assert result.suggestion_json["recommended_include_keywords"] == ["revenue outlook"]
+
+
+def test_llm_classifier_drops_recommendations_covered_by_existing_include_keywords() -> None:
+    classifier = LlmClassifier(
+        client=FakeClient(
+            {
+                "classification_label": "incorrectly_rejected",
+                "classification_confidence": 0.75,
+                "rationale": "Market-wide catalyst.",
+                "probable_cause": "keyword_gap",
+                "improvement_suggestion": "Avoid redundant phrase.",
+                "suggestion_json": {"recommended_include_keywords": ["investor sentiment", "leveraged ETFs"]},
+                "estimated_tokens": 10,
+            }
+        ),
+        model="test-model",
+        max_tokens_per_run=1000,
+        max_tokens_per_item=100,
+        min_confidence_threshold=0.6,
+    )
+
+    result = classifier.classify_item(
+        item=_item_with_text(
+            headline="Investor sentiment rises as leveraged ETFs attract inflows",
+            summary=None,
+        ),
+        scope=EvaluationScope.REJECTED_POPULATION,
+        filter_config_snapshot_json={"include_keywords": ["sentiment"]},
+    )
+
+    assert result.suggestion_json["recommended_include_keywords"] == ["leveraged etfs"]
 
 
 def test_llm_classifier_fails_closed_on_budget() -> None:

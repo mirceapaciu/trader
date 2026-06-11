@@ -16,6 +16,7 @@ from src.product_components.monitoring_ui.backend.models import (
     ThroughputResponse,
 )
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
+from src.product_components.monitoring_ui.backend.repository import _incorrectly_rejected_item
 from src.product_components.monitoring_ui.backend.service import FilterQualityRunAlreadyActive, MonitoringService
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 
@@ -239,6 +240,36 @@ def test_list_filter_quality_incorrectly_rejected_delegates_to_data_source() -> 
     assert response.run_id == "fqe_done"
     assert response.items[0].probable_cause == "keyword_gap"
     assert response.items[0].improvement_suggestion == "Add revenue outlook language to include keywords."
+
+
+def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() -> None:
+    item = _incorrectly_rejected_item(
+        {
+            "assessment_id": "fqa_1",
+            "run_id": "fqe_done",
+            "article_id": "a1",
+            "headline": "How exploding investor euphoria and leveraged ETFs turned one stock-market bull cautious",
+            "summary": "A Barclays strategist explains why it is time to turn cautious on U.S. stocks.",
+            "url": "https://example.com/a1",
+            "source": "rss",
+            "published_at": datetime(2026, 6, 10, tzinfo=timezone.utc),
+            "production_filter_outcome": "rejected",
+            "simulation_filter_outcome": "rejected",
+            "rejection_reason_code": "rejected_not_relevant",
+            "probable_cause": "keyword_gap",
+            "improvement_suggestion": "Add market phrases.",
+            "rationale": "Market-wide catalyst.",
+            "classification_confidence": 0.85,
+            "suggestion_json": {
+                "recommended_include_keywords": ["investor sentiment", "leveraged ETFs", "stock-market bull"]
+            },
+            "filter_config_snapshot_json": {"include_keywords": ["bull"]},
+            "evaluated_at": datetime(2026, 6, 10, tzinfo=timezone.utc),
+        }
+    )
+
+    assert item.recommended_include_keywords == ["leveraged etfs"]
+    assert item.suggestion_json["recommended_include_keywords"] == ["leveraged etfs"]
 
 
 def test_start_filter_quality_run_returns_running_when_no_active_run_exists() -> None:

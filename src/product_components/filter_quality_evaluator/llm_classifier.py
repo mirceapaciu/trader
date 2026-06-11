@@ -12,6 +12,7 @@ from .models import (
     EvaluationScope,
     ProbableCause,
 )
+from .keyword_recommendations import sanitize_suggestion_json
 
 
 class TokenBudgetExhausted(RuntimeError):
@@ -78,6 +79,11 @@ class LlmClassifier:
             max_output_tokens=self.max_tokens_per_item,
         )
         result = _parse_result(raw, scope=scope, model=self.model)
+        result = _sanitize_result_recommendations(
+            result,
+            item=item,
+            filter_config_snapshot_json=filter_config_snapshot_json,
+        )
         self.tokens_used += int(raw.get("estimated_tokens") or estimated_prompt_tokens)
         return result
 
@@ -117,9 +123,13 @@ def _build_prompt(
                 },
                 "keyword_recommendation_guidance": (
                     "Recommend include keywords only for terms that would improve detection of stock-price-impacting "
-                    "news. Do not recommend broad personal-finance terms such as personal finance, retirement "
+                    "news and only if the exact phrase appears in the provided article headline or summary. "
+                    "Copy the phrase exactly from the article text except for casing. Do not recommend inferred "
+                    "concepts, paraphrases, synonyms, or umbrella topics that are not present in the text. Do not "
+                    "recommend broad personal-finance terms such as personal finance, retirement "
                     "planning, wealth management, financial compatibility, budgeting, or relationship money advice "
-                    "unless the article also contains a concrete market-moving catalyst."
+                    "unless the article also contains a concrete market-moving catalyst. Do not recommend a phrase "
+                    "that is already covered by an existing include keyword in filter_config_snapshot_json."
                 ),
             },
             "required_json_fields": [
@@ -151,6 +161,30 @@ def _build_prompt(
             },
         },
         sort_keys=True,
+    )
+
+
+def _sanitize_result_recommendations(
+    result: ClassificationResult,
+    *,
+    item: ComparisonItem,
+    filter_config_snapshot_json: dict[str, Any],
+) -> ClassificationResult:
+    suggestion_json = sanitize_suggestion_json(
+        result.suggestion_json,
+        headline=item.article.headline,
+        summary=item.article.summary,
+        existing_include_keywords=_string_list(filter_config_snapshot_json.get("include_keywords")),
+    )
+    return ClassificationResult(
+        classification_label=result.classification_label,
+        classification_confidence=result.classification_confidence,
+        rationale=result.rationale,
+        probable_cause=result.probable_cause,
+        improvement_suggestion=result.improvement_suggestion,
+        suggestion_json=suggestion_json,
+        llm_model=result.llm_model,
+        estimated_tokens=result.estimated_tokens,
     )
 
 
@@ -191,6 +225,12 @@ def _parse_result(raw: dict[str, Any], *, scope: EvaluationScope, model: str) ->
 def _estimate_tokens(*parts: str) -> int:
     # Conservative local estimate for budget gating before the provider returns usage.
     return max(1, sum(len(part) for part in parts) // 4)
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple | set):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _load_json_object(text: str) -> dict[str, Any]:

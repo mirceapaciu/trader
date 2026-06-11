@@ -10,6 +10,7 @@ from psycopg import errors
 import redis
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+from src.product_components.filter_quality_evaluator.keyword_recommendations import sanitize_suggestion_json
 from src.product_components.news_fetcher.filter_config import (
     NewsFilterConfig,
     config_from_snapshot,
@@ -222,12 +223,13 @@ class PostgresRedisMonitoringDataSource:
         run_id: str,
     ) -> FilterQualityIncorrectlyRejectedResponse:
         sql = (
-            f"SELECT a.assessment_id, a.run_id, a.article_id, i.headline, i.url, a.source, a.published_at, "
+            f"SELECT a.assessment_id, a.run_id, a.article_id, i.headline, i.summary, i.url, a.source, a.published_at, "
             f"a.production_filter_outcome, a.simulation_filter_outcome, a.rejection_reason_code, "
             f"a.probable_cause, a.improvement_suggestion, a.rationale, a.classification_confidence, "
-            f"a.suggestion_json, a.evaluated_at "
+            f"a.suggestion_json, sfr.filter_config_snapshot_json, a.evaluated_at "
             f"FROM {self._filter_quality_schema}.t_filter_quality_item_assessments a "
             f"JOIN {self._news_schema}.t_input_news_articles i ON i.id = a.article_id "
+            f"LEFT JOIN {self._news_schema}.t_news_filter_runs sfr ON sfr.filter_run_id = a.filter_run_id_simulation "
             f"WHERE a.run_id = %s "
             f"AND a.item_status = 'evaluated' "
             f"AND a.classification_label = 'incorrectly_rejected' "
@@ -558,7 +560,13 @@ def _filter_quality_run(row: dict[str, Any]) -> FilterQualityRunSummary:
 
 
 def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyRejectedItem:
-    suggestion_json = dict(row["suggestion_json"] or {})
+    filter_config_snapshot_json = dict(row["filter_config_snapshot_json"] or {})
+    suggestion_json = sanitize_suggestion_json(
+        dict(row["suggestion_json"] or {}),
+        headline=str(row["headline"]),
+        summary=row["summary"],
+        existing_include_keywords=_string_list(filter_config_snapshot_json.get("include_keywords")),
+    )
     return FilterQualityIncorrectlyRejectedItem(
         assessment_id=str(row["assessment_id"]),
         run_id=str(row["run_id"]),
