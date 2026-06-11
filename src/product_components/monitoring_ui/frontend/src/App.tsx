@@ -24,7 +24,8 @@ import {
 export function App() {
   const queryClient = useQueryClient();
   const [incorrectlyRejectedOpen, setIncorrectlyRejectedOpen] = useState(false);
-  const [filterQualityStartRequested, setFilterQualityStartRequested] = useState(false);
+  const [evaluationStartRequested, setEvaluationStartRequested] = useState(false);
+  const [requestedEvaluationAction, setRequestedEvaluationAction] = useState<"filter-quality" | "simulation" | null>(null);
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
   const providers = useQuery({ queryKey: ["providers"], queryFn: fetchProviders, refetchInterval: 10000 });
   const throughput = useQuery({ queryKey: ["throughput", "1h"], queryFn: () => fetchThroughput("1h") });
@@ -55,7 +56,15 @@ export function App() {
   });
   const runSimulation = useMutation({
     mutationFn: runTestFilterSimulation,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filter-quality"] })
+    onMutate: () => {
+      setEvaluationStartRequested(true);
+      setRequestedEvaluationAction("simulation");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filter-quality"] }),
+    onError: () => {
+      setEvaluationStartRequested(false);
+      setRequestedEvaluationAction(null);
+    }
   });
   const promoteFilter = useMutation({
     mutationFn: promoteTestFilterConfig,
@@ -67,21 +76,30 @@ export function App() {
   const startFilterQuality = useMutation({
     mutationFn: startFilterQualityRun,
     onMutate: () => {
-      setFilterQualityStartRequested(true);
+      setEvaluationStartRequested(true);
+      setRequestedEvaluationAction("filter-quality");
     },
     onSuccess: () => {
       setIncorrectlyRejectedOpen(false);
       queryClient.invalidateQueries({ queryKey: ["filter-quality"] });
     },
     onError: () => {
-      setFilterQualityStartRequested(false);
+      setEvaluationStartRequested(false);
+      setRequestedEvaluationAction(null);
     }
   });
   useEffect(() => {
     if (filterQuality.data?.running_run) {
-      setFilterQualityStartRequested(false);
+      setEvaluationStartRequested(false);
+      setRequestedEvaluationAction(null);
     }
   }, [filterQuality.data?.running_run]);
+
+  const evaluationRunningOrStarting =
+    Boolean(filterQuality.data?.running_run) ||
+    evaluationStartRequested ||
+    startFilterQuality.isPending ||
+    runSimulation.isPending;
 
   const chartRows =
     throughput.data?.buckets.map((bucket) => ({
@@ -225,8 +243,8 @@ export function App() {
         <div className="panel-heading">
           <div className="heading-with-state">
             <h2>Filter Quality</h2>
-            <span className={`state-pill ${filterQualityStartRequested ? "starting" : filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}`}>
-              {filterQualityStartRequested ? "starting" : filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}
+            <span className={`state-pill ${evaluationStartRequested ? "starting" : filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}`}>
+              {evaluationStartRequested ? "starting" : filterQualityState(filterQuality.data?.running_run, filterQuality.data?.last_run)}
             </span>
             {filterQuality.data?.last_run && (
               <span className="state-pill subject-pill">
@@ -237,10 +255,10 @@ export function App() {
           <button
             type="button"
             className="primary-button"
-            disabled={Boolean(filterQuality.data?.running_run) || startFilterQuality.isPending || filterQualityStartRequested}
+            disabled={evaluationRunningOrStarting}
             onClick={() => startFilterQuality.mutate()}
           >
-            {startFilterQuality.isPending || filterQualityStartRequested ? "Starting" : "Run filter quality"}
+            {startFilterQuality.isPending || requestedEvaluationAction === "filter-quality" ? "Starting" : "Run filter quality"}
           </button>
         </div>
         {startFilterQuality.isError && (
@@ -259,6 +277,8 @@ export function App() {
             savePending={saveTestFilter.isPending}
             runSimulation={() => runSimulation.mutate()}
             runSimulationPending={runSimulation.isPending}
+            simulationStartRequested={requestedEvaluationAction === "simulation"}
+            evaluationRunningOrStarting={evaluationRunningOrStarting}
             promoteFilter={() => promoteFilter.mutate()}
             promotePending={promoteFilter.isPending}
             onToggleIncorrectlyRejected={() => setIncorrectlyRejectedOpen((open) => !open)}
@@ -306,6 +326,8 @@ function FilterQualityMetrics({
   savePending,
   runSimulation,
   runSimulationPending,
+  simulationStartRequested,
+  evaluationRunningOrStarting,
   promoteFilter,
   promotePending,
   onToggleIncorrectlyRejected
@@ -321,6 +343,8 @@ function FilterQualityMetrics({
   savePending: boolean;
   runSimulation: () => void;
   runSimulationPending: boolean;
+  simulationStartRequested: boolean;
+  evaluationRunningOrStarting: boolean;
   promoteFilter: () => void;
   promotePending: boolean;
   onToggleIncorrectlyRejected: () => void;
@@ -357,6 +381,8 @@ function FilterQualityMetrics({
           savePending={savePending}
           runSimulation={runSimulation}
           runSimulationPending={runSimulationPending}
+          simulationStartRequested={simulationStartRequested}
+          evaluationRunningOrStarting={evaluationRunningOrStarting}
           promoteFilter={promoteFilter}
           promotePending={promotePending}
         />
@@ -400,6 +426,8 @@ function IncorrectlyRejectedTable({
   savePending,
   runSimulation,
   runSimulationPending,
+  simulationStartRequested,
+  evaluationRunningOrStarting,
   promoteFilter,
   promotePending
 }: {
@@ -412,6 +440,8 @@ function IncorrectlyRejectedTable({
   savePending: boolean;
   runSimulation: () => void;
   runSimulationPending: boolean;
+  simulationStartRequested: boolean;
+  evaluationRunningOrStarting: boolean;
   promoteFilter: () => void;
   promotePending: boolean;
 }) {
@@ -499,6 +529,8 @@ function IncorrectlyRejectedTable({
             savePending={savePending}
             runSimulation={runSimulation}
             runSimulationPending={runSimulationPending}
+            simulationStartRequested={simulationStartRequested}
+            evaluationRunningOrStarting={evaluationRunningOrStarting}
             promoteFilter={promoteFilter}
             promotePending={promotePending}
           />
@@ -559,6 +591,8 @@ function FilterConfigEditor({
   savePending,
   runSimulation,
   runSimulationPending,
+  simulationStartRequested,
+  evaluationRunningOrStarting,
   promoteFilter,
   promotePending
 }: {
@@ -567,6 +601,8 @@ function FilterConfigEditor({
   savePending: boolean;
   runSimulation: () => void;
   runSimulationPending: boolean;
+  simulationStartRequested: boolean;
+  evaluationRunningOrStarting: boolean;
   promoteFilter: () => void;
   promotePending: boolean;
 }) {
@@ -609,8 +645,8 @@ function FilterConfigEditor({
         <button type="button" className="primary-button" onClick={() => saveTestFilter({ ...draft, config_role: "test", status: "active" })} disabled={savePending}>
           {savePending ? "Saving" : "Save test filter"}
         </button>
-        <button type="button" className="secondary-button" onClick={runSimulation} disabled={runSimulationPending}>
-          {runSimulationPending ? "Running" : "Run simulation"}
+        <button type="button" className="secondary-button" onClick={runSimulation} disabled={evaluationRunningOrStarting}>
+          {runSimulationPending || simulationStartRequested ? "Running" : "Run simulation"}
         </button>
         <button type="button" className="secondary-button" onClick={promoteFilter} disabled={promotePending}>
           {promotePending ? "Saving" : "Save as production"}
