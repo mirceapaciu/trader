@@ -664,7 +664,7 @@ function FilterConfigEditor({
             {runSimulationPending || simulationStartRequested ? "Running" : "Run simulation"}
           </button>
           <button type="button" className="secondary-button" onClick={promoteFilter} disabled={promotePending}>
-            {promotePending ? "Saving" : "Save as production"}
+            {promotePending ? "Saving" : "Save test filter as production"}
           </button>
         </div>
       </div>
