@@ -200,7 +200,17 @@ function apiUrl(path: string): string {
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(apiUrl(path));
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      const detail = body.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        message = detail;
+      }
+    } catch {
+      // Keep the HTTP status fallback when the server returns a non-JSON body.
+    }
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }

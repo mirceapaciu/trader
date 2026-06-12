@@ -29,10 +29,11 @@ const THROUGHPUT_PRESETS: Array<{ label: string; window: ThroughputPresetWindow 
   { label: "1h", window: "1h" },
   { label: "24h", window: "24h" }
 ];
+const MAX_CUSTOM_THROUGHPUT_RANGE_DAYS = 7;
 
 type ThroughputSelection =
   | { mode: "preset"; window: ThroughputPresetWindow }
-  | { mode: "custom"; startAt: string; endAt: string };
+  | { mode: "custom"; startDate: string; endDate: string };
 
 export function App() {
   const queryClient = useQueryClient();
@@ -124,20 +125,35 @@ export function App() {
     runSimulation.isPending;
 
   const chartRows = aggregateThroughputRows(throughput.data);
-  const throughputWindowStartAt = throughput.data?.window_start_at;
-  const throughputWindowEndAt = throughput.data?.window_end_at;
-  const customRangeInvalid =
-    !customThroughputRange.startAt ||
-    !customThroughputRange.endAt ||
-    new Date(customThroughputRange.startAt).getTime() >= new Date(customThroughputRange.endAt).getTime();
+  const throughputWindowStartAtMs = throughput.data?.window_start_at
+    ? new Date(throughput.data.window_start_at).getTime()
+    : undefined;
+  const throughputWindowEndAtMs = throughput.data?.window_end_at
+    ? new Date(throughput.data.window_end_at).getTime()
+    : undefined;
+  const customRangeMissing =
+    !customThroughputRange.startDate || !customThroughputRange.endDate;
+  const customRangeInverted =
+    !customRangeMissing && customThroughputRange.startDate > customThroughputRange.endDate;
+  const customRangeTooWide =
+    !customRangeMissing &&
+    !customRangeInverted &&
+    inclusiveDaySpan(customThroughputRange.startDate, customThroughputRange.endDate) >
+      MAX_CUSTOM_THROUGHPUT_RANGE_DAYS;
+  const customRangeInvalid = customRangeMissing || customRangeInverted || customRangeTooWide;
+  const customRangeError = customRangeInverted
+    ? "End date must be on or after the start date."
+    : customRangeTooWide
+      ? `Custom ranges can be at most ${MAX_CUSTOM_THROUGHPUT_RANGE_DAYS} days.`
+      : null;
   const applyCustomThroughputRange = () => {
     if (customRangeInvalid) {
       return;
     }
     setThroughputSelection({
       mode: "custom",
-      startAt: customThroughputRange.startAt,
-      endAt: customThroughputRange.endAt
+      startDate: customThroughputRange.startDate,
+      endDate: customThroughputRange.endDate
     });
   };
 
@@ -186,20 +202,20 @@ export function App() {
               <label>
                 Start
                 <input
-                  type="datetime-local"
-                  value={customThroughputRange.startAt}
+                  type="date"
+                  value={customThroughputRange.startDate}
                   onChange={(event) =>
-                    setCustomThroughputRange((current) => ({ ...current, startAt: event.target.value }))
+                    setCustomThroughputRange((current) => ({ ...current, startDate: event.target.value }))
                   }
                 />
               </label>
               <label>
                 End
                 <input
-                  type="datetime-local"
-                  value={customThroughputRange.endAt}
+                  type="date"
+                  value={customThroughputRange.endDate}
                   onChange={(event) =>
-                    setCustomThroughputRange((current) => ({ ...current, endAt: event.target.value }))
+                    setCustomThroughputRange((current) => ({ ...current, endDate: event.target.value }))
                   }
                 />
               </label>
@@ -213,6 +229,7 @@ export function App() {
               </button>
             </div>
           </div>
+          {customRangeError && <div className="inline-error">{customRangeError}</div>}
           {throughput.isError && <div className="inline-error">{throughput.error.message}</div>}
           <div className="chart">
             {chartRows.length > 0 ? (
@@ -233,7 +250,10 @@ export function App() {
                     dataKey="timestampMs"
                     type="number"
                     scale="time"
-                    domain={["dataMin", "dataMax"]}
+                    domain={[
+                      throughputWindowStartAtMs ?? "dataMin",
+                      throughputWindowEndAtMs ?? "dataMax"
+                    ]}
                     tickLine={false}
                     axisLine={false}
                     minTickGap={20}
@@ -241,8 +261,8 @@ export function App() {
                     tickFormatter={(value) =>
                       formatThroughputAxisTick(
                         Number(value),
-                        throughputWindowStartAt,
-                        throughputWindowEndAt
+                        throughput.data?.window_start_at,
+                        throughput.data?.window_end_at
                       )
                     }
                   />
@@ -1077,14 +1097,14 @@ function formatThroughputWindowSummary(
 ) {
   if (response) {
     if (response.window === "custom") {
-      return `${formatShortDateTime(response.window_start_at)} to ${formatShortDateTime(response.window_end_at)}`;
+      return `${formatShortDate(response.window_start_at)} to ${formatShortDate(exclusiveEndToInclusiveDisplayDate(response.window_end_at))}`;
     }
     return `${response.window} window`;
   }
   if (selection.mode === "preset") {
     return `${selection.window} window`;
   }
-  return `${formatShortDateTime(localInputToIso(selection.startAt))} to ${formatShortDateTime(localInputToIso(selection.endAt))}`;
+  return `${formatShortDate(dateInputStartToIso(selection.startDate))} to ${formatShortDate(dateInputToInclusiveEndIso(selection.endDate))}`;
 }
 
 function formatShortDateTime(value: string) {
@@ -1093,6 +1113,14 @@ function formatShortDateTime(value: string) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit"
+  });
+}
+
+function formatShortDate(value: string) {
+  return new Date(value).toLocaleDateString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
   });
 }
 
@@ -1288,27 +1316,49 @@ function toThroughputRequest(selection: ThroughputSelection): ThroughputRequest 
     return { window: selection.window };
   }
   return {
-    startAt: localInputToIso(selection.startAt),
-    endAt: localInputToIso(selection.endAt)
+    startAt: dateInputStartToIso(selection.startDate),
+    endAt: dateInputExclusiveEndToIso(selection.endDate)
   };
 }
 
 function defaultCustomRange() {
   const end = new Date();
-  const start = new Date(end.getTime() - 6 * 60 * 60 * 1000);
+  const start = new Date(end.getTime() - 6 * 24 * 60 * 60 * 1000);
   return {
-    startAt: toDateTimeLocalInputValue(start),
-    endAt: toDateTimeLocalInputValue(end)
+    startDate: toDateInputValue(start),
+    endDate: toDateInputValue(end)
   };
 }
 
-function toDateTimeLocalInputValue(value: Date) {
+function toDateInputValue(value: Date) {
   const offset = value.getTimezoneOffset() * 60 * 1000;
-  return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+  return new Date(value.getTime() - offset).toISOString().slice(0, 10);
 }
 
-function localInputToIso(value: string) {
-  return new Date(value).toISOString();
+function dateInputStartToIso(value: string) {
+  return new Date(`${value}T00:00:00`).toISOString();
+}
+
+function dateInputExclusiveEndToIso(value: string) {
+  const endDate = new Date(`${value}T00:00:00`);
+  endDate.setDate(endDate.getDate() + 1);
+  return endDate.toISOString();
+}
+
+function dateInputToInclusiveEndIso(value: string) {
+  return new Date(`${value}T23:59:59`).toISOString();
+}
+
+function exclusiveEndToInclusiveDisplayDate(value: string) {
+  const endDate = new Date(value);
+  endDate.setMilliseconds(endDate.getMilliseconds() - 1);
+  return endDate.toISOString();
+}
+
+function inclusiveDaySpan(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
 }
 
 function mergeRecommendedKeywords(items: FilterQualityIncorrectlyRejectedItem[]) {
