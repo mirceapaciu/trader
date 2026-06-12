@@ -41,6 +41,9 @@ class NewsFetcherSettings:
     include_keywords: tuple[str, ...]
     exclude_keywords: tuple[str, ...]
 
+    log_level: str = "INFO"
+    log_file: str = "logs/news-fetcher.log"
+
     @property
     def postgres_dsn(self) -> str:
         host = os.getenv("POSTGRES_HOST", "127.0.0.1")
@@ -85,6 +88,8 @@ class NewsFetcherSettings:
             dedupe_algorithm=os.getenv("DEDUPE_ALGORITHM", "rapidfuzz_ratio"),
             include_keywords=_csv_env("NEWS_INCLUDE_KEYWORDS"),
             exclude_keywords=_csv_env("NEWS_EXCLUDE_KEYWORDS"),
+            log_level=os.getenv("NEWS_FETCHER_LOG_LEVEL") or os.getenv("LOG_LEVEL", "INFO"),
+            log_file=os.getenv("NEWS_FETCHER_LOG_FILE", "logs/news-fetcher.log"),
         )
 
     def instruments_config_path(self, repo_root: Path) -> Path | None:
@@ -92,6 +97,9 @@ class NewsFetcherSettings:
 
     def rss_sources_config_path(self, repo_root: Path) -> Path | None:
         return _optional_path(self.rss_sources_config, repo_root)
+
+    def log_file_path(self, repo_root: Path) -> Path | None:
+        return _optional_path(self.log_file, repo_root)
 
     def filter_config_fingerprint(self, watchlist_tickers: set[str]) -> str:
         payload = {

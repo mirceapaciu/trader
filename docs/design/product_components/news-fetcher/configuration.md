@@ -24,6 +24,10 @@ RSS_RATE_LIMIT_BACKOFF_SECONDS=900  # seconds to suppress one RSS source after H
 PREPOST_POLL_INTERVAL=600    # seconds
 MARKET_HOURS_ONLY=false      # when false, run continuous polling and ignore market session gating
 
+# Logging
+NEWS_FETCHER_LOG_LEVEL=INFO
+NEWS_FETCHER_LOG_FILE=logs/news-fetcher.log
+
 
 # Provider controls
 PROVIDER_TIMEOUT_SECONDS=10

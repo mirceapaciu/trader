@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from contextlib import closing
 from pathlib import Path
@@ -15,11 +16,8 @@ from .config_sync import sync_seed_configs
 from .service import build_service
 from .settings import NewsFetcherSettings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
 LOGGER = logging.getLogger("news_fetcher_runner")
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
 
 def _repo_root() -> Path:
@@ -67,12 +65,29 @@ def _bool_env(name: str, *, default: bool) -> bool:
     return default
 
 
+def _configure_logging(settings: NewsFetcherSettings, repo_root: Path) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    log_file = settings.log_file_path(repo_root)
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format=LOG_FORMAT,
+        handlers=handlers,
+        force=True,
+    )
+
+
 def main() -> None:
-    load_env_files(_repo_root(), override_existing=False)
+    repo_root = _repo_root()
+    load_env_files(repo_root, override_existing=False)
 
     settings = NewsFetcherSettings.from_env()
+    _configure_logging(settings, repo_root)
     _bootstrap_database_schema(settings)
-    sync_seed_configs(repo_root=_repo_root(), settings=settings)
+    sync_seed_configs(repo_root=repo_root, settings=settings)
     providers = _build_providers()
 
     if not providers and not settings.rss_enabled:

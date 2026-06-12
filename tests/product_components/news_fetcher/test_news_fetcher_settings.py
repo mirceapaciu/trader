@@ -27,3 +27,20 @@ def test_settings_include_retry_drain_batch_size(monkeypatch) -> None:
     settings = NewsFetcherSettings.from_env()
 
     assert settings.publish_retry_drain_batch_size == 250
+
+
+def test_settings_include_news_fetcher_log_file(monkeypatch) -> None:
+    monkeypatch.setenv("NEWS_FETCHER_LOG_FILE", "logs/custom-news-fetcher.log")
+
+    settings = NewsFetcherSettings.from_env()
+
+    assert settings.log_file == "logs/custom-news-fetcher.log"
+
+
+def test_settings_prefer_news_fetcher_log_level_over_shared_log_level(monkeypatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("NEWS_FETCHER_LOG_LEVEL", "DEBUG")
+
+    settings = NewsFetcherSettings.from_env()
+
+    assert settings.log_level == "DEBUG"
