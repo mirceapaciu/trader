@@ -331,6 +331,8 @@ def test_service_records_cycle_status_for_empty_batches() -> None:
     assert storage.cycle_statuses[0]["source_key"] == "finnhub"
     assert storage.cycle_statuses[0]["status"] == "success"
     assert storage.cycle_statuses[0]["fetched_count"] == 0
+    assert storage.cycle_statuses[0]["last_fetch_attempt_at"] is not None
+    assert storage.cycle_statuses[0]["last_fetch_attempt_at"].tzinfo == timezone.utc
     assert storage.cycle_statuses[0]["last_non_zero_fetch_at"] is None
 
 
@@ -365,6 +367,27 @@ def test_service_records_last_non_zero_fetch_timestamp_for_non_empty_batches() -
     assert len(storage.cycle_statuses) == 1
     assert storage.cycle_statuses[0]["last_non_zero_fetch_at"] is not None
     assert storage.cycle_statuses[0]["last_non_zero_fetch_at"].tzinfo == timezone.utc
+
+
+def test_service_does_not_advance_fetch_attempt_timestamp_during_backoff() -> None:
+    provider = RateLimitedProvider()
+    storage = InMemoryStorage()
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={"finnhub": provider},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    service.run_once()
+    service.run_once()
+
+    assert len(storage.cycle_statuses) == 2
+    assert storage.cycle_statuses[0]["error_code"] == "provider_rate_limited"
+    assert storage.cycle_statuses[0]["last_fetch_attempt_at"] is not None
+    assert storage.cycle_statuses[1]["error_code"] == "provider_rate_limit_backoff"
+    assert storage.cycle_statuses[1]["last_fetch_attempt_at"] is None
 
 
 def test_service_processes_dynamic_rss_feed_specs(monkeypatch) -> None:

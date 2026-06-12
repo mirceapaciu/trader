@@ -121,6 +121,7 @@ Logical fields:
 - `source_key` (primary key): stable source stream identifier.
 - `last_cycle_started_at`: UTC timestamp when the most recent cycle started.
 - `last_cycle_finished_at`: UTC timestamp when the most recent cycle finished.
+- `last_fetch_attempt_at`: UTC timestamp when the provider was most recently actually called. Backoff and interval skips do not advance this value.
 - `last_non_zero_fetch_at`: UTC timestamp when the most recent cycle returned one or more source events.
 - `last_cycle_status`: `success` or `error`.
 - `last_cycle_error_code`: nullable machine-readable failure reason.
@@ -135,6 +136,7 @@ Behavioral constraints:
 - Row must update on every provider cycle, including empty cycles and provider failures.
 - `last_non_zero_fetch_at` only advances when `last_cycle_fetched_count > 0`.
 - Monitoring UI liveness must use `last_cycle_finished_at`, not checkpoint timestamps.
+- Monitoring UI provider freshness can show `last_fetch_attempt_at` separately from `last_cycle_finished_at` so backoff skips do not look like provider calls.
 
 ### `t_rss_sources`
 

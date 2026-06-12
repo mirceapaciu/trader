@@ -57,6 +57,7 @@ def test_record_provider_cycle_status_qualifies_existing_last_non_zero_fetch_at(
         started_at=now,
         finished_at=now,
         last_non_zero_fetch_at=None,
+        last_fetch_attempt_at=None,
         status="success",
         error_code=None,
         fetched_count=0,
@@ -66,6 +67,10 @@ def test_record_provider_cycle_status_qualifies_existing_last_non_zero_fetch_at(
     )
 
     assert cursor.sql is not None
+    assert (
+        "COALESCE(EXCLUDED.last_fetch_attempt_at, "
+        "news_fetcher.t_provider_cycle_status.last_fetch_attempt_at)"
+    ) in cursor.sql
     assert (
         "COALESCE(EXCLUDED.last_non_zero_fetch_at, "
         "news_fetcher.t_provider_cycle_status.last_non_zero_fetch_at)"

@@ -38,6 +38,7 @@ class FakeMonitoringDataSource:
                 ProviderStatus(
                     source_key="finnhub",
                     last_cycle_end_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+                    last_fetch_attempt_at=datetime(2026, 6, 12, 9, 50, tzinfo=timezone.utc),
                     last_non_zero_fetch_at=datetime(2026, 6, 12, 9, 45, tzinfo=timezone.utc),
                 )
             ],
@@ -199,6 +200,25 @@ def test_providers_endpoint_includes_last_non_zero_fetch_timestamp(monkeypatch) 
     assert response.status_code == 200
     payload = response.json()
     assert payload["providers"][0]["last_non_zero_fetch_at"] == "2026-06-12T09:45:00Z"
+
+
+def test_providers_endpoint_includes_last_fetch_attempt_timestamp(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["providers"][0]["last_fetch_attempt_at"] == "2026-06-12T09:50:00Z"
 
 
 def _settings() -> MonitoringUiSettings:

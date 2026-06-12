@@ -101,6 +101,7 @@ class NewsFetcherService:
                     result=result,
                     status="success",
                     error_code=None,
+                    fetch_attempt_at=started_at,
                 )
             except ProviderRateLimitError:
                 backoff_until = datetime.now(timezone.utc) + timedelta(
@@ -117,6 +118,7 @@ class NewsFetcherService:
                     result=None,
                     status="error",
                     error_code="provider_rate_limited",
+                    fetch_attempt_at=started_at,
                 )
                 continue
             except Exception:  # pragma: no cover - defensive process-level guard
@@ -128,6 +130,7 @@ class NewsFetcherService:
                     result=None,
                     status="error",
                     error_code="source_cycle_failed",
+                    fetch_attempt_at=started_at,
                 )
                 continue
 
@@ -239,6 +242,7 @@ class NewsFetcherService:
         result: ProcessResult | None,
         status: str,
         error_code: str | None,
+        fetch_attempt_at: datetime | None = None,
     ) -> None:
         recorder = getattr(self._storage, "record_provider_cycle_status", None)
         if recorder is None:
@@ -259,6 +263,7 @@ class NewsFetcherService:
                 last_non_zero_fetch_at=last_non_zero_fetch_at,
                 status=status,
                 error_code=error_code,
+                last_fetch_attempt_at=fetch_attempt_at,
                 fetched_count=fetched,
                 accepted_count=accepted,
                 rejected_count=rejected,

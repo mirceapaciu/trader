@@ -668,6 +668,7 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         started_at: datetime,
         finished_at: datetime,
         last_non_zero_fetch_at: datetime | None,
+        last_fetch_attempt_at: datetime | None,
         status: str,
         error_code: str | None,
         fetched_count: int,
@@ -677,13 +678,18 @@ class PostgresNewsStorageAdapter(StorageAdapter):
     ) -> None:
         sql = (
             f"INSERT INTO {self._news_schema}.t_provider_cycle_status "
-            f"(source_key, last_cycle_started_at, last_cycle_finished_at, last_non_zero_fetch_at, last_cycle_status, "
+            f"(source_key, last_cycle_started_at, last_cycle_finished_at, last_fetch_attempt_at, "
+            f"last_non_zero_fetch_at, last_cycle_status, "
             f"last_cycle_error_code, last_cycle_fetched_count, last_cycle_accepted_count, "
             f"last_cycle_rejected_count, last_cycle_checkpoint_advanced, updated_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()) "
             f"ON CONFLICT (source_key) DO UPDATE SET "
             f"last_cycle_started_at = EXCLUDED.last_cycle_started_at, "
             f"last_cycle_finished_at = EXCLUDED.last_cycle_finished_at, "
+            f"last_fetch_attempt_at = COALESCE("
+            f"EXCLUDED.last_fetch_attempt_at, "
+            f"{self._news_schema}.t_provider_cycle_status.last_fetch_attempt_at"
+            f"), "
             f"last_non_zero_fetch_at = COALESCE("
             f"EXCLUDED.last_non_zero_fetch_at, "
             f"{self._news_schema}.t_provider_cycle_status.last_non_zero_fetch_at"
@@ -703,6 +709,7 @@ class PostgresNewsStorageAdapter(StorageAdapter):
                     source_key,
                     _to_utc(started_at),
                     _to_utc(finished_at),
+                    _to_utc(last_fetch_attempt_at) if last_fetch_attempt_at is not None else None,
                     _to_utc(last_non_zero_fetch_at) if last_non_zero_fetch_at is not None else None,
                     status,
                     error_code,
