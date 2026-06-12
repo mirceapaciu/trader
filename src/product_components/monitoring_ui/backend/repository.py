@@ -136,19 +136,28 @@ class PostgresRedisMonitoringDataSource:
 
         return ProvidersResponse(providers=providers, generated_at=_utc_now())
 
-    def get_throughput(self, *, window: str) -> ThroughputResponse:
-        interval = _window_to_interval(window)
+    def get_throughput(
+        self,
+        *,
+        window: str,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> ThroughputResponse:
+        resolved_end_at = _to_utc(end_at) if end_at is not None else _utc_now()
+        resolved_start_at = (
+            _to_utc(start_at) if start_at is not None else resolved_end_at - _window_to_timedelta(window)
+        )
         sql = (
             f"SELECT date_trunc('minute', created_at) AS window_start, source_key, "
             f"COUNT(*) FILTER (WHERE status IN ('pending', 'publishing', 'published', 'dead_lettered')) AS fetch_count, "
             f"COUNT(*) FILTER (WHERE status = 'published') AS publish_success_count, "
             f"COUNT(*) FILTER (WHERE status = 'dead_lettered') AS publish_error_count "
             f"FROM {self._news_schema}.t_publication_obligations "
-            f"WHERE created_at >= NOW() - %s::interval "
+            f"WHERE created_at >= %s AND created_at < %s "
             f"GROUP BY 1, 2 ORDER BY 1, 2"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, (interval,))
+            cur.execute(sql, (resolved_start_at, resolved_end_at))
             rows = cur.fetchall()
 
         buckets = [
@@ -161,7 +170,13 @@ class PostgresRedisMonitoringDataSource:
             )
             for row in rows
         ]
-        return ThroughputResponse(window=window, buckets=buckets, generated_at=_utc_now())
+        return ThroughputResponse(
+            window=window,
+            window_start_at=resolved_start_at,
+            window_end_at=resolved_end_at,
+            buckets=buckets,
+            generated_at=_utc_now(),
+        )
 
     def get_backlog(self) -> BacklogResponse:
         sql = (
@@ -492,10 +507,13 @@ def _safe_identifier(value: str) -> str:
     return value
 
 
-def _window_to_interval(window: str) -> str:
+def _window_to_timedelta(window: str) -> timedelta:
     normalized = window.strip().lower()
-    allowed = {"15m": "15 minutes", "1h": "1 hour", "24h": "24 hours"}
-    return allowed.get(normalized, "1 hour")
+    allowed = {"15m": timedelta(minutes=15), "1h": timedelta(hours=1), "24h": timedelta(hours=24)}
+    try:
+        return allowed[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported throughput window: {normalized}") from exc
 
 
 def _to_utc(value: datetime) -> datetime:

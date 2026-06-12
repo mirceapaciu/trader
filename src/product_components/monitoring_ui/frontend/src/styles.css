@@ -142,6 +142,61 @@ h2 {
   margin-bottom: 16px;
 }
 
+.throughput-controls {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.window-toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.window-toggle {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #b8c4bd;
+  border-radius: 999px;
+  color: #33423c;
+  background: #f6faf7;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.window-toggle.active {
+  border-color: #176f58;
+  color: #ffffff;
+  background: #1d8f6f;
+}
+
+.throughput-custom-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.throughput-custom-form label {
+  display: grid;
+  gap: 6px;
+  color: #5d6b65;
+  font-size: 0.86rem;
+}
+
+.throughput-custom-form input {
+  min-height: 36px;
+  min-width: 220px;
+  padding: 0 10px;
+  border: 1px solid #c8d3cc;
+  border-radius: 6px;
+  color: #18221f;
+  background: #ffffff;
+  font: inherit;
+}
+
 .heading-with-state {
   display: flex;
   align-items: center;
@@ -703,6 +758,16 @@ th {
   .review-layout,
   .filter-editor-row {
     grid-template-columns: 1fr;
+  }
+
+  .throughput-custom-form {
+    align-items: stretch;
+  }
+
+  .throughput-custom-form label,
+  .throughput-custom-form input {
+    min-width: 0;
+    width: 100%;
   }
 
   .review-list,

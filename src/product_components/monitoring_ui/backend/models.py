@@ -67,6 +67,8 @@ class ThroughputResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     window: str
+    window_start_at: datetime
+    window_end_at: datetime
     buckets: list[ThroughputBucket]
     generated_at: datetime
 

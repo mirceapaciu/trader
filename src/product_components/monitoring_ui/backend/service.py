@@ -24,7 +24,13 @@ class MonitoringDataSource(Protocol):
 
     def list_providers(self) -> ProvidersResponse: ...
 
-    def get_throughput(self, *, window: str) -> ThroughputResponse: ...
+    def get_throughput(
+        self,
+        *,
+        window: str,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> ThroughputResponse: ...
 
     def get_backlog(self) -> BacklogResponse: ...
 
@@ -61,6 +67,10 @@ class FilterQualityRunAlreadyActive(RuntimeError):
     def __init__(self, run_id: str) -> None:
         super().__init__("filter_quality_run_already_active")
         self.run_id = run_id
+
+
+class InvalidThroughputWindow(ValueError):
+    pass
 
 
 class MonitoringService:
@@ -108,8 +118,30 @@ class MonitoringService:
     def list_providers(self) -> ProvidersResponse:
         return self._data_source.list_providers()
 
-    def get_throughput(self, *, window: str | None) -> ThroughputResponse:
-        return self._data_source.get_throughput(window=window or self._settings.ui_default_time_window)
+    def get_throughput(
+        self,
+        *,
+        window: str | None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> ThroughputResponse:
+        if window and (start_at is not None or end_at is not None):
+            raise InvalidThroughputWindow("Specify either a preset window or start/end bounds, not both.")
+        if start_at is not None or end_at is not None:
+            if start_at is None or end_at is None:
+                raise InvalidThroughputWindow("Custom throughput ranges require both start_at and end_at.")
+            normalized_start = _to_utc(start_at)
+            normalized_end = _to_utc(end_at)
+            if normalized_start >= normalized_end:
+                raise InvalidThroughputWindow("Custom throughput ranges must have start_at earlier than end_at.")
+            if normalized_end - normalized_start > timedelta(days=7):
+                raise InvalidThroughputWindow("Custom throughput ranges must not exceed 7 days.")
+            return self._data_source.get_throughput(window="custom", start_at=normalized_start, end_at=normalized_end)
+
+        selected_window = (window or self._settings.ui_default_time_window).strip().lower()
+        if selected_window not in {"15m", "1h", "24h"}:
+            raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
+        return self._data_source.get_throughput(window=selected_window)
 
     def get_backlog(self) -> BacklogResponse:
         return self._data_source.get_backlog()
@@ -175,6 +207,12 @@ def _dependency_healthy(dependencies: list[DependencyHealth], kind: str) -> bool
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _config_snapshot(config: NewsFilterConfigPayload) -> dict:

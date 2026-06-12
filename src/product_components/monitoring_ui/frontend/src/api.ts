@@ -46,9 +46,17 @@ export type ThroughputBucket = {
 
 export type ThroughputResponse = {
   window: string;
+  window_start_at: string;
+  window_end_at: string;
   buckets: ThroughputBucket[];
   generated_at: string;
 };
+
+export type ThroughputPresetWindow = "15m" | "1h" | "24h";
+
+export type ThroughputRequest =
+  | { window: ThroughputPresetWindow }
+  | { startAt: string; endAt: string };
 
 export type BacklogResponse = {
   pending_count: number;
@@ -235,8 +243,15 @@ export function fetchProviders(): Promise<ProvidersResponse> {
   return getJson<ProvidersResponse>("/api/providers");
 }
 
-export function fetchThroughput(window: string): Promise<ThroughputResponse> {
-  return getJson<ThroughputResponse>(`/api/metrics/throughput?window=${encodeURIComponent(window)}`);
+export function fetchThroughput(request: ThroughputRequest): Promise<ThroughputResponse> {
+  if ("window" in request) {
+    return getJson<ThroughputResponse>(`/api/metrics/throughput?window=${encodeURIComponent(request.window)}`);
+  }
+  const params = new URLSearchParams({
+    start_at: request.startAt,
+    end_at: request.endAt
+  });
+  return getJson<ThroughputResponse>(`/api/metrics/throughput?${params.toString()}`);
 }
 
 export function fetchBacklog(): Promise<BacklogResponse> {

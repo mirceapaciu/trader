@@ -17,7 +17,11 @@ from src.product_components.monitoring_ui.backend.models import (
 )
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
 from src.product_components.monitoring_ui.backend.repository import _incorrectly_rejected_item
-from src.product_components.monitoring_ui.backend.service import FilterQualityRunAlreadyActive, MonitoringService
+from src.product_components.monitoring_ui.backend.service import (
+    FilterQualityRunAlreadyActive,
+    InvalidThroughputWindow,
+    MonitoringService,
+)
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 
 
@@ -36,6 +40,9 @@ class FakeDataSource:
         self.last_filter_quality_run: FilterQualityRunSummary | None = None
         self.incorrectly_rejected_run_id: str | None = None
         self.stale_timeout_seconds: int | None = None
+        self.throughput_window: str | None = None
+        self.throughput_start_at: datetime | None = None
+        self.throughput_end_at: datetime | None = None
         self.test_filter = _filter_config("test_cfg", "test")
         self.production_filter = _filter_config("prod_cfg", "production")
 
@@ -45,8 +52,23 @@ class FakeDataSource:
     def list_providers(self) -> ProvidersResponse:
         return ProvidersResponse(providers=self.providers, generated_at=_now())
 
-    def get_throughput(self, *, window: str) -> ThroughputResponse:
-        return ThroughputResponse(window=window, buckets=[], generated_at=_now())
+    def get_throughput(
+        self,
+        *,
+        window: str,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> ThroughputResponse:
+        self.throughput_window = window
+        self.throughput_start_at = start_at
+        self.throughput_end_at = end_at
+        return ThroughputResponse(
+            window=window,
+            window_start_at=start_at or (_now() - timedelta(hours=1)),
+            window_end_at=end_at or _now(),
+            buckets=[],
+            generated_at=_now(),
+        )
 
     def get_backlog(self) -> BacklogResponse:
         return BacklogResponse(pending_count=0, retrying_count=0, dead_letter_count=0, generated_at=_now())
@@ -221,6 +243,68 @@ def test_dead_letter_query_bounds_limit_and_offset() -> None:
 
     assert data_source.dead_letter_limit == 25
     assert data_source.dead_letter_offset == 0
+
+
+def test_get_throughput_uses_default_window_when_not_provided() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window=None)
+
+    assert data_source.throughput_window == "1h"
+    assert data_source.throughput_start_at is None
+    assert data_source.throughput_end_at is None
+    assert response.window == "1h"
+
+
+def test_get_throughput_forwards_supported_preset_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window="24h")
+
+    assert data_source.throughput_window == "24h"
+    assert response.window == "24h"
+
+
+def test_get_throughput_accepts_custom_range() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+    start_at = datetime(2026, 6, 12, 8, 0, tzinfo=timezone.utc)
+    end_at = datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc)
+
+    response = service.get_throughput(window=None, start_at=start_at, end_at=end_at)
+
+    assert data_source.throughput_window == "custom"
+    assert data_source.throughput_start_at == start_at
+    assert data_source.throughput_end_at == end_at
+    assert response.window == "custom"
+
+
+def test_get_throughput_rejects_invalid_custom_range() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+    start_at = datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc)
+    end_at = datetime(2026, 6, 12, 8, 0, tzinfo=timezone.utc)
+
+    try:
+        service.get_throughput(window=None, start_at=start_at, end_at=end_at)
+    except InvalidThroughputWindow as exc:
+        assert "start_at earlier than end_at" in str(exc)
+    else:
+        raise AssertionError("expected InvalidThroughputWindow")
+
+
+def test_get_throughput_rejects_invalid_window_token() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    try:
+        service.get_throughput(window="30m")
+    except InvalidThroughputWindow as exc:
+        assert "Unsupported throughput window" in str(exc)
+    else:
+        raise AssertionError("expected InvalidThroughputWindow")
 
 
 def test_filter_quality_status_returns_running_and_last_terminal_run() -> None:

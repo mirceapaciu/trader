@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from datetime import datetime
+
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,7 +22,7 @@ from .models import (
     ThroughputResponse,
 )
 from .repository import PostgresRedisMonitoringDataSource
-from .service import FilterQualityRunAlreadyActive, MonitoringService
+from .service import FilterQualityRunAlreadyActive, InvalidThroughputWindow, MonitoringService
 from .settings import MonitoringUiSettings
 
 
@@ -71,8 +73,15 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         return service.list_providers()
 
     @app.get("/api/metrics/throughput", response_model=ThroughputResponse)
-    def get_throughput(window: str | None = Query(default=None)) -> ThroughputResponse:
-        return service.get_throughput(window=window)
+    def get_throughput(
+        window: str | None = Query(default=None),
+        start_at: datetime | None = Query(default=None),
+        end_at: datetime | None = Query(default=None),
+    ) -> ThroughputResponse:
+        try:
+            return service.get_throughput(window=window, start_at=start_at, end_at=end_at)
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     @app.get("/api/backlog", response_model=BacklogResponse)
     def get_backlog() -> BacklogResponse:

@@ -84,6 +84,12 @@ Must display time-series and aggregates for:
 Time windows:
 - 15 minutes, 1 hour, 24 hours, and custom bounded range.
 
+Throughput window controls:
+- The Throughput panel defaults to the 24 hour preset on first load.
+- Operators can switch between `15m`, `1h`, and `24h` presets without leaving the dashboard.
+- Operators can apply a custom bounded UTC range by providing both start and end timestamps.
+- The API rejects unsupported window tokens, missing custom bounds, inverted ranges, and custom ranges longer than the configured safe bound.
+
 ### 4.3.1 Filter Quality Panel
 
 The dashboard includes a compact Filter Quality panel.
@@ -142,7 +148,7 @@ The Monitoring UI HTTP API is a thin read-mostly adapter over component telemetr
 Required read endpoints:
 - `GET /api/health` returns global readiness, liveness, dependency state, and stale-data status.
 - `GET /api/providers` returns provider-level cycle summaries and last error state.
-- `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics.
+- `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics for either a preset `window` token or explicit `start_at` and `end_at` bounds.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.

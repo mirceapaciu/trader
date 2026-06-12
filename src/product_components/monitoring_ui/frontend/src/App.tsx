@@ -18,17 +18,36 @@ import {
   type FilterQualityIncorrectlyRejectedItem,
   type FilterQualityRunSummary,
   type HealthState,
-  type NewsFilterConfigPayload
+  type NewsFilterConfigPayload,
+  type ThroughputPresetWindow,
+  type ThroughputRequest,
+  type ThroughputResponse
 } from "./api";
+
+const THROUGHPUT_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> = [
+  { label: "15m", window: "15m" },
+  { label: "1h", window: "1h" },
+  { label: "24h", window: "24h" }
+];
+
+type ThroughputSelection =
+  | { mode: "preset"; window: ThroughputPresetWindow }
+  | { mode: "custom"; startAt: string; endAt: string };
 
 export function App() {
   const queryClient = useQueryClient();
   const [incorrectlyRejectedOpen, setIncorrectlyRejectedOpen] = useState(false);
   const [evaluationStartRequested, setEvaluationStartRequested] = useState(false);
   const [requestedEvaluationAction, setRequestedEvaluationAction] = useState<"filter-quality" | "simulation" | null>(null);
+  const [throughputSelection, setThroughputSelection] = useState<ThroughputSelection>({ mode: "preset", window: "24h" });
+  const [customThroughputRange, setCustomThroughputRange] = useState(() => defaultCustomRange());
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
   const providers = useQuery({ queryKey: ["providers"], queryFn: fetchProviders, refetchInterval: 10000 });
-  const throughput = useQuery({ queryKey: ["throughput", "1h"], queryFn: () => fetchThroughput("1h") });
+  const throughputRequest = toThroughputRequest(throughputSelection);
+  const throughput = useQuery({
+    queryKey: ["throughput", throughputRequest],
+    queryFn: () => fetchThroughput(throughputRequest)
+  });
   const backlog = useQuery({ queryKey: ["backlog"], queryFn: fetchBacklog, refetchInterval: 20000 });
   const deadLetters = useQuery({ queryKey: ["dead-letter"], queryFn: fetchDeadLetters, refetchInterval: 20000 });
   const filterQuality = useQuery({
@@ -104,13 +123,21 @@ export function App() {
     startFilterQuality.isPending ||
     runSimulation.isPending;
 
-  const chartRows =
-    throughput.data?.buckets.map((bucket) => ({
-      time: new Date(bucket.window_start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      fetched: bucket.fetch_count,
-      published: bucket.publish_success_count,
-      failed: bucket.publish_error_count
-    })) ?? [];
+  const chartRows = aggregateThroughputRows(throughput.data);
+  const customRangeInvalid =
+    !customThroughputRange.startAt ||
+    !customThroughputRange.endAt ||
+    new Date(customThroughputRange.startAt).getTime() >= new Date(customThroughputRange.endAt).getTime();
+  const applyCustomThroughputRange = () => {
+    if (customRangeInvalid) {
+      return;
+    }
+    setThroughputSelection({
+      mode: "custom",
+      startAt: customThroughputRange.startAt,
+      endAt: customThroughputRange.endAt
+    });
+  };
 
   return (
     <main className="shell">
@@ -135,9 +162,56 @@ export function App() {
       <section className="layout">
         <div className="panel panel-large">
           <div className="panel-heading">
-            <h2>Throughput</h2>
-            <span>1h window</span>
+            <div>
+              <h2>Throughput</h2>
+              <span>{formatThroughputWindowSummary(throughput.data, throughputSelection)}</span>
+            </div>
           </div>
+          <div className="throughput-controls">
+            <div className="window-toggle-group" aria-label="Throughput time window presets">
+              {THROUGHPUT_PRESETS.map((preset) => (
+                <button
+                  type="button"
+                  key={preset.window}
+                  className={throughputSelection.mode === "preset" && throughputSelection.window === preset.window ? "window-toggle active" : "window-toggle"}
+                  onClick={() => setThroughputSelection({ mode: "preset", window: preset.window })}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="throughput-custom-form">
+              <label>
+                Start
+                <input
+                  type="datetime-local"
+                  value={customThroughputRange.startAt}
+                  onChange={(event) =>
+                    setCustomThroughputRange((current) => ({ ...current, startAt: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                End
+                <input
+                  type="datetime-local"
+                  value={customThroughputRange.endAt}
+                  onChange={(event) =>
+                    setCustomThroughputRange((current) => ({ ...current, endAt: event.target.value }))
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={applyCustomThroughputRange}
+                disabled={customRangeInvalid}
+              >
+                Apply range
+              </button>
+            </div>
+          </div>
+          {throughput.isError && <div className="inline-error">{throughput.error.message}</div>}
           <div className="chart">
             {chartRows.length > 0 ? (
               <ResponsiveContainer width="100%" height={290} minWidth={0}>
@@ -149,9 +223,15 @@ export function App() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="#dbe3dc" strokeDasharray="3 3" />
-                  <XAxis dataKey="time" tickLine={false} axisLine={false} />
+                  <XAxis
+                    dataKey="timestamp"
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={28}
+                    tickFormatter={formatThroughputAxisTick}
+                  />
                   <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip />
+                  <Tooltip labelFormatter={(value) => formatThroughputTooltipLabel(String(value))} />
                   <Area type="monotone" dataKey="published" stroke="#1d8f6f" fill="url(#published)" />
                   <Area type="monotone" dataKey="failed" stroke="#b83b3b" fill="#b83b3b22" />
                 </AreaChart>
@@ -938,6 +1018,51 @@ function formatDuration(seconds?: number | null) {
   return `${Math.round(seconds / 60)}m`;
 }
 
+function formatThroughputAxisTick(value: string) {
+  const date = new Date(value);
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatThroughputTooltipLabel(value: string) {
+  return new Date(value).toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatThroughputWindowSummary(
+  response: ThroughputResponse | undefined,
+  selection: ThroughputSelection
+) {
+  if (response) {
+    if (response.window === "custom") {
+      return `${formatShortDateTime(response.window_start_at)} to ${formatShortDateTime(response.window_end_at)}`;
+    }
+    return `${response.window} window`;
+  }
+  if (selection.mode === "preset") {
+    return `${selection.window} window`;
+  }
+  return `${formatShortDateTime(localInputToIso(selection.startAt))} to ${formatShortDateTime(localInputToIso(selection.endAt))}`;
+}
+
+function formatShortDateTime(value: string) {
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 function formatRate(value?: number | null) {
   if (value == null) {
     return "n/a";
@@ -1091,6 +1216,64 @@ function formatCause(value?: string | null) {
     return "n/a";
   }
   return value.replaceAll("_", " ");
+}
+
+function aggregateThroughputRows(response?: ThroughputResponse) {
+  if (!response) {
+    return [];
+  }
+  const totals = new Map<
+    string,
+    {
+      timestamp: string;
+      fetched: number;
+      published: number;
+      failed: number;
+    }
+  >();
+  for (const bucket of response.buckets) {
+    const current = totals.get(bucket.window_start) ?? {
+      timestamp: bucket.window_start,
+      fetched: 0,
+      published: 0,
+      failed: 0
+    };
+    current.fetched += bucket.fetch_count;
+    current.published += bucket.publish_success_count;
+    current.failed += bucket.publish_error_count;
+    totals.set(bucket.window_start, current);
+  }
+  return Array.from(totals.values()).sort(
+    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
+  );
+}
+
+function toThroughputRequest(selection: ThroughputSelection): ThroughputRequest {
+  if (selection.mode === "preset") {
+    return { window: selection.window };
+  }
+  return {
+    startAt: localInputToIso(selection.startAt),
+    endAt: localInputToIso(selection.endAt)
+  };
+}
+
+function defaultCustomRange() {
+  const end = new Date();
+  const start = new Date(end.getTime() - 6 * 60 * 60 * 1000);
+  return {
+    startAt: toDateTimeLocalInputValue(start),
+    endAt: toDateTimeLocalInputValue(end)
+  };
+}
+
+function toDateTimeLocalInputValue(value: Date) {
+  const offset = value.getTimezoneOffset() * 60 * 1000;
+  return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function localInputToIso(value: string) {
+  return new Date(value).toISOString();
 }
 
 function mergeRecommendedKeywords(items: FilterQualityIncorrectlyRejectedItem[]) {
