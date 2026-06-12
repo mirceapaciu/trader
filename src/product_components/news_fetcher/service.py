@@ -48,7 +48,13 @@ class NewsFetcherService:
 
         for source_key, provider in providers.items():
             started_at = datetime.now(timezone.utc)
+            backoff_until = self._source_backoff_until.get(source_key)
             if self._is_backing_off(source_key, started_at):
+                LOGGER.info(
+                    "news_fetcher source fetch skipped source_key=%s reason=provider_rate_limit_backoff next_retry_at=%s",
+                    source_key,
+                    _isoformat(backoff_until),
+                )
                 self._record_cycle_status(
                     source_key=source_key,
                     started_at=started_at,
@@ -57,7 +63,13 @@ class NewsFetcherService:
                     error_code="provider_rate_limit_backoff",
                 )
                 continue
+            interval_until = self._source_interval_until.get(source_key)
             if self._is_waiting_for_interval(source_key, started_at):
+                LOGGER.info(
+                    "news_fetcher source fetch skipped source_key=%s reason=source_interval_wait next_retry_at=%s",
+                    source_key,
+                    _isoformat(interval_until),
+                )
                 self._record_cycle_status(
                     source_key=source_key,
                     started_at=started_at,
@@ -67,6 +79,11 @@ class NewsFetcherService:
                 )
                 continue
 
+            LOGGER.info(
+                "news_fetcher source fetch attempt started source_key=%s attempt_at=%s",
+                source_key,
+                _isoformat(started_at),
+            )
             adapter = NewsSourceAdapter(
                 provider=provider,
                 timeout_seconds=self._settings.provider_timeout_seconds,
@@ -95,6 +112,17 @@ class NewsFetcherService:
                 result = engine.process_source(source_key)
                 results[source_key] = result
                 self._mark_interval(source_key)
+                next_retry_at = self._source_interval_until.get(source_key)
+                LOGGER.info(
+                    "news_fetcher source fetch attempt completed source_key=%s status=success "
+                    "fetched=%s accepted=%s rejected=%s checkpoint_advanced=%s next_retry_at=%s",
+                    source_key,
+                    result.fetched,
+                    result.accepted,
+                    result.rejected,
+                    result.checkpoint_advanced,
+                    _isoformat(next_retry_at),
+                )
                 self._record_cycle_status(
                     source_key=source_key,
                     started_at=started_at,
@@ -109,8 +137,10 @@ class NewsFetcherService:
                 )
                 self._source_backoff_until[source_key] = backoff_until
                 LOGGER.warning(
-                    "news_fetcher source rate limited; backing off",
-                    extra={"source_key": source_key, "backoff_until": backoff_until.isoformat()},
+                    "news_fetcher source fetch attempt failed source_key=%s error_code=provider_rate_limited "
+                    "next_retry_at=%s",
+                    source_key,
+                    _isoformat(backoff_until),
                 )
                 self._record_cycle_status(
                     source_key=source_key,
@@ -122,8 +152,14 @@ class NewsFetcherService:
                 )
                 continue
             except Exception:  # pragma: no cover - defensive process-level guard
-                LOGGER.exception("news_fetcher source cycle failed", extra={"source_key": source_key})
                 self._mark_interval(source_key)
+                next_retry_at = self._source_interval_until.get(source_key)
+                LOGGER.exception(
+                    "news_fetcher source fetch attempt failed source_key=%s error_code=source_cycle_failed "
+                    "next_retry_at=%s",
+                    source_key,
+                    _isoformat(next_retry_at),
+                )
                 self._record_cycle_status(
                     source_key=source_key,
                     started_at=started_at,
@@ -312,3 +348,9 @@ def _settings_filter_config(settings: NewsFetcherSettings, watchlist: set[str]):
         dedupe_similarity_threshold=settings.dedupe_similarity_threshold,
         dedupe_lookback_hours=settings.dedupe_lookback_hours,
     )
+
+
+def _isoformat(value: datetime | None) -> str:
+    if value is None:
+        return "next_poll_cycle"
+    return value.isoformat()

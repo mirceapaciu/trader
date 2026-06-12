@@ -127,6 +127,7 @@ Per-ticker vs combined feeds:
 
 Server-side fetching:
 - Fetch Yahoo RSS server-side through the NewsFetcher provider.
+- Send browser-compatible RSS request headers from the server-side provider, because Yahoo can reject plain Python HTTP client requests with `429 Too Many Requests`.
 - Do not fetch Yahoo RSS directly from the browser UI; Yahoo RSS is not designed for browser-side CORS access.
 - The NewsFetcher RSS provider should bypass inherited proxy environment variables when those variables are known to break local provider calls.
 

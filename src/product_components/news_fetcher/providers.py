@@ -12,6 +12,17 @@ from requests import HTTPError
 
 from .rss_feeds import RssFeedSpec
 
+_RSS_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+}
+
 
 @dataclass(frozen=True)
 class ProviderArticle:
@@ -319,7 +330,12 @@ def _parse_rss_datetime(entry: Any) -> datetime | None:
 
 
 def _parse_rss_feed(feed_url: str, *, timeout_seconds: int) -> Any:
-    response = _http_get(feed_url, params={}, timeout=timeout_seconds)
+    response = _http_get(
+        feed_url,
+        params={},
+        timeout=timeout_seconds,
+        headers=_RSS_REQUEST_HEADERS,
+    )
     try:
         response.raise_for_status()
     except HTTPError as error:
@@ -387,7 +403,15 @@ def _isoformat(value: datetime) -> str:
     return _to_utc(value).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _http_get(url: str, *, params: dict[str, Any], timeout: int):
+def _http_get(
+    url: str,
+    *,
+    params: dict[str, Any],
+    timeout: int,
+    headers: dict[str, str] | None = None,
+):
     session = requests.Session()
     session.trust_env = False
+    if headers:
+        return session.get(url, params=params, timeout=timeout, headers=headers)
     return session.get(url, params=params, timeout=timeout)

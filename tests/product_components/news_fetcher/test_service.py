@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -307,7 +308,8 @@ def test_service_continues_when_one_provider_fails() -> None:
     assert results["finnhub"].checkpoint_advanced is False
 
 
-def test_service_records_cycle_status_for_empty_batches() -> None:
+def test_service_records_cycle_status_for_empty_batches(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="src.product_components.news_fetcher.service")
     provider = FakeProvider(
         ProviderBatch(
             events=[],
@@ -327,6 +329,9 @@ def test_service_records_cycle_status_for_empty_batches() -> None:
     results = service.run_once()
 
     assert results["finnhub"].fetched == 0
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("fetch attempt started source_key=finnhub" in message for message in messages)
+    assert any("fetch attempt completed source_key=finnhub status=success" in message for message in messages)
     assert len(storage.cycle_statuses) == 1
     assert storage.cycle_statuses[0]["source_key"] == "finnhub"
     assert storage.cycle_statuses[0]["status"] == "success"
@@ -487,7 +492,8 @@ def test_service_uses_db_backed_filter_config_when_available() -> None:
     assert storage.filter_runs[0].filter_config_snapshot_json["include_keywords"] == ["strategic partnership"]
 
 
-def test_service_backs_off_rate_limited_sources() -> None:
+def test_service_backs_off_rate_limited_sources(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="src.product_components.news_fetcher.service")
     provider = RateLimitedProvider()
     storage = InMemoryStorage()
     publisher = FakePublisher()
@@ -506,6 +512,19 @@ def test_service_backs_off_rate_limited_sources() -> None:
     assert provider.calls == 1
     assert storage.cycle_statuses[0]["error_code"] == "provider_rate_limited"
     assert storage.cycle_statuses[1]["error_code"] == "provider_rate_limit_backoff"
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "fetch attempt failed source_key=rss:yahoo_finance:AXA:PARIS "
+        "error_code=provider_rate_limited next_retry_at="
+        in message
+        for message in messages
+    )
+    assert any(
+        "fetch skipped source_key=rss:yahoo_finance:AXA:PARIS "
+        "reason=provider_rate_limit_backoff next_retry_at="
+        in message
+        for message in messages
+    )
 
 
 def test_service_respects_generated_rss_min_request_interval(monkeypatch) -> None:

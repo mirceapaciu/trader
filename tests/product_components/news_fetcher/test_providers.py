@@ -38,8 +38,8 @@ class _FakeSession:
         self.trust_env = True
         self.calls = []
 
-    def get(self, url, *, params, timeout):
-        self.calls.append((url, params, timeout, self.trust_env))
+    def get(self, url, *, params, timeout, headers=None):
+        self.calls.append((url, params, timeout, self.trust_env, headers))
         return _FakeResponse(self.payload, self.status_code)
 
 
@@ -131,6 +131,8 @@ def test_rss_provider_fetches_with_proxy_env_disabled(monkeypatch) -> None:
     assert len(batch.events) == 1
     assert batch.events[0].provider_event_id == "rss-1"
     assert fake_session.calls[0][3] is False
+    assert fake_session.calls[0][4]["User-Agent"].startswith("Mozilla/5.0")
+    assert "application/rss+xml" in fake_session.calls[0][4]["Accept"]
 
 
 def test_rss_provider_tags_articles_with_feed_spec_tickers(monkeypatch) -> None:
