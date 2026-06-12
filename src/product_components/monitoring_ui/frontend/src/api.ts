@@ -118,6 +118,7 @@ export type FilterQualityIncorrectlyRejectedItem = {
   run_id: string;
   article_id: string;
   headline: string;
+  summary?: string | null;
   url: string;
   source: string;
   published_at: string;

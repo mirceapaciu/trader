@@ -599,6 +599,7 @@ def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyR
         run_id=str(row["run_id"]),
         article_id=str(row["article_id"]),
         headline=str(row["headline"]),
+        summary=row["summary"],
         url=str(row["url"]),
         source=str(row["source"]),
         published_at=_to_utc(row["published_at"]),

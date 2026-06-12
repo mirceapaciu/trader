@@ -168,6 +168,7 @@ class FilterQualityIncorrectlyRejectedItem(BaseModel):
     run_id: str
     article_id: str
     headline: str
+    summary: str | None = None
     url: str
     source: str
     published_at: datetime

@@ -452,6 +452,7 @@ function IncorrectlyRejectedTable({
   promotePending: boolean;
 }) {
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(items[0]?.assessment_id ?? null);
   const mergedKeywords = mergeRecommendedKeywords(items);
   const selectedKeywordList = normalizeList([...selectedKeywords]);
   const activeTestFilter = displayedTestFilterDraft({
@@ -459,6 +460,17 @@ function IncorrectlyRejectedTable({
     testFilter,
     productionFilter
   });
+  useEffect(() => {
+    if (!items.length) {
+      setSelectedAssessmentId(null);
+      return;
+    }
+    if (!selectedAssessmentId || !items.some((item) => item.assessment_id === selectedAssessmentId)) {
+      setSelectedAssessmentId(items[0].assessment_id);
+    }
+  }, [items, selectedAssessmentId]);
+  const selectedItem =
+    items.find((item) => item.assessment_id === selectedAssessmentId) ?? items[0];
 
   if (loading) {
     return <EmptyState text="Loading incorrectly rejected records" />;
@@ -532,66 +544,160 @@ function IncorrectlyRejectedTable({
           />
         )}
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Article</th>
-              <th>Keywords</th>
-              <th>Published</th>
-              <th>Source</th>
-              <th>Rejection reason</th>
-              <th>Cause</th>
-              <th>Solution</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.assessment_id}>
-                <td className="article-cell">
-                  <a href={item.url} target="_blank" rel="noreferrer">
-                    {item.headline}
-                  </a>
-                  {displayedMatchedArticle(item, lastRun).url && displayedMatchedArticle(item, lastRun).headline && (
-                    <small>
-                      Duplicate of{" "}
-                      <a href={displayedMatchedArticle(item, lastRun).url ?? undefined} target="_blank" rel="noreferrer">
-                        {displayedMatchedArticle(item, lastRun).headline}
-                      </a>
-                      {displayedMatchedArticle(item, lastRun).source
-                        ? ` (${displayedMatchedArticle(item, lastRun).source})`
-                        : ""}
-                      {displayedMatchedArticle(item, lastRun).published_at
-                        ? `, ${formatDate(displayedMatchedArticle(item, lastRun).published_at)}`
-                        : ""}
-                    </small>
-                  )}
-                  {item.rationale && <small>{item.rationale}</small>}
-                </td>
-                <td className="keyword-cell">
-                  {item.recommended_include_keywords.map((keyword) => (
-                    <label className="keyword-chip compact-chip" key={`${item.assessment_id}-${keyword}`}>
-                      <input
-                        type="checkbox"
-                        checked={selectedKeywords.has(keyword)}
-                        onChange={(event) => updateSelected(keyword, event.target.checked)}
-                      />
-                      {keyword}
-                    </label>
-                  ))}
-                  {!item.recommended_include_keywords.length && "n/a"}
-                </td>
-                <td>{formatDate(item.published_at)}</td>
-                <td>{item.source}</td>
-                <td>{displayedRejectionReason(item, lastRun) ?? "n/a"}</td>
-                <td>{formatCause(displayedCause(item, lastRun))}</td>
-                <td className="solution-cell">{displayedSolution(item, lastRun) ?? "n/a"}</td>
+      <div className="review-layout">
+        <div className="table-wrap review-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Article</th>
+                <th>Keywords</th>
+                <th>Published</th>
+                <th>Source</th>
+                <th>Rejection reason</th>
+                <th>Cause</th>
+                <th>Solution</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr
+                  key={item.assessment_id}
+                  className={item.assessment_id === selectedItem?.assessment_id ? "review-row selected" : "review-row"}
+                >
+                  <td className="article-cell">
+                    <a href={item.url} target="_blank" rel="noreferrer">
+                      {item.headline}
+                    </a>
+                    <button
+                      type="button"
+                      className="review-link"
+                      onClick={() => setSelectedAssessmentId(item.assessment_id)}
+                    >
+                      Review
+                    </button>
+                    {displayedMatchedArticle(item, lastRun).url && displayedMatchedArticle(item, lastRun).headline && (
+                      <small>
+                        Duplicate of{" "}
+                        <a href={displayedMatchedArticle(item, lastRun).url ?? undefined} target="_blank" rel="noreferrer">
+                          {displayedMatchedArticle(item, lastRun).headline}
+                        </a>
+                        {displayedMatchedArticle(item, lastRun).source
+                          ? ` (${displayedMatchedArticle(item, lastRun).source})`
+                          : ""}
+                        {displayedMatchedArticle(item, lastRun).published_at
+                          ? `, ${formatDate(displayedMatchedArticle(item, lastRun).published_at)}`
+                          : ""}
+                      </small>
+                    )}
+                    {item.rationale && <small>{item.rationale}</small>}
+                  </td>
+                  <td className="keyword-cell">
+                    {item.recommended_include_keywords.map((keyword) => (
+                      <label className="keyword-chip compact-chip" key={`${item.assessment_id}-${keyword}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedKeywords.has(keyword)}
+                          onChange={(event) => updateSelected(keyword, event.target.checked)}
+                        />
+                        {keyword}
+                      </label>
+                    ))}
+                    {!item.recommended_include_keywords.length && "n/a"}
+                  </td>
+                  <td>{formatDate(item.published_at)}</td>
+                  <td>{item.source}</td>
+                  <td>{displayedRejectionReason(item, lastRun) ?? "n/a"}</td>
+                  <td>{formatCause(displayedCause(item, lastRun))}</td>
+                  <td className="solution-cell">{displayedSolution(item, lastRun) ?? "n/a"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ArticleReviewPanel
+          item={selectedItem}
+          lastRun={lastRun}
+          selectedKeywords={selectedKeywords}
+          updateSelected={updateSelected}
+        />
       </div>
     </div>
+  );
+}
+
+function ArticleReviewPanel({
+  item,
+  lastRun,
+  selectedKeywords,
+  updateSelected
+}: {
+  item?: FilterQualityIncorrectlyRejectedItem;
+  lastRun: FilterQualityRunSummary;
+  selectedKeywords: Set<string>;
+  updateSelected: (keyword: string, checked: boolean) => void;
+}) {
+  if (!item) {
+    return <aside className="review-panel"><EmptyState text="Select an article to review" /></aside>;
+  }
+  const matchedArticle = displayedMatchedArticle(item, lastRun);
+  return (
+    <aside className="review-panel" aria-label="Selected article review">
+      <div className="review-panel-heading">
+        <span>{item.source}</span>
+        <strong>{formatDate(item.published_at)}</strong>
+      </div>
+      <a className="review-title" href={item.url} target="_blank" rel="noreferrer">
+        {item.headline}
+      </a>
+      <div className="review-meta">
+        <span>{displayedRejectionReason(item, lastRun) ?? "n/a"}</span>
+        <span>{formatCause(displayedCause(item, lastRun))}</span>
+      </div>
+      <section className="review-section">
+        <h3>Summary</h3>
+        <p className="summary-text">{item.summary || "No article summary available."}</p>
+      </section>
+      {matchedArticle.url && matchedArticle.headline && (
+        <section className="review-section">
+          <h3>Duplicate match</h3>
+          <p className="summary-text">
+            <a href={matchedArticle.url} target="_blank" rel="noreferrer">
+              {matchedArticle.headline}
+            </a>
+            {matchedArticle.source ? ` (${matchedArticle.source})` : ""}
+            {matchedArticle.published_at ? `, ${formatDate(matchedArticle.published_at)}` : ""}
+          </p>
+        </section>
+      )}
+      <section className="review-section">
+        <h3>Recommended keywords</h3>
+        <div className="keyword-list">
+          {item.recommended_include_keywords.map((keyword) => (
+            <label className="keyword-chip" key={`${item.assessment_id}-review-${keyword}`}>
+              <input
+                type="checkbox"
+                checked={selectedKeywords.has(keyword)}
+                onChange={(event) => updateSelected(keyword, event.target.checked)}
+              />
+              {keyword}
+            </label>
+          ))}
+          {!item.recommended_include_keywords.length && <span className="muted">No structured keyword recommendations</span>}
+        </div>
+      </section>
+      {item.rationale && (
+        <section className="review-section">
+          <h3>Rationale</h3>
+          <p className="summary-text">{item.rationale}</p>
+        </section>
+      )}
+      {displayedSolution(item, lastRun) && (
+        <section className="review-section">
+          <h3>Suggested action</h3>
+          <p className="summary-text">{displayedSolution(item, lastRun)}</p>
+        </section>
+      )}
+    </aside>
   );
 }
 

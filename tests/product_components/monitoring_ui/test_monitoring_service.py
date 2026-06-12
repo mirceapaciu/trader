@@ -77,6 +77,7 @@ class FakeDataSource:
                     run_id=run_id,
                     article_id="article_1",
                     headline="Revenue outlook improves",
+                    summary="The company raised its revenue outlook after stronger demand.",
                     url="https://example.test/article",
                     source="example",
                     published_at=_now(),
@@ -248,6 +249,7 @@ def test_list_filter_quality_incorrectly_rejected_delegates_to_data_source() -> 
     assert response.items[0].probable_cause == "keyword_gap"
     assert response.items[0].improvement_suggestion == "Add revenue outlook language to include keywords."
     assert response.items[0].production_matched_article_id == "article_accepted"
+    assert response.items[0].summary == "The company raised its revenue outlook after stronger demand."
 
 
 def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() -> None:

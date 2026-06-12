@@ -97,6 +97,8 @@ The Run filter quality button starts one evaluator run for the last 24 hours. UI
 
 The UI seeds the displayed test-filter draft from the latest run's evaluated filter snapshot when available. For production evaluations, incorrectly rejected details display the production rejection reason; for simulation evaluations, they display the simulation rejection reason. Deterministic rejection reasons such as duplicates and excluded keywords take precedence over persisted LLM cause and solution text when displaying the cause and solution columns. The displayed draft is not persisted until the operator saves the test filter.
 
+Incorrectly rejected records use a review-oriented split view. The list remains compact for quick browsing and shows headline, recommended keyword chips, source, published time, rejection reason, cause, and suggested solution. Selecting a record opens a detail panel that keeps the list visible while showing the full stored article summary, external article link, matched duplicate article when available, classifier rationale, suggested action, and item-specific recommended keyword chips. Full summaries are not rendered as a table column because variable-length article text would make the list difficult to scan.
+
 ### 4.4 Backlog and Dead-Letter Panels
 
 Must display:
