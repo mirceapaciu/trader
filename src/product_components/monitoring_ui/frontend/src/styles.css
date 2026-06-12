@@ -411,7 +411,6 @@ th {
   margin: 0 4px 4px 0;
 }
 
-.keyword-entry input,
 .filter-editor input,
 .filter-editor textarea {
   border: 1px solid #c5d1ca;
@@ -419,11 +418,6 @@ th {
   color: #18221f;
   background: #ffffff;
   font: inherit;
-}
-
-.keyword-entry input {
-  min-height: 34px;
-  padding: 0 10px;
 }
 
 .filter-editor {
