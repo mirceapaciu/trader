@@ -134,6 +134,17 @@ export function App() {
   const throughputWindowEndAtMs = throughput.data?.window_end_at
     ? new Date(throughput.data.window_end_at).getTime()
     : undefined;
+  const throughputWindowDurationMs =
+    throughputWindowStartAtMs != null && throughputWindowEndAtMs != null
+      ? Math.max(0, throughputWindowEndAtMs - throughputWindowStartAtMs)
+      : undefined;
+  const throughputDailyTicks = buildThroughputDailyTicks(
+    throughput.data?.window_start_at,
+    throughput.data?.window_end_at
+  );
+  const throughputTickCount = throughputWindowDurationMs != null && throughputWindowDurationMs <= 3 * 24 * 60 * 60 * 1000
+    ? 4
+    : 6;
   return (
     <main className="shell">
       <header className="topbar">
@@ -237,12 +248,12 @@ export function App() {
                     tickLine={false}
                     axisLine={false}
                     minTickGap={20}
-                    tickCount={6}
+                    tickCount={throughputTickCount}
+                    ticks={throughputDailyTicks}
                     tickFormatter={(value) =>
                       formatThroughputAxisTick(
                         Number(value),
-                        throughput.data?.window_start_at,
-                        throughput.data?.window_end_at
+                        throughputWindowDurationMs
                       )
                     }
                   />
@@ -1037,20 +1048,25 @@ function formatDuration(seconds?: number | null) {
 
 function formatThroughputAxisTick(
   value: number,
-  windowStartAt?: string,
-  windowEndAt?: string
+  windowDurationMs?: number
 ) {
   const date = new Date(value);
-  const start = windowStartAt ? new Date(windowStartAt) : undefined;
-  const end = windowEndAt ? new Date(windowEndAt) : undefined;
-  const sameDay =
-    start &&
-    end &&
-    start.getFullYear() === end.getFullYear() &&
-    start.getMonth() === end.getMonth() &&
-    start.getDate() === end.getDate();
-  if (sameDay) {
+  if (windowDurationMs != null && windowDurationMs >= 6 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric"
+    });
+  }
+  if (windowDurationMs != null && windowDurationMs <= 24 * 60 * 60 * 1000) {
     return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+  if (windowDurationMs != null && windowDurationMs <= 3 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
       hour: "2-digit",
       minute: "2-digit"
     });
@@ -1059,6 +1075,32 @@ function formatThroughputAxisTick(
     month: "short",
     day: "numeric"
   });
+}
+
+function buildThroughputDailyTicks(windowStartAt?: string, windowEndAt?: string) {
+  if (!windowStartAt || !windowEndAt) {
+    return undefined;
+  }
+  const start = new Date(windowStartAt);
+  const end = new Date(windowEndAt);
+  const durationMs = Math.max(0, end.getTime() - start.getTime());
+  if (durationMs < 6 * 24 * 60 * 60 * 1000) {
+    return undefined;
+  }
+
+  const ticks: number[] = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  if (cursor.getTime() < start.getTime()) {
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  while (cursor.getTime() < end.getTime()) {
+    ticks.push(cursor.getTime());
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return ticks.length > 0 ? ticks : undefined;
 }
 
 function formatThroughputTooltipLabel(value: number) {
