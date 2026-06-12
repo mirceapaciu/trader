@@ -617,11 +617,34 @@ function FilterConfigEditor({
   promotePending: boolean;
 }) {
   const [draft, setDraft] = useState(config);
+  const [includeText, setIncludeText] = useState(config.include_keywords.join(", "));
+  const [excludeText, setExcludeText] = useState(config.exclude_keywords.join(", "));
+  const [watchlistText, setWatchlistText] = useState(config.watchlist_tickers.join(", "));
+  const configSignature = [
+    config.filter_config_id ?? "",
+    config.created_from_run_id ?? "",
+    config.include_keywords.join("\n"),
+    config.exclude_keywords.join("\n"),
+    config.watchlist_tickers.join("\n"),
+    config.dedupe_algorithm,
+    config.dedupe_similarity_threshold,
+    config.dedupe_lookback_hours
+  ].join("\u001f");
   useEffect(() => {
     setDraft(config);
-  }, [config]);
-  const updateList = (key: "include_keywords" | "exclude_keywords" | "watchlist_tickers", value: string) => {
-    setDraft({ ...draft, [key]: normalizeList(value.split(",")) });
+    setIncludeText(config.include_keywords.join(", "));
+    setExcludeText(config.exclude_keywords.join(", "));
+    setWatchlistText(config.watchlist_tickers.join(", "));
+  }, [configSignature]);
+  const saveDraft = () => {
+    saveTestFilter({
+      ...draft,
+      config_role: "test",
+      status: "active",
+      include_keywords: normalizeList(includeText.split(",")),
+      exclude_keywords: normalizeList(excludeText.split(",")),
+      watchlist_tickers: normalizeTickers(watchlistText.split(","))
+    });
   };
   return (
     <div className="filter-config-group">
@@ -632,15 +655,15 @@ function FilterConfigEditor({
       <div className="filter-editor">
         <label>
           Include keywords
-          <textarea value={draft.include_keywords.join(", ")} onChange={(event) => updateList("include_keywords", event.target.value)} />
+          <textarea value={includeText} onChange={(event) => setIncludeText(event.target.value)} />
         </label>
         <label>
           Exclude keywords
-          <textarea value={draft.exclude_keywords.join(", ")} onChange={(event) => updateList("exclude_keywords", event.target.value)} />
+          <textarea value={excludeText} onChange={(event) => setExcludeText(event.target.value)} />
         </label>
         <label>
           Watchlist tickers
-          <textarea value={draft.watchlist_tickers.join(", ")} onChange={(event) => updateList("watchlist_tickers", event.target.value.toUpperCase())} />
+          <textarea value={watchlistText} onChange={(event) => setWatchlistText(event.target.value)} />
         </label>
         <div className="filter-editor-row">
           <label>
@@ -657,7 +680,7 @@ function FilterConfigEditor({
           </label>
         </div>
         <div className="filter-editor-actions">
-          <button type="button" className="primary-button" onClick={() => saveTestFilter({ ...draft, config_role: "test", status: "active" })} disabled={savePending}>
+          <button type="button" className="primary-button" onClick={saveDraft} disabled={savePending}>
             {savePending ? "Saving" : "Save test filter"}
           </button>
           <button type="button" className="secondary-button" onClick={runSimulation} disabled={evaluationRunningOrStarting}>
@@ -863,6 +886,12 @@ function mergeRecommendedKeywords(items: FilterQualityIncorrectlyRejectedItem[])
 function normalizeList(values: string[]) {
   return Array.from(
     new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
+  ).sort();
+}
+
+function normalizeTickers(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean))
   ).sort();
 }
 
