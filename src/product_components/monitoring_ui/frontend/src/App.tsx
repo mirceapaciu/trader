@@ -124,6 +124,8 @@ export function App() {
     runSimulation.isPending;
 
   const chartRows = aggregateThroughputRows(throughput.data);
+  const throughputWindowStartAt = throughput.data?.window_start_at;
+  const throughputWindowEndAt = throughput.data?.window_end_at;
   const customRangeInvalid =
     !customThroughputRange.startAt ||
     !customThroughputRange.endAt ||
@@ -228,14 +230,24 @@ export function App() {
                   </defs>
                   <CartesianGrid stroke="#dbe3dc" strokeDasharray="3 3" />
                   <XAxis
-                    dataKey="timestamp"
+                    dataKey="timestampMs"
+                    type="number"
+                    scale="time"
+                    domain={["dataMin", "dataMax"]}
                     tickLine={false}
                     axisLine={false}
-                    minTickGap={28}
-                    tickFormatter={formatThroughputAxisTick}
+                    minTickGap={20}
+                    tickCount={6}
+                    tickFormatter={(value) =>
+                      formatThroughputAxisTick(
+                        Number(value),
+                        throughputWindowStartAt,
+                        throughputWindowEndAt
+                      )
+                    }
                   />
                   <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip labelFormatter={(value) => formatThroughputTooltipLabel(String(value))} />
+                  <Tooltip labelFormatter={(value) => formatThroughputTooltipLabel(Number(value))} />
                   <Area type="monotone" dataKey="fetched" stroke="#4967d1" fill="url(#fetched)" />
                   <Area type="monotone" dataKey="published" stroke="#1d8f6f" fill="url(#published)" />
                   <Area type="monotone" dataKey="failed" stroke="#b83b3b" fill="#b83b3b22" />
@@ -1023,17 +1035,33 @@ function formatDuration(seconds?: number | null) {
   return `${Math.round(seconds / 60)}m`;
 }
 
-function formatThroughputAxisTick(value: string) {
+function formatThroughputAxisTick(
+  value: number,
+  windowStartAt?: string,
+  windowEndAt?: string
+) {
   const date = new Date(value);
-  return date.toLocaleString([], {
+  const start = windowStartAt ? new Date(windowStartAt) : undefined;
+  const end = windowEndAt ? new Date(windowEndAt) : undefined;
+  const sameDay =
+    start &&
+    end &&
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+  return date.toLocaleDateString([], {
     month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
+    day: "numeric"
   });
 }
 
-function formatThroughputTooltipLabel(value: string) {
+function formatThroughputTooltipLabel(value: number) {
   return new Date(value).toLocaleString([], {
     year: "numeric",
     month: "short",
@@ -1231,6 +1259,7 @@ function aggregateThroughputRows(response?: ThroughputResponse) {
     string,
     {
       timestamp: string;
+      timestampMs: number;
       fetched: number;
       published: number;
       failed: number;
@@ -1239,6 +1268,7 @@ function aggregateThroughputRows(response?: ThroughputResponse) {
   for (const bucket of response.buckets) {
     const current = totals.get(bucket.window_start) ?? {
       timestamp: bucket.window_start,
+      timestampMs: new Date(bucket.window_start).getTime(),
       fetched: 0,
       published: 0,
       failed: 0
@@ -1249,7 +1279,7 @@ function aggregateThroughputRows(response?: ThroughputResponse) {
     totals.set(bucket.window_start, current);
   }
   return Array.from(totals.values()).sort(
-    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
+    (left, right) => left.timestampMs - right.timestampMs
   );
 }
 
