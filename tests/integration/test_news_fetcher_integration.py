@@ -195,6 +195,16 @@ def _filter_result_rows(settings: NewsFetcherSettings) -> list[tuple[str, str | 
     return [(str(row[0]), str(row[1]) if row[1] is not None else None) for row in rows]
 
 
+def _article_source_keys(settings: NewsFetcherSettings, table_name: str) -> list[str]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT source_key FROM {settings.newsfetcher_db_schema}.{table_name} ORDER BY id"
+            )
+            rows = cur.fetchall()
+    return [str(row[0]) for row in rows]
+
+
 def _batch_with_one_article(provider_event_id: str) -> ProviderBatch:
     now = datetime.now(UTC).replace(microsecond=0)
     return ProviderBatch(
@@ -245,6 +255,8 @@ def test_news_fetcher_e2e_persist_then_publish_and_checkpoint() -> None:
     assert _count_rows(settings, "t_news_articles") == 1
     assert _count_rows(settings, "t_news_filter_runs") == 1
     assert _count_rows(settings, "t_news_filter_results") == 1
+    assert _article_source_keys(settings, "t_input_news_articles") == ["finnhub"]
+    assert _article_source_keys(settings, "t_news_articles") == ["finnhub"]
     assert _filter_result_rows(settings) == [("accepted", None)]
     assert _count_rows(settings, "t_publication_obligations") == 1
     assert _obligation_statuses(settings) == ["published"]

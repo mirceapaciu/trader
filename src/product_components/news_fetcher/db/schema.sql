@@ -5,6 +5,7 @@ CREATE SCHEMA IF NOT EXISTS news_fetcher;
 CREATE TABLE IF NOT EXISTS news_fetcher.t_input_news_articles (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL,
+    source_key TEXT NOT NULL DEFAULT '',
     headline TEXT NOT NULL,
     summary TEXT,
     url TEXT NOT NULL,
@@ -17,6 +18,9 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_input_news_articles (
 
 CREATE INDEX IF NOT EXISTS idx_input_news_articles_published_at
     ON news_fetcher.t_input_news_articles (published_at DESC);
+
+ALTER TABLE news_fetcher.t_input_news_articles
+    ADD COLUMN IF NOT EXISTS source_key TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS news_fetcher.t_news_filter_configs (
     filter_config_id TEXT PRIMARY KEY,
@@ -107,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_news_filter_results_outcome_reason
 CREATE TABLE IF NOT EXISTS news_fetcher.t_news_articles (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL,
+    source_key TEXT NOT NULL DEFAULT '',
     headline TEXT NOT NULL,
     summary TEXT,
     url TEXT NOT NULL,
@@ -115,6 +120,9 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_news_articles (
     fetched_at TIMESTAMPTZ NOT NULL,
     sentiment_source DOUBLE PRECISION
 );
+
+ALTER TABLE news_fetcher.t_news_articles
+    ADD COLUMN IF NOT EXISTS source_key TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS news_fetcher.t_source_checkpoints (
     source_key TEXT PRIMARY KEY,

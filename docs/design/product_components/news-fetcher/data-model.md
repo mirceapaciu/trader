@@ -13,6 +13,7 @@ Purpose:
 Logical fields:
 - `id` (primary key): deterministic article identity.
 - `source`: source/provider identifier.
+- `source_key`: stable fetch-stream identifier, such as `finnhub` or `rss:marketwatch:marketpulse`.
 - `source_event_id`: optional provider-native event id.
 - `headline`: normalized article title.
 - `summary`: optional short content summary.
@@ -36,6 +37,7 @@ Purpose:
 Logical fields:
 - `id` (primary key): deterministic article identity and foreign-key-compatible identifier from `t_input_news_articles`.
 - `source`: source/provider identifier.
+- `source_key`: stable fetch-stream identifier that accepted the article.
 - `headline`: normalized article title.
 - `summary`: optional short content summary.
 - `url`: canonical source URL.

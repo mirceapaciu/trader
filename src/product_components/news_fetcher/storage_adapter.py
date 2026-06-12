@@ -136,14 +136,14 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         )
         input_article_sql = (
             f"INSERT INTO {self._news_schema}.t_input_news_articles "
-            f"(id, source, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"(id, source, source_key, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (id) DO NOTHING"
         )
         article_sql = (
             f"INSERT INTO {self._news_schema}.t_news_articles "
-            f"(id, source, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"(id, source, source_key, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (id) DO NOTHING"
         )
         filter_result_sql = (
@@ -188,6 +188,7 @@ class PostgresNewsStorageAdapter(StorageAdapter):
                     (
                         event.id,
                         event.source,
+                        source_key,
                         event.title,
                         event.summary,
                         event.canonical_locator,
@@ -213,6 +214,7 @@ class PostgresNewsStorageAdapter(StorageAdapter):
                     (
                         event.id,
                         event.source,
+                        source_key,
                         event.title,
                         event.summary,
                         event.canonical_locator,
