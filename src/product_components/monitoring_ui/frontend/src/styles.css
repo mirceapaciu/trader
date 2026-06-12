@@ -454,12 +454,31 @@ th {
   overflow-wrap: anywhere;
 }
 
+.manual-keyword-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.manual-keyword-summary strong {
+  color: #18221f;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
 .review-title {
   color: #176f58;
   font-size: 1.02rem;
   font-weight: 800;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.review-links a {
+  color: #176f58;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .review-section {
@@ -487,6 +506,11 @@ th {
   gap: 14px;
   padding: 14px;
   border-bottom: 1px solid #dbe3dc;
+}
+
+.keyword-section {
+  display: grid;
+  gap: 8px;
 }
 
 .keyword-list,

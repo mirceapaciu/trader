@@ -455,6 +455,7 @@ function IncorrectlyRejectedTable({
   const [manualKeywords, setManualKeywords] = useState<Set<string>>(new Set());
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(items[0]?.assessment_id ?? null);
   const mergedKeywords = mergeRecommendedKeywords(items);
+  const manualKeywordList = Array.from(manualKeywords).sort();
   const selectedKeywordList = normalizeList([...selectedKeywords, ...manualKeywords]);
   const activeTestFilter = displayedTestFilterDraft({
     lastRun,
@@ -496,6 +497,10 @@ function IncorrectlyRejectedTable({
   const selectAll = () => {
     setSelectedKeywords(new Set(mergedKeywords.map((item) => item.keyword)));
   };
+  const clearSelection = () => {
+    setSelectedKeywords(new Set());
+    setManualKeywords(new Set());
+  };
   const addManualKeyword = (keyword: string) => {
     const normalized = normalizeKeywordText(keyword);
     if (!normalized) {
@@ -522,7 +527,7 @@ function IncorrectlyRejectedTable({
   return (
     <div className="quality-details">
       <div className="keyword-actions">
-        <div>
+        <div className="keyword-section">
           <strong>Recommended include keywords</strong>
           <div className="keyword-list">
             {mergedKeywords.map((item) => (
@@ -537,14 +542,45 @@ function IncorrectlyRejectedTable({
             ))}
             {!mergedKeywords.length && <span className="muted">No structured keyword recommendations</span>}
           </div>
+          <div className="keyword-entry">
+            <button type="button" className="secondary-button" onClick={selectAll} disabled={!mergedKeywords.length}>
+              Select all
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={clearSelection}
+              disabled={!selectedKeywords.size}
+            >
+              Clear selection
+            </button>
+          </div>
         </div>
-        <div className="keyword-entry">
-          <button type="button" className="secondary-button" onClick={selectAll} disabled={!mergedKeywords.length}>
-            Select all
-          </button>
-          <button type="button" className="primary-button" onClick={saveSelectedToTestFilter} disabled={!selectedKeywordList.length || !activeTestFilter || savePending}>
+        <div className="keyword-section">
+          {manualKeywordList.length > 0 && (
+            <div className="manual-keyword-summary">
+              <strong>Manual keywords</strong>
+              <div className="keyword-list">
+                {manualKeywordList.map((keyword) => (
+                  <button
+                    type="button"
+                    className="keyword-chip manual-chip"
+                    key={`summary-manual-${keyword}`}
+                    onClick={() => removeManualKeyword(keyword)}
+                    title="Remove manual keyword"
+                  >
+                    {keyword}
+                    <span aria-hidden="true">x</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="keyword-entry">
+            <button type="button" className="primary-button" onClick={saveSelectedToTestFilter} disabled={!selectedKeywordList.length || !activeTestFilter || savePending}>
             {savePending ? "Saving" : "Add to test filter"}
-          </button>
+            </button>
+          </div>
         </div>
         {activeTestFilter && (
           <FilterConfigEditor
@@ -700,9 +736,12 @@ function ArticleReviewPanel({
         <span>{item.source}</span>
         <strong>{formatDate(item.published_at)}</strong>
       </div>
-      <a className="review-title" href={item.url} target="_blank" rel="noreferrer">
-        {item.headline}
-      </a>
+      <div className="review-title">{item.headline}</div>
+      <div className="review-links">
+        <a href={item.url} target="_blank" rel="noreferrer">
+          Open article
+        </a>
+      </div>
       <div className="review-meta">
         <span>{displayedRejectionReason(item, lastRun) ?? "n/a"}</span>
         <span>{formatCause(displayedCause(item, lastRun))}</span>
@@ -749,7 +788,7 @@ function ArticleReviewPanel({
       </section>
       {manualKeywordList.length > 0 && (
         <section className="review-section">
-          <h3>Selected keywords</h3>
+          <h3>Manual keywords</h3>
           <div className="keyword-list">
             {manualKeywordList.map((keyword) => (
               <button

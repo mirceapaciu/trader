@@ -99,7 +99,7 @@ The UI seeds the displayed test-filter draft from the latest run's evaluated fil
 
 Incorrectly rejected records use a review-oriented split view. The list remains compact for quick browsing and shows headline, recommended keyword chips, source, published time, rejection reason, cause, and suggested solution. Selecting a record opens a detail panel that keeps the list visible while showing the full stored article summary, external article link, matched duplicate article when available, classifier rationale, suggested action, and item-specific recommended keyword chips. Full summaries are not rendered as a table column because variable-length article text would make the list difficult to scan.
 
-The detail panel allows operators to select article text and convert that selection into a manual keyword chip. Manual chips are visually distinct from evaluator-recommended chips, are removable before saving, and are persisted only when the operator clicks `Add to test filter`. They must not be presented as evaluator recommendations because they are operator-authored filter edits.
+The detail panel allows operators to select article text and convert that selection into a manual keyword chip. Manual chips are visually distinct from evaluator-recommended chips, are removable before saving, and are persisted only when the operator clicks `Add to test filter`. They must not be presented as evaluator recommendations because they are operator-authored filter edits. The UI labels this section as `Manual keywords` to avoid confusion with selected evaluator recommendations.
 
 ### 4.4 Backlog and Dead-Letter Panels
 
