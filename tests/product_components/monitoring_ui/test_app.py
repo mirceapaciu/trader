@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.product_components.monitoring_ui.backend.app import _local_dev_origin_regex, create_app
 from src.product_components.monitoring_ui.backend.models import ThroughputResponse
+from src.product_components.monitoring_ui.backend.repository import _throughput_granularity_for_window
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 
 
@@ -46,6 +47,7 @@ class FakeMonitoringDataSource:
         self.end_at = end_at
         return ThroughputResponse(
             window=window,
+            granularity=_throughput_granularity_for_window(window),
             window_start_at=start_at or datetime(2026, 6, 12, 9, 0, tzinfo=timezone.utc),
             window_end_at=end_at or datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
             buckets=[],
@@ -124,11 +126,13 @@ def test_throughput_endpoint_accepts_custom_range(monkeypatch) -> None:
 
     response = client.get(
         "/api/metrics/throughput",
-        params={"start_at": "2026-06-12T08:00:00Z", "end_at": "2026-06-12T10:00:00Z"},
+        params={"window": "7d", "start_at": "2026-06-12T08:00:00Z", "end_at": "2026-06-12T10:00:00Z"},
     )
 
     assert response.status_code == 200
     assert response.json()["window"] == "custom"
+    assert response.json()["granularity"] == "hour"
+    assert data_source.window == "7d"
     assert data_source.start_at == datetime(2026, 6, 12, 8, 0, tzinfo=timezone.utc)
     assert data_source.end_at == datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc)
 

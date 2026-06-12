@@ -143,13 +143,17 @@ export function App() {
     throughputAxisStartAtMs != null && throughputAxisEndAtMs != null
       ? Math.max(0, throughputAxisEndAtMs - throughputAxisStartAtMs)
       : undefined;
-  const throughputDailyTicks = buildThroughputDailyTicks(
+  const throughputTicks = buildThroughputAxisTicks(
+    throughput.data?.granularity,
     throughputAxisStartAtMs,
     throughputAxisEndAtMs
   );
-  const throughputTickCount = throughputAxisDurationMs != null && throughputAxisDurationMs <= 3 * 24 * 60 * 60 * 1000
+  const throughputTickCount =
+    throughput.data?.granularity === "raw"
+      ? throughputAxisDurationMs != null && throughputAxisDurationMs <= 3 * 24 * 60 * 60 * 1000
     ? 4
-    : 6;
+        : 6
+      : undefined;
   return (
     <main className="shell">
       <header className="topbar">
@@ -254,10 +258,11 @@ export function App() {
                     axisLine={false}
                     minTickGap={20}
                     tickCount={throughputTickCount}
-                    ticks={throughputDailyTicks}
+                    ticks={throughputTicks}
                     tickFormatter={(value) =>
                       formatThroughputAxisTick(
                         Number(value),
+                        throughput.data?.granularity,
                         throughputAxisDurationMs
                       )
                     }
@@ -1053,13 +1058,28 @@ function formatDuration(seconds?: number | null) {
 
 function formatThroughputAxisTick(
   value: number,
+  granularity?: ThroughputResponse["granularity"],
   windowDurationMs?: number
 ) {
   const date = new Date(value);
-  if (windowDurationMs != null && windowDurationMs >= 6 * 24 * 60 * 60 * 1000) {
+  if (granularity === "day") {
     return date.toLocaleDateString([], {
       month: "short",
       day: "numeric"
+    });
+  }
+  if (granularity === "hour") {
+    if (windowDurationMs != null && windowDurationMs <= 24 * 60 * 60 * 1000) {
+      return date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
     });
   }
   if (windowDurationMs != null && windowDurationMs <= 24 * 60 * 60 * 1000) {
@@ -1082,27 +1102,64 @@ function formatThroughputAxisTick(
   });
 }
 
-function buildThroughputDailyTicks(windowStartAtMs?: number, windowEndAtMs?: number) {
+function buildThroughputAxisTicks(
+  granularity?: ThroughputResponse["granularity"],
+  windowStartAtMs?: number,
+  windowEndAtMs?: number
+) {
+  if (granularity === "day") {
+    return buildAlignedTicks(windowStartAtMs, windowEndAtMs, "day", 1);
+  }
+  if (granularity === "hour") {
+    const durationMs =
+      windowStartAtMs != null && windowEndAtMs != null
+        ? Math.max(0, windowEndAtMs - windowStartAtMs)
+        : undefined;
+    if (durationMs == null) {
+      return undefined;
+    }
+    const stepHours = durationMs <= 24 * 60 * 60 * 1000 ? 3 : durationMs <= 3 * 24 * 60 * 60 * 1000 ? 6 : 24;
+    return buildAlignedTicks(windowStartAtMs, windowEndAtMs, "hour", stepHours);
+  }
+  return undefined;
+}
+
+function buildAlignedTicks(
+  windowStartAtMs: number | undefined,
+  windowEndAtMs: number | undefined,
+  unit: "hour" | "day",
+  step: number
+) {
   if (windowStartAtMs == null || windowEndAtMs == null) {
     return undefined;
   }
   const start = new Date(windowStartAtMs);
   const end = new Date(windowEndAtMs);
-  const durationMs = Math.max(0, end.getTime() - start.getTime());
-  if (durationMs < 6 * 24 * 60 * 60 * 1000 || durationMs > 8 * 24 * 60 * 60 * 1000) {
-    return undefined;
-  }
 
   const ticks: number[] = [];
   const cursor = new Date(start);
-  cursor.setHours(0, 0, 0, 0);
-  if (cursor.getTime() < start.getTime()) {
-    cursor.setDate(cursor.getDate() + 1);
+  if (unit === "day") {
+    cursor.setHours(0, 0, 0, 0);
+    if (cursor.getTime() < start.getTime()) {
+      cursor.setDate(cursor.getDate() + step);
+    }
+  } else {
+    cursor.setMinutes(0, 0, 0);
+    const currentHour = cursor.getHours();
+    const alignedHour = Math.ceil(currentHour / step) * step;
+    cursor.setHours(alignedHour, 0, 0, 0);
+    if (cursor.getTime() < start.getTime()) {
+      cursor.setHours(cursor.getHours() + step);
+    }
   }
 
   while (cursor.getTime() < end.getTime()) {
     ticks.push(cursor.getTime());
-    cursor.setDate(cursor.getDate() + 1);
+    if (unit === "day") {
+      cursor.setDate(cursor.getDate() + step);
+    } else {
+      cursor.setHours(cursor.getHours() + step);
+    }
   }
 
   return ticks.length > 0 ? ticks : undefined;
@@ -1339,6 +1396,7 @@ function toThroughputRequest(selection: ThroughputSelection): ThroughputRequest 
   }
   const endAt = dateInputExclusiveEndToIso(selection.endDate);
   return {
+    window: selection.window,
     startAt: subtractThroughputWindow(endAt, selection.window),
     endAt
   };

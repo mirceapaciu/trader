@@ -16,7 +16,11 @@ from src.product_components.monitoring_ui.backend.models import (
     ThroughputResponse,
 )
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
-from src.product_components.monitoring_ui.backend.repository import _incorrectly_rejected_item
+from src.product_components.monitoring_ui.backend.repository import (
+    _incorrectly_rejected_item,
+    _throughput_bucket_expression,
+    _throughput_granularity_for_window,
+)
 from src.product_components.monitoring_ui.backend.service import (
     FilterQualityRunAlreadyActive,
     InvalidThroughputWindow,
@@ -64,6 +68,7 @@ class FakeDataSource:
         self.throughput_end_at = end_at
         return ThroughputResponse(
             window=window,
+            granularity=_throughput_granularity_for_window(window),
             window_start_at=start_at or (_now() - timedelta(hours=1)),
             window_end_at=end_at or _now(),
             buckets=[],
@@ -265,6 +270,7 @@ def test_get_throughput_forwards_supported_preset_window() -> None:
 
     assert data_source.throughput_window == "1d"
     assert response.window == "1d"
+    assert response.granularity == "hour"
 
 
 def test_get_throughput_accepts_7d_preset_window() -> None:
@@ -275,6 +281,7 @@ def test_get_throughput_accepts_7d_preset_window() -> None:
 
     assert data_source.throughput_window == "7d"
     assert response.window == "7d"
+    assert response.granularity == "hour"
 
 
 def test_get_throughput_accepts_30d_preset_window() -> None:
@@ -285,6 +292,29 @@ def test_get_throughput_accepts_30d_preset_window() -> None:
 
     assert data_source.throughput_window == "30d"
     assert response.window == "30d"
+    assert response.granularity == "day"
+
+
+def test_get_throughput_accepts_15m_preset_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window="15m")
+
+    assert data_source.throughput_window == "15m"
+    assert response.window == "15m"
+    assert response.granularity == "raw"
+
+
+def test_get_throughput_accepts_1h_preset_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window="1h")
+
+    assert data_source.throughput_window == "1h"
+    assert response.window == "1h"
+    assert response.granularity == "raw"
 
 
 def test_get_throughput_accepts_custom_range() -> None:
@@ -293,12 +323,29 @@ def test_get_throughput_accepts_custom_range() -> None:
     start_at = datetime(2026, 6, 12, 8, 0, tzinfo=timezone.utc)
     end_at = datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc)
 
-    response = service.get_throughput(window=None, start_at=start_at, end_at=end_at)
+    response = service.get_throughput(window="7d", start_at=start_at, end_at=end_at)
 
-    assert data_source.throughput_window == "custom"
+    assert data_source.throughput_window == "7d"
     assert data_source.throughput_start_at == start_at
     assert data_source.throughput_end_at == end_at
     assert response.window == "custom"
+    assert response.granularity == "hour"
+
+
+def test_throughput_granularity_matches_window_defaults() -> None:
+    assert _throughput_granularity_for_window("15m") == "raw"
+    assert _throughput_granularity_for_window("1h") == "raw"
+    assert _throughput_granularity_for_window("1d") == "hour"
+    assert _throughput_granularity_for_window("7d") == "hour"
+    assert _throughput_granularity_for_window("30d") == "day"
+
+
+def test_throughput_bucket_expression_matches_granularity() -> None:
+    assert _throughput_bucket_expression("15m") == "created_at"
+    assert _throughput_bucket_expression("1h") == "created_at"
+    assert _throughput_bucket_expression("1d") == "date_trunc('hour', created_at)"
+    assert _throughput_bucket_expression("7d") == "date_trunc('hour', created_at)"
+    assert _throughput_bucket_expression("30d") == "date_trunc('day', created_at)"
 
 
 def test_get_throughput_rejects_invalid_custom_range() -> None:

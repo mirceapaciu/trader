@@ -125,8 +125,6 @@ class MonitoringService:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> ThroughputResponse:
-        if window and (start_at is not None or end_at is not None):
-            raise InvalidThroughputWindow("Specify either a preset window or start/end bounds, not both.")
         if start_at is not None or end_at is not None:
             if start_at is None or end_at is None:
                 raise InvalidThroughputWindow("Custom throughput ranges require both start_at and end_at.")
@@ -136,7 +134,15 @@ class MonitoringService:
                 raise InvalidThroughputWindow("Custom throughput ranges must have start_at earlier than end_at.")
             if normalized_end - normalized_start > timedelta(days=30):
                 raise InvalidThroughputWindow("Custom throughput ranges must not exceed 30 days.")
-            return self._data_source.get_throughput(window="custom", start_at=normalized_start, end_at=normalized_end)
+            selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+            if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+                raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
+            response = self._data_source.get_throughput(
+                window=selected_window,
+                start_at=normalized_start,
+                end_at=normalized_end,
+            )
+            return response.model_copy(update={"window": "custom"})
 
         selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
         if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:

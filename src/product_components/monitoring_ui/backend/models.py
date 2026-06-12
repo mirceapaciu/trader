@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 HealthState = Literal["healthy", "unhealthy"]
 DependencyKind = Literal["postgres", "redis"]
+ThroughputGranularity = Literal["raw", "hour", "day"]
 
 
 class DependencyHealth(BaseModel):
@@ -67,6 +68,7 @@ class ThroughputResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     window: str
+    granularity: ThroughputGranularity
     window_start_at: datetime
     window_end_at: datetime
     buckets: list[ThroughputBucket]

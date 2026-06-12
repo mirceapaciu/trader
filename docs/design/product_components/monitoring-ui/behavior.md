@@ -88,10 +88,14 @@ Throughput window controls:
 - The Throughput panel defaults to the `1d` preset on first load.
 - Operators can switch between `15m`, `1h`, `1d`, `7d`, and `30d` presets without leaving the dashboard.
 - Operators can optionally set a single window-end date to anchor the selected preset in the past.
-- When a window-end date is set, the frontend derives explicit `start_at` and `end_at` bounds from the selected preset duration and uses those bounds for the API request.
+- When a window-end date is set, the frontend derives explicit `start_at` and `end_at` bounds from the selected preset duration, sends the selected preset window alongside those bounds, and the backend keeps that preset's granularity for bucketing.
 - The UI presents the preset duration and optional window-end date as one control group so it is clear they work together rather than as competing range modes.
 - The API rejects unsupported window tokens, missing custom bounds, inverted ranges, and custom ranges longer than the configured safe bound of 30 days.
 - Throughput buckets are derived from obligation `created_at` for all displayed counts because the current outbox model stores only the latest status, not an append-only status transition history.
+- Default throughput bucket granularity follows the selected window:
+  - `15m` and `1h`: raw `created_at` timestamps
+  - `1d` and `7d`: `date_trunc('hour', created_at)`
+  - `30d`: `date_trunc('day', created_at)`
 
 ### 4.3.1 Filter Quality Panel
 

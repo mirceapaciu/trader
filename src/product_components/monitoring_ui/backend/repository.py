@@ -147,8 +147,10 @@ class PostgresRedisMonitoringDataSource:
         resolved_start_at = (
             _to_utc(start_at) if start_at is not None else resolved_end_at - _window_to_timedelta(window)
         )
+        granularity = _throughput_granularity_for_window(window)
+        bucket_expression = _throughput_bucket_expression(window)
         sql = (
-            f"SELECT date_trunc('minute', created_at) AS window_start, source_key, "
+            f"SELECT {bucket_expression} AS window_start, source_key, "
             f"COUNT(*) FILTER (WHERE status IN ('pending', 'publishing', 'published', 'dead_lettered')) AS fetch_count, "
             f"COUNT(*) FILTER (WHERE status = 'published') AS publish_success_count, "
             f"COUNT(*) FILTER (WHERE status = 'dead_lettered') AS publish_error_count "
@@ -172,6 +174,7 @@ class PostgresRedisMonitoringDataSource:
         ]
         return ThroughputResponse(
             window=window,
+            granularity=granularity,
             window_start_at=resolved_start_at,
             window_end_at=resolved_end_at,
             buckets=buckets,
@@ -522,6 +525,28 @@ def _window_to_timedelta(window: str) -> timedelta:
         return allowed[normalized]
     except KeyError as exc:
         raise ValueError(f"Unsupported throughput window: {normalized}") from exc
+
+
+def _throughput_granularity_for_window(window: str) -> str:
+    normalized = window.strip().lower()
+    if normalized == "24h":
+        normalized = "1d"
+    if normalized in {"15m", "1h"}:
+        return "raw"
+    if normalized in {"1d", "7d"}:
+        return "hour"
+    if normalized == "30d":
+        return "day"
+    raise ValueError(f"Unsupported throughput window: {normalized}")
+
+
+def _throughput_bucket_expression(window: str) -> str:
+    granularity = _throughput_granularity_for_window(window)
+    if granularity == "raw":
+        return "created_at"
+    if granularity == "hour":
+        return "date_trunc('hour', created_at)"
+    return "date_trunc('day', created_at)"
 
 
 def _to_utc(value: datetime) -> datetime:
