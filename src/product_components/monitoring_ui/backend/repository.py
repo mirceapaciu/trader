@@ -102,7 +102,7 @@ class PostgresRedisMonitoringDataSource:
 
     def list_providers(self) -> ProvidersResponse:
         sql = (
-            f"SELECT source_key, last_cycle_started_at, last_cycle_finished_at, "
+            f"SELECT source_key, last_cycle_started_at, last_cycle_finished_at, last_non_zero_fetch_at, "
             f"last_cycle_fetched_count, last_cycle_accepted_count, last_cycle_rejected_count, "
             f"last_cycle_error_code "
             f"FROM {self._news_schema}.t_provider_cycle_status "
@@ -125,6 +125,9 @@ class PostgresRedisMonitoringDataSource:
                         0.0,
                         (last_cycle_end - last_cycle_start).total_seconds(),
                     ),
+                    last_non_zero_fetch_at=_to_utc(row["last_non_zero_fetch_at"])
+                    if row["last_non_zero_fetch_at"]
+                    else None,
                     publish_success_count=self._count_published(row["source_key"]),
                     fetch_count=int(row["last_cycle_fetched_count"]),
                     fetch_error_count=1 if row["last_cycle_error_code"] else 0,

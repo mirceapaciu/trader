@@ -38,6 +38,7 @@ class ProviderStatus(BaseModel):
     last_cycle_start_at: datetime | None = None
     last_cycle_end_at: datetime | None = None
     last_cycle_duration_seconds: float | None = None
+    last_non_zero_fetch_at: datetime | None = None
     fetch_count: int = 0
     fetch_error_count: int = 0
     dedupe_drop_count: int = 0

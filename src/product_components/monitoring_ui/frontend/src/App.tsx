@@ -312,7 +312,7 @@ export function App() {
               <tr>
                 <th>Provider</th>
                 <th>Last cycle</th>
-                <th>Last fetched</th>
+                <th>Last non-zero fetch</th>
                 <th>Total Published</th>
                 <th>Errors</th>
               </tr>
@@ -322,7 +322,7 @@ export function App() {
                 <tr key={provider.source_key}>
                   <td>{provider.source_key}</td>
                   <td>{formatDate(provider.last_cycle_end_at)}</td>
-                  <td>{provider.fetch_count}</td>
+                  <td>{formatDate(provider.last_non_zero_fetch_at)}</td>
                   <td>{provider.publish_success_count}</td>
                   <td>{provider.last_error_code ?? provider.fetch_error_count}</td>
                 </tr>

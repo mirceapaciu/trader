@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from src.product_components.monitoring_ui.backend.app import _local_dev_origin_regex, create_app
-from src.product_components.monitoring_ui.backend.models import ThroughputResponse
+from src.product_components.monitoring_ui.backend.models import ProvidersResponse, ProviderStatus, ThroughputResponse
 from src.product_components.monitoring_ui.backend.repository import _throughput_granularity_for_window
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 
@@ -33,7 +33,16 @@ class FakeMonitoringDataSource:
         return []
 
     def list_providers(self):
-        raise AssertionError("list_providers should not be called in throughput endpoint tests")
+        return ProvidersResponse(
+            providers=[
+                ProviderStatus(
+                    source_key="finnhub",
+                    last_cycle_end_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+                    last_non_zero_fetch_at=datetime(2026, 6, 12, 9, 45, tzinfo=timezone.utc),
+                )
+            ],
+            generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+        )
 
     def get_throughput(
         self,
@@ -171,6 +180,25 @@ def test_throughput_endpoint_accepts_30d_preset_window(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["window"] == "30d"
     assert data_source.window == "30d"
+
+
+def test_providers_endpoint_includes_last_non_zero_fetch_timestamp(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["providers"][0]["last_non_zero_fetch_at"] == "2026-06-12T09:45:00Z"
 
 
 def _settings() -> MonitoringUiSettings:

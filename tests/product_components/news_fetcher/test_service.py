@@ -331,6 +331,40 @@ def test_service_records_cycle_status_for_empty_batches() -> None:
     assert storage.cycle_statuses[0]["source_key"] == "finnhub"
     assert storage.cycle_statuses[0]["status"] == "success"
     assert storage.cycle_statuses[0]["fetched_count"] == 0
+    assert storage.cycle_statuses[0]["last_non_zero_fetch_at"] is None
+
+
+def test_service_records_last_non_zero_fetch_timestamp_for_non_empty_batches() -> None:
+    provider = FakeProvider(
+        ProviderBatch(
+            events=[
+                ProviderArticle(
+                    source="finnhub",
+                    headline="Apple raises guidance",
+                    url="https://example.com/aapl",
+                    published_at=datetime(2026, 5, 27, 9, 0, tzinfo=timezone.utc),
+                    fetched_at=datetime(2026, 5, 27, 9, 0, tzinfo=timezone.utc),
+                    tickers=["AAPL"],
+                )
+            ],
+            next_cursor={"cursor": "new"},
+            cursor_updated_at=datetime(2026, 5, 27, 9, 1, tzinfo=timezone.utc),
+        )
+    )
+    storage = InMemoryStorage()
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={"finnhub": provider},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    service.run_once()
+
+    assert len(storage.cycle_statuses) == 1
+    assert storage.cycle_statuses[0]["last_non_zero_fetch_at"] is not None
+    assert storage.cycle_statuses[0]["last_non_zero_fetch_at"].tzinfo == timezone.utc
 
 
 def test_service_processes_dynamic_rss_feed_specs(monkeypatch) -> None:

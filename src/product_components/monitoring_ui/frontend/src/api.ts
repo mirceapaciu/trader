@@ -22,6 +22,7 @@ export type ProviderStatus = {
   last_cycle_start_at?: string | null;
   last_cycle_end_at?: string | null;
   last_cycle_duration_seconds?: number | null;
+  last_non_zero_fetch_at?: string | null;
   fetch_count: number;
   fetch_error_count: number;
   dedupe_drop_count: number;

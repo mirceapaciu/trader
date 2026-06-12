@@ -248,12 +248,15 @@ class NewsFetcherService:
         accepted = result.accepted if result else 0
         rejected = result.rejected if result else 0
         checkpoint_advanced = result.checkpoint_advanced if result else False
+        finished_at = datetime.now(timezone.utc)
+        last_non_zero_fetch_at = finished_at if fetched > 0 else None
 
         try:
             recorder(
                 source_key=source_key,
                 started_at=started_at,
-                finished_at=datetime.now(timezone.utc),
+                finished_at=finished_at,
+                last_non_zero_fetch_at=last_non_zero_fetch_at,
                 status=status,
                 error_code=error_code,
                 fetched_count=fetched,

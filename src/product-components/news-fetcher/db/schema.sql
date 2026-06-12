@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_provider_cycle_status (
     source_key TEXT PRIMARY KEY,
     last_cycle_started_at TIMESTAMPTZ NOT NULL,
     last_cycle_finished_at TIMESTAMPTZ NOT NULL,
+    last_non_zero_fetch_at TIMESTAMPTZ,
     last_cycle_status TEXT NOT NULL,
     last_cycle_error_code TEXT,
     last_cycle_fetched_count INTEGER NOT NULL DEFAULT 0,
@@ -104,6 +105,9 @@ CREATE TABLE IF NOT EXISTS news_fetcher.t_provider_cycle_status (
             AND last_cycle_rejected_count >= 0
         )
 );
+
+ALTER TABLE news_fetcher.t_provider_cycle_status
+    ADD COLUMN IF NOT EXISTS last_non_zero_fetch_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS news_fetcher.t_rss_sources (
     source_key TEXT PRIMARY KEY,

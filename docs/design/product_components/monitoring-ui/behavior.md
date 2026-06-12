@@ -66,7 +66,7 @@ Health aggregation rules:
 For each enabled provider (`finnhub`, `marketaux`, `rss:<feed-name>`), display:
 - Last cycle start and end timestamps.
 - Last cycle duration.
-- Last cycle fetch count and fetch error count.
+- Last non-zero fetch timestamp and fetch error count.
 - Last cycle dedupe drop counts (strong and soft).
 - Last cycle persist success and publish success counts.
 - Last error class and timestamp when present.
