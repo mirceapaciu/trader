@@ -299,6 +299,22 @@ h2 {
   min-height: 290px;
 }
 
+.chart-tooltip {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #d0dbd4;
+  border-radius: 6px;
+  color: #18221f;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(33, 47, 41, 0.12);
+  font-size: 0.84rem;
+}
+
+.chart-tooltip strong {
+  font-size: 0.82rem;
+}
+
 .dependency-list,
 .dead-letter-list {
   display: grid;

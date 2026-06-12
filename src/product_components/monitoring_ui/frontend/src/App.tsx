@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import {
   fetchBacklog,
   fetchDeadLetters,
@@ -143,6 +143,8 @@ export function App() {
     throughputAxisStartAtMs != null && throughputAxisEndAtMs != null
       ? Math.max(0, throughputAxisEndAtMs - throughputAxisStartAtMs)
       : undefined;
+  const throughputUsesDiscretePoints =
+    throughput.data?.granularity === "raw" && throughputSelection.window === "15m";
   const throughputTicks = buildThroughputAxisTicks(
     throughput.data?.granularity,
     throughputAxisStartAtMs,
@@ -234,17 +236,7 @@ export function App() {
           <div className="chart">
             {chartRows.length > 0 ? (
               <ResponsiveContainer width="100%" height={290} minWidth={0}>
-                <AreaChart data={chartRows}>
-                  <defs>
-                    <linearGradient id="fetched" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#4967d1" stopOpacity={0.28} />
-                      <stop offset="95%" stopColor="#4967d1" stopOpacity={0.04} />
-                    </linearGradient>
-                    <linearGradient id="published" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#1d8f6f" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#1d8f6f" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
+                <ComposedChart data={chartRows}>
                   <CartesianGrid stroke="#dbe3dc" strokeDasharray="3 3" />
                   <XAxis
                     dataKey="timestampMs"
@@ -268,11 +260,21 @@ export function App() {
                     }
                   />
                   <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip labelFormatter={(value) => formatThroughputTooltipLabel(Number(value))} />
-                  <Area type="monotone" dataKey="fetched" stroke="#4967d1" fill="url(#fetched)" />
-                  <Area type="monotone" dataKey="published" stroke="#1d8f6f" fill="url(#published)" />
-                  <Area type="monotone" dataKey="failed" stroke="#b83b3b" fill="#b83b3b22" />
-                </AreaChart>
+                  <Tooltip content={<ThroughputTooltip />} />
+                  {throughputUsesDiscretePoints ? (
+                    <>
+                      <Scatter dataKey="fetched" fill="#4967d1" />
+                      <Scatter dataKey="published" fill="#1d8f6f" />
+                      <Scatter dataKey="failed" fill="#b83b3b" />
+                    </>
+                  ) : (
+                    <>
+                      <Bar dataKey="fetched" fill="#4967d1" fillOpacity={0.72} radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="published" fill="#1d8f6f" fillOpacity={0.82} radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="failed" fill="#b83b3b" fillOpacity={0.75} radius={[3, 3, 0, 0]} />
+                    </>
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             ) : (
               <EmptyState text={throughput.isError ? "Throughput data unavailable" : "No throughput data yet"} />
@@ -1173,6 +1175,52 @@ function formatThroughputTooltipLabel(value: number) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function ThroughputTooltip({
+  active,
+  label,
+  payload
+}: {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{ dataKey?: string; value?: number | string | null }>;
+}) {
+  if (!active || label == null || !payload?.length) {
+    return null;
+  }
+  const items = payload
+    .filter((entry) => entry.dataKey && entry.dataKey !== "timestampMs" && entry.value != null)
+    .map((entry) => ({
+      label: formatThroughputSeriesLabel(String(entry.dataKey)),
+      value: entry.value
+    }));
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="chart-tooltip">
+      <strong>{formatThroughputTooltipLabel(Number(label))}</strong>
+      {items.map((item) => (
+        <div key={item.label}>
+          {item.label}: {item.value}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatThroughputSeriesLabel(value: string) {
+  if (value === "fetched") {
+    return "Fetched";
+  }
+  if (value === "published") {
+    return "Published";
+  }
+  if (value === "failed") {
+    return "Failed";
+  }
+  return value;
 }
 
 function formatThroughputWindowSummary(
