@@ -52,7 +52,10 @@ export function App() {
   });
   const saveTestFilter = useMutation({
     mutationFn: saveTestFilterConfig,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["filter-config", "test"] })
+    onSuccess: (config) => {
+      queryClient.setQueryData(["filter-config", "test"], config);
+      queryClient.invalidateQueries({ queryKey: ["filter-config", "test"] });
+    }
   });
   const runSimulation = useMutation({
     mutationFn: runTestFilterSimulation,
@@ -733,6 +736,16 @@ function displayedTestFilterDraft({
   testFilter?: NewsFilterConfigPayload;
   productionFilter?: NewsFilterConfigPayload;
 }) {
+  if (testFilter?.created_from_run_id === lastRun.run_id) {
+    return testFilter;
+  }
+  if (
+    testFilter &&
+    lastRun.evaluated_filter_config &&
+    !sameList(testFilter.include_keywords, lastRun.evaluated_filter_config.include_keywords)
+  ) {
+    return testFilter;
+  }
   if (lastRun.evaluated_filter_config) {
     return testDraftFromSource(lastRun.evaluated_filter_config, testFilter, lastRun.run_id);
   }
@@ -865,4 +878,13 @@ function normalizeList(values: string[]) {
   return Array.from(
     new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
   ).sort();
+}
+
+function sameList(left: string[], right: string[]) {
+  const normalizedLeft = normalizeList(left);
+  const normalizedRight = normalizeList(right);
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  );
 }

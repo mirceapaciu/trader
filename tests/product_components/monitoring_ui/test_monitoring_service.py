@@ -323,11 +323,19 @@ def test_filter_config_workflow_delegates_to_data_source() -> None:
     service = MonitoringService(settings=_settings(), data_source=data_source, filter_quality_runner=FakeFilterQualityRunner())
 
     test_filter = service.get_test_filter_config()
-    saved = service.save_test_filter_config(test_filter.model_copy(update={"include_keywords": ["guidance", "outlook"]}))
+    saved = service.save_test_filter_config(
+        test_filter.model_copy(
+            update={
+                "include_keywords": ["guidance", "outlook"],
+                "created_from_run_id": "fqe_done",
+            }
+        )
+    )
     simulation = service.start_test_filter_simulation()
     production = service.promote_test_filter_config()
 
     assert saved.include_keywords == ["guidance", "outlook"]
+    assert saved.created_from_run_id == "fqe_done"
     assert simulation.status == "running"
     assert production.config_role == "production"
 

@@ -452,7 +452,8 @@ class PostgresRedisMonitoringDataSource:
             f"include_keywords = EXCLUDED.include_keywords, exclude_keywords = EXCLUDED.exclude_keywords, "
             f"watchlist_tickers = EXCLUDED.watchlist_tickers, dedupe_algorithm = EXCLUDED.dedupe_algorithm, "
             f"dedupe_similarity_threshold = EXCLUDED.dedupe_similarity_threshold, "
-            f"dedupe_lookback_hours = EXCLUDED.dedupe_lookback_hours, updated_at = NOW()"
+            f"dedupe_lookback_hours = EXCLUDED.dedupe_lookback_hours, "
+            f"created_from_run_id = EXCLUDED.created_from_run_id, updated_at = NOW()"
         )
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
