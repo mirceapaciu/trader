@@ -579,22 +579,21 @@ function IncorrectlyRejectedTable({
                 <tr
                   key={item.assessment_id}
                   className={item.assessment_id === selectedItem?.assessment_id ? "review-row selected" : "review-row"}
+                  onClick={() => setSelectedAssessmentId(item.assessment_id)}
                 >
                   <td className="article-cell">
-                    <a href={item.url} target="_blank" rel="noreferrer">
+                    <a href={item.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
                       {item.headline}
                     </a>
-                    <button
-                      type="button"
-                      className="review-link"
-                      onClick={() => setSelectedAssessmentId(item.assessment_id)}
-                    >
-                      Review
-                    </button>
                     {displayedMatchedArticle(item, lastRun).url && displayedMatchedArticle(item, lastRun).headline && (
                       <small>
                         Duplicate of{" "}
-                        <a href={displayedMatchedArticle(item, lastRun).url ?? undefined} target="_blank" rel="noreferrer">
+                        <a
+                          href={displayedMatchedArticle(item, lastRun).url ?? undefined}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           {displayedMatchedArticle(item, lastRun).headline}
                         </a>
                         {displayedMatchedArticle(item, lastRun).source

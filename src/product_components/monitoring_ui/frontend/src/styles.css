@@ -398,19 +398,12 @@ th {
   background: #eef8f4;
 }
 
-.review-link {
-  display: inline-flex;
-  margin-top: 7px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #176f58;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 800;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.review-row {
   cursor: pointer;
+}
+
+.review-row:hover {
+  background: #f5f8f6;
 }
 
 .review-panel {
