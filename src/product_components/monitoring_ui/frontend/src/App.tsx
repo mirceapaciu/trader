@@ -217,6 +217,10 @@ export function App() {
               <ResponsiveContainer width="100%" height={290} minWidth={0}>
                 <AreaChart data={chartRows}>
                   <defs>
+                    <linearGradient id="fetched" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4967d1" stopOpacity={0.28} />
+                      <stop offset="95%" stopColor="#4967d1" stopOpacity={0.04} />
+                    </linearGradient>
                     <linearGradient id="published" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#1d8f6f" stopOpacity={0.35} />
                       <stop offset="95%" stopColor="#1d8f6f" stopOpacity={0.02} />
@@ -232,6 +236,7 @@ export function App() {
                   />
                   <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip labelFormatter={(value) => formatThroughputTooltipLabel(String(value))} />
+                  <Area type="monotone" dataKey="fetched" stroke="#4967d1" fill="url(#fetched)" />
                   <Area type="monotone" dataKey="published" stroke="#1d8f6f" fill="url(#published)" />
                   <Area type="monotone" dataKey="failed" stroke="#b83b3b" fill="#b83b3b22" />
                 </AreaChart>
