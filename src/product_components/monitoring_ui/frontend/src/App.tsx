@@ -312,8 +312,8 @@ export function App() {
               <tr>
                 <th>Provider</th>
                 <th>Last cycle</th>
-                <th>Fetched</th>
-                <th>Published</th>
+                <th>Last fetched</th>
+                <th>Total Published</th>
                 <th>Errors</th>
               </tr>
             </thead>
