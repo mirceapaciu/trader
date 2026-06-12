@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from src.core_components.event_ingestion_engine.engine import EventIngestionEngine
+from src.core_components.event_ingestion_engine.errors import NonTransientPublishError, TransientPublishError
 from src.core_components.event_ingestion_engine.interfaces import EventPublisher, StorageAdapter
-from src.core_components.event_ingestion_engine.models import ProcessResult, SoftDedupePolicy
+from src.core_components.event_ingestion_engine.models import ProcessResult, PublicationStatus, SoftDedupePolicy
 
 from .providers import NewsProvider, ProviderRateLimitError, RssProvider
 from .publisher import RedisStreamPublisher
@@ -14,6 +16,7 @@ from .source_adapter import NewsSourceAdapter, SourceFilterConfig
 from .storage_adapter import PostgresNewsStorageAdapter
 
 LOGGER = logging.getLogger(__name__)
+_RETRY_DRAIN_LEASE_SECONDS = 60
 
 
 class NewsFetcherService:
@@ -34,9 +37,11 @@ class NewsFetcherService:
         self._source_backoff_until: dict[str, datetime] = {}
         self._source_interval_until: dict[str, datetime] = {}
         self._source_min_interval_seconds: dict[str, int] = {}
+        self._retry_worker_id = f"news_fetcher_retry_{uuid.uuid4().hex}"
 
     def run_once(self) -> dict[str, ProcessResult]:
         results: dict[str, ProcessResult] = {}
+        self._drain_retryable_obligations()
         watchlist = self._storage.load_active_watchlist_tickers()
         filter_config = self._production_filter_config(watchlist)
         providers = self._configured_providers()
@@ -127,6 +132,51 @@ class NewsFetcherService:
                 continue
 
         return results
+
+    def _drain_retryable_obligations(self) -> None:
+        claimer = getattr(self._storage, "claim_retryable_obligations", None)
+        if claimer is None:
+            return
+        try:
+            obligations = claimer(
+                worker_id=self._retry_worker_id,
+                limit=max(1, self._settings.publish_retry_drain_batch_size),
+                lease_seconds=_RETRY_DRAIN_LEASE_SECONDS,
+            )
+        except Exception:
+            LOGGER.exception("failed to claim retryable publication obligations")
+            return
+
+        for obligation in obligations:
+            try:
+                self._publisher.publish(obligation.envelope_json)
+                self._storage.mark_obligation_status(
+                    obligation_id=obligation.obligation_id,
+                    status=PublicationStatus.PUBLISHED,
+                    last_error_code=None,
+                )
+            except NonTransientPublishError as error:
+                self._storage.mark_obligation_status(
+                    obligation_id=obligation.obligation_id,
+                    status=PublicationStatus.DEAD_LETTERED,
+                    last_error_code=str(error) or "non_transient_publish_error",
+                )
+            except TransientPublishError as error:
+                self._storage.mark_obligation_status(
+                    obligation_id=obligation.obligation_id,
+                    status=PublicationStatus.PENDING,
+                    last_error_code=str(error) or "transient_publish_error",
+                )
+            except Exception:
+                LOGGER.exception(
+                    "failed to drain retryable publication obligation",
+                    extra={"obligation_id": obligation.obligation_id, "source_key": obligation.source_key},
+                )
+                self._storage.mark_obligation_status(
+                    obligation_id=obligation.obligation_id,
+                    status=PublicationStatus.PENDING,
+                    last_error_code="unexpected_publish_error",
+                )
 
     def _production_filter_config(self, watchlist: set[str]):
         loader = getattr(self._storage, "seed_production_filter_config_if_missing", None)

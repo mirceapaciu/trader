@@ -267,25 +267,45 @@ class PostgresNewsStorageAdapter(StorageAdapter):
             cur.execute(sql, (batch_id,))
             rows = cur.fetchall()
 
-        obligations: list[PublicationObligation] = []
-        for row in rows:
-            obligations.append(
-                PublicationObligation(
-                    obligation_id=row["obligation_id"],
-                    source_key=row["source_key"],
-                    batch_id=row["batch_id"],
-                    canonical_event_id=row["canonical_event_id"],
-                    event_type=row["event_type"],
-                    dedupe_key=row["dedupe_key"],
-                    envelope_json=row["envelope_json"],
-                    status=PublicationStatus(row["status"]),
-                    attempt_count=row["attempt_count"],
-                    last_error_code=row["last_error_code"],
-                    claimed_by=row["claimed_by"],
-                    claim_expires_at=row["claim_expires_at"],
-                )
-            )
-        return obligations
+        return [_publication_obligation(row) for row in rows]
+
+    def claim_retryable_obligations(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[PublicationObligation]:
+        sql = (
+            f"WITH candidate_rows AS ("
+            f"    SELECT obligation_id "
+            f"    FROM {self._news_schema}.t_publication_obligations "
+            f"    WHERE status = 'pending' "
+            f"       OR (status = 'publishing' AND claim_expires_at IS NOT NULL AND claim_expires_at < NOW()) "
+            f"    ORDER BY updated_at, obligation_id "
+            f"    LIMIT %s "
+            f"    FOR UPDATE SKIP LOCKED"
+            f"), claimed AS ("
+            f"    UPDATE {self._news_schema}.t_publication_obligations obligations "
+            f"    SET status = 'publishing', "
+            f"        attempt_count = obligations.attempt_count + 1, "
+            f"        claimed_by = %s, "
+            f"        claim_expires_at = NOW() + (%s * INTERVAL '1 second'), "
+            f"        updated_at = NOW() "
+            f"    FROM candidate_rows "
+            f"    WHERE obligations.obligation_id = candidate_rows.obligation_id "
+            f"    RETURNING obligations.obligation_id, obligations.source_key, obligations.batch_id, "
+            f"              obligations.canonical_event_id, obligations.event_type, obligations.dedupe_key, "
+            f"              obligations.envelope_json, obligations.status, obligations.attempt_count, "
+            f"              obligations.last_error_code, obligations.claimed_by, obligations.claim_expires_at"
+            f") "
+            f"SELECT * FROM claimed ORDER BY source_key, obligation_id"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (limit, worker_id, lease_seconds))
+            rows = cur.fetchall()
+            conn.commit()
+        return [_publication_obligation(row) for row in rows]
 
     def mark_obligation_status(
         self,
@@ -700,6 +720,23 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _publication_obligation(row: dict[str, Any]) -> PublicationObligation:
+    return PublicationObligation(
+        obligation_id=row["obligation_id"],
+        source_key=row["source_key"],
+        batch_id=row["batch_id"],
+        canonical_event_id=row["canonical_event_id"],
+        event_type=row["event_type"],
+        dedupe_key=row["dedupe_key"],
+        envelope_json=row["envelope_json"],
+        status=PublicationStatus(row["status"]),
+        attempt_count=row["attempt_count"],
+        last_error_code=row["last_error_code"],
+        claimed_by=row["claimed_by"],
+        claim_expires_at=row["claim_expires_at"],
+    )
 
 
 def _string_dict(value: Any) -> dict[str, str]:

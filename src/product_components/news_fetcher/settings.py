@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from src.core_components.event_ingestion_engine.models import FilterRun, FilterRunMode
 
@@ -31,6 +32,7 @@ class NewsFetcherSettings:
 
     queue_url: str
     news_raw_queue: str
+    publish_retry_drain_batch_size: int
 
     dedupe_lookback_hours: int
     dedupe_similarity_threshold: float
@@ -75,8 +77,9 @@ class NewsFetcherSettings:
                 "config/news-fetcher/rss-sources.json",
             ),
             legacy_rss_feed_urls=_csv_env_raw("RSS_FEED_URLS"),
-            queue_url=os.getenv("QUEUE_URL", "redis://127.0.0.1:6379/0"),
+            queue_url=_queue_url_from_env(),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
+            publish_retry_drain_batch_size=_int_env("NEWS_PUBLISH_RETRY_DRAIN_BATCH_SIZE", 500),
             dedupe_lookback_hours=_int_env("DEDUPE_LOOKBACK_HOURS", 24),
             dedupe_similarity_threshold=_float_env("DEDUPE_SIMILARITY_THRESHOLD", 0.9),
             dedupe_algorithm=os.getenv("DEDUPE_ALGORITHM", "rapidfuzz_ratio"),
@@ -155,3 +158,27 @@ def _optional_path(value: str, repo_root: Path) -> Path | None:
     if not path.is_absolute():
         path = repo_root / path
     return path
+
+
+def _queue_url_from_env() -> str:
+    queue_url = os.getenv("QUEUE_URL", "redis://127.0.0.1:6379/0").strip()
+    redis_password = (os.getenv("REDIS_PASSWORD") or "").strip()
+    if not redis_password:
+        return queue_url
+
+    parts = urlsplit(queue_url)
+    if parts.scheme not in {"redis", "rediss"}:
+        return queue_url
+    if "@" in parts.netloc:
+        return queue_url
+
+    host_port = parts.netloc
+    return urlunsplit(
+        (
+            parts.scheme,
+            f":{quote(redis_password, safe='')}@{host_port}",
+            parts.path,
+            parts.query,
+            parts.fragment,
+        )
+    )

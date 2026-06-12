@@ -29,6 +29,7 @@ MARKET_HOURS_ONLY=false      # when false, run continuous polling and ignore mar
 PROVIDER_TIMEOUT_SECONDS=10
 PROVIDER_MAX_RETRIES=3
 PROVIDER_BACKOFF_BASE_SECONDS=1
+NEWS_PUBLISH_RETRY_DRAIN_BATCH_SIZE=500
 
 # Provider-specific inputs
 RSS_FEED_URLS=               # deprecated comma-separated static/broad RSS fallback

@@ -89,6 +89,7 @@ Throughput window controls:
 - Operators can switch between `15m`, `1h`, and `24h` presets without leaving the dashboard.
 - Operators can apply a custom bounded UTC range by providing both start and end timestamps.
 - The API rejects unsupported window tokens, missing custom bounds, inverted ranges, and custom ranges longer than the configured safe bound.
+- Throughput buckets are derived from obligation `created_at` for all displayed counts because the current outbox model stores only the latest status, not an append-only status transition history.
 
 ### 4.3.1 Filter Quality Panel
 

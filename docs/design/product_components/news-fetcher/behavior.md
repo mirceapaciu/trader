@@ -229,6 +229,7 @@ Write policy:
 Transaction policy:
 - For each batch, persist input-corpus rows, production filter-result rows, accepted article rows, and publication obligations in one database transaction.
 - Publisher worker claims pending obligations and publishes envelope to queue.
+- At the start of each scheduler pass, the publisher worker also claims a bounded set of previously pending obligations and stale leased obligations whose publish lease expired, then retries them before fetching new source data.
 - On successful publish, obligation transitions to `published`.
 - If publish fails, retry by incrementing `attempt_count` and preserving idempotent `dedupe_key`.
 - If retries are exhausted, obligation transitions to `dead_lettered` and envelope is routed to `failed_messages_dlq` when available.
@@ -326,6 +327,7 @@ Required variables already defined elsewhere:
 - QUEUE_BACKEND
 - QUEUE_URL
 - NEWS_RAW_QUEUE
+- NEWS_PUBLISH_RETRY_DRAIN_BATCH_SIZE
 - FAILED_MESSAGES_DLQ
 - QUEUE_MAX_RETRIES
 - Database connection variables

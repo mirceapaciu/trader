@@ -53,6 +53,7 @@ class InMemoryStorage(StorageAdapter):
         self.cycle_statuses: list[dict[str, Any]] = []
         self.filter_config: NewsFilterConfig | None = None
         self.filter_runs: list[FilterRun] = []
+        self.claimed_retry_batches: list[dict[str, Any]] = []
 
     def load_active_watchlist_tickers(self) -> set[str]:
         return self.watchlist
@@ -125,6 +126,39 @@ class InMemoryStorage(StorageAdapter):
     def load_batch_obligations(self, *, batch_id: str):
         return [self.obligations[oid] for oid in self.batch_to_ids.get(batch_id, [])]
 
+    def claim_retryable_obligations(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[PublicationObligation]:
+        now = datetime.now(timezone.utc)
+        claimed: list[PublicationObligation] = []
+        for obligation in sorted(self.obligations.values(), key=lambda item: (item.batch_id, item.obligation_id)):
+            is_retryable = obligation.status == PublicationStatus.PENDING or (
+                obligation.status == PublicationStatus.PUBLISHING
+                and obligation.claim_expires_at is not None
+                and obligation.claim_expires_at < now
+            )
+            if not is_retryable:
+                continue
+            updated = replace(
+                obligation,
+                status=PublicationStatus.PUBLISHING,
+                attempt_count=obligation.attempt_count + 1,
+                claimed_by=worker_id,
+                claim_expires_at=now + timedelta(seconds=lease_seconds),
+            )
+            self.obligations[obligation.obligation_id] = updated
+            claimed.append(updated)
+            if len(claimed) >= limit:
+                break
+        self.claimed_retry_batches.append(
+            {"worker_id": worker_id, "limit": limit, "lease_seconds": lease_seconds, "count": len(claimed)}
+        )
+        return claimed
+
     def mark_obligation_status(
         self,
         *,
@@ -133,7 +167,11 @@ class InMemoryStorage(StorageAdapter):
         last_error_code: str | None,
     ) -> None:
         self.obligations[obligation_id] = replace(
-            self.obligations[obligation_id], status=status, last_error_code=last_error_code
+            self.obligations[obligation_id],
+            status=status,
+            last_error_code=last_error_code,
+            claimed_by=None if status in (PublicationStatus.PUBLISHED, PublicationStatus.DEAD_LETTERED, PublicationStatus.PENDING) else self.obligations[obligation_id].claimed_by,
+            claim_expires_at=None if status in (PublicationStatus.PUBLISHED, PublicationStatus.DEAD_LETTERED, PublicationStatus.PENDING) else self.obligations[obligation_id].claim_expires_at,
         )
 
     def has_non_terminal_obligations(self, *, batch_id: str) -> bool:
@@ -194,6 +232,7 @@ def _settings() -> NewsFetcherSettings:
         legacy_rss_feed_urls=(),
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
+        publish_retry_drain_batch_size=500,
         dedupe_lookback_hours=24,
         dedupe_similarity_threshold=0.9,
         dedupe_algorithm="rapidfuzz_ratio",
@@ -465,3 +504,102 @@ def test_service_respects_generated_rss_min_request_interval(monkeypatch) -> Non
 
     assert len(calls) == 1
     assert storage.cycle_statuses[1]["error_code"] == "source_interval_wait"
+
+
+def test_service_drains_existing_pending_obligations_before_fetching() -> None:
+    provider = FakeProvider(
+        ProviderBatch(
+            events=[],
+            next_cursor={"cursor": "same"},
+            cursor_updated_at=datetime(2026, 5, 27, 9, 1, tzinfo=timezone.utc),
+        )
+    )
+    storage = InMemoryStorage()
+    obligation = PublicationObligation(
+        obligation_id="obl_pending",
+        source_key="finnhub",
+        batch_id="batch_old",
+        canonical_event_id="article_1",
+        event_type="news.article.created",
+        dedupe_key="article_1",
+        envelope_json={"event_id": "evt_1", "payload": {"id": "article_1"}},
+        status=PublicationStatus.PENDING,
+    )
+    storage.obligations[obligation.obligation_id] = obligation
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={"finnhub": provider},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    service.run_once()
+
+    assert len(publisher.published) == 1
+    assert storage.obligations["obl_pending"].status == PublicationStatus.PUBLISHED
+    assert storage.obligations["obl_pending"].attempt_count == 1
+    assert storage.claimed_retry_batches[0]["count"] == 1
+
+
+def test_service_requeues_retryable_obligation_after_transient_publish_failure() -> None:
+    storage = InMemoryStorage()
+    stale_obligation = PublicationObligation(
+        obligation_id="obl_stale",
+        source_key="finnhub",
+        batch_id="batch_old",
+        canonical_event_id="article_2",
+        event_type="news.article.created",
+        dedupe_key="article_2",
+        envelope_json={"event_id": "evt_2", "payload": {"id": "article_2"}},
+        status=PublicationStatus.PUBLISHING,
+        attempt_count=2,
+        claimed_by="worker_old",
+        claim_expires_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    storage.obligations[stale_obligation.obligation_id] = stale_obligation
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={},
+        storage=storage,
+        publisher=FakePublisher(mode="transient_error"),
+    )
+
+    service.run_once()
+
+    assert storage.obligations["obl_stale"].status == PublicationStatus.PENDING
+    assert storage.obligations["obl_stale"].attempt_count == 3
+    assert storage.obligations["obl_stale"].last_error_code == "temporary_broker_failure"
+    assert storage.obligations["obl_stale"].claimed_by is None
+
+
+def test_service_uses_configured_retry_drain_batch_size() -> None:
+    storage = InMemoryStorage()
+    for index in range(3):
+        obligation = PublicationObligation(
+            obligation_id=f"obl_{index}",
+            source_key="finnhub",
+            batch_id="batch_old",
+            canonical_event_id=f"article_{index}",
+            event_type="news.article.created",
+            dedupe_key=f"article_{index}",
+            envelope_json={"event_id": f"evt_{index}", "payload": {"id": f"article_{index}"}},
+            status=PublicationStatus.PENDING,
+        )
+        storage.obligations[obligation.obligation_id] = obligation
+    settings = replace(_settings(), publish_retry_drain_batch_size=2)
+    service = NewsFetcherService(
+        settings=settings,
+        providers={},
+        storage=storage,
+        publisher=FakePublisher(),
+    )
+
+    service.run_once()
+
+    assert storage.claimed_retry_batches[0]["limit"] == 2
+    assert storage.claimed_retry_batches[0]["count"] == 2
+    published_count = sum(1 for obligation in storage.obligations.values() if obligation.status == PublicationStatus.PUBLISHED)
+    pending_count = sum(1 for obligation in storage.obligations.values() if obligation.status == PublicationStatus.PENDING)
+    assert published_count == 2
+    assert pending_count == 1

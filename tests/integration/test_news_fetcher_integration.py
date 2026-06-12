@@ -90,6 +90,7 @@ def _settings() -> NewsFetcherSettings:
         legacy_rss_feed_urls=(),
         queue_url=os.getenv("QUEUE_URL", "redis://127.0.0.1:6379/0"),
         news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
+        publish_retry_drain_batch_size=int(os.getenv("NEWS_PUBLISH_RETRY_DRAIN_BATCH_SIZE", "500")),
         dedupe_lookback_hours=int(os.getenv("DEDUPE_LOOKBACK_HOURS", "24")),
         dedupe_similarity_threshold=float(os.getenv("DEDUPE_SIMILARITY_THRESHOLD", "0.9")),
         dedupe_algorithm=os.getenv("DEDUPE_ALGORITHM", "rapidfuzz_ratio"),
