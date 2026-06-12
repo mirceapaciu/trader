@@ -12,6 +12,20 @@
       "source_key": "rss:marketwatch:marketpulse",
       "type": "static",
       "url": "https://www.marketwatch.com/rss/marketpulse",
+      "enabled": false,
+      "min_request_interval_seconds": 900
+    },
+    {
+      "source_key": "rss:cnbc:us_top_news_analysis",
+      "type": "static",
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+      "enabled": true,
+      "min_request_interval_seconds": 900
+    },
+    {
+      "source_key": "rss:cnbc:earnings",
+      "type": "static",
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135",
       "enabled": true,
       "min_request_interval_seconds": 900
     },
