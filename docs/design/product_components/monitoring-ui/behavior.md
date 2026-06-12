@@ -82,12 +82,14 @@ Must display time-series and aggregates for:
 - `end_to_end_latency_seconds` distribution.
 
 Time windows:
-- 15 minutes, 1 hour, 24 hours, and custom bounded range.
+- 15 minutes, 1 hour, 1 day, and 7 days.
 
 Throughput window controls:
-- The Throughput panel defaults to the 24 hour preset on first load.
-- Operators can switch between `15m`, `1h`, and `24h` presets without leaving the dashboard.
-- Operators can apply a custom bounded UTC range by providing both start and end timestamps.
+- The Throughput panel defaults to the `1d` preset on first load.
+- Operators can switch between `15m`, `1h`, `1d`, and `7d` presets without leaving the dashboard.
+- Operators can optionally set a single window-end date to anchor the selected preset in the past.
+- When a window-end date is set, the frontend derives explicit `start_at` and `end_at` bounds from the selected preset duration and uses those bounds for the API request.
+- The UI presents the preset duration and optional window-end date as one control group so it is clear they work together rather than as competing range modes.
 - The API rejects unsupported window tokens, missing custom bounds, inverted ranges, and custom ranges longer than the configured safe bound.
 - Throughput buckets are derived from obligation `created_at` for all displayed counts because the current outbox model stores only the latest status, not an append-only status transition history.
 

@@ -17,7 +17,7 @@ UI_API_BASE_URL=http://localhost:8080/api
 # Query behavior
 UI_QUERY_TIMEOUT_SECONDS=5
 UI_STALE_DATA_TTL_SECONDS=120
-UI_DEFAULT_TIME_WINDOW=1h
+UI_DEFAULT_TIME_WINDOW=1d
 
 # Filter Quality panel
 FILTER_QUALITY_DB_SCHEMA=filter_quality_evaluator

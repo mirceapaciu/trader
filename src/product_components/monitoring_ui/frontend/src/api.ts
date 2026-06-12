@@ -52,7 +52,7 @@ export type ThroughputResponse = {
   generated_at: string;
 };
 
-export type ThroughputPresetWindow = "15m" | "1h" | "24h";
+export type ThroughputPresetWindow = "15m" | "1h" | "1d" | "7d";
 
 export type ThroughputRequest =
   | { window: ThroughputPresetWindow }

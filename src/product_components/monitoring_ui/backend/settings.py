@@ -47,7 +47,7 @@ class MonitoringUiSettings:
             ui_alerts_refresh_interval_seconds=_int_env("UI_ALERTS_REFRESH_INTERVAL_SECONDS", 20),
             ui_query_timeout_seconds=_int_env("UI_QUERY_TIMEOUT_SECONDS", 5),
             ui_stale_data_ttl_seconds=_int_env("UI_STALE_DATA_TTL_SECONDS", 120),
-            ui_default_time_window=os.getenv("UI_DEFAULT_TIME_WINDOW", "1h"),
+            ui_default_time_window=os.getenv("UI_DEFAULT_TIME_WINDOW", "1d"),
             ui_export_max_rows=_int_env("UI_EXPORT_MAX_ROWS", 500),
             newsfetcher_db_schema=os.getenv("NEWSFETCHER_DB_SCHEMA", "news_fetcher"),
             filter_quality_db_schema=os.getenv("FILTER_QUALITY_DB_SCHEMA", "filter_quality_evaluator"),

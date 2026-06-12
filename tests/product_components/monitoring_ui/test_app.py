@@ -103,11 +103,11 @@ def test_throughput_endpoint_accepts_preset_window(monkeypatch) -> None:
     )
     client = TestClient(create_app(settings=_settings()))
 
-    response = client.get("/api/metrics/throughput", params={"window": "24h"})
+    response = client.get("/api/metrics/throughput", params={"window": "1d"})
 
     assert response.status_code == 200
-    assert response.json()["window"] == "24h"
-    assert data_source.window == "24h"
+    assert response.json()["window"] == "1d"
+    assert data_source.window == "1d"
 
 
 def test_throughput_endpoint_accepts_custom_range(monkeypatch) -> None:
@@ -159,7 +159,7 @@ def _settings() -> MonitoringUiSettings:
         ui_alerts_refresh_interval_seconds=20,
         ui_query_timeout_seconds=5,
         ui_stale_data_ttl_seconds=120,
-        ui_default_time_window="1h",
+        ui_default_time_window="1d",
         ui_export_max_rows=25,
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",

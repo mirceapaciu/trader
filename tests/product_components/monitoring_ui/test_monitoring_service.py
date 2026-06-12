@@ -251,20 +251,30 @@ def test_get_throughput_uses_default_window_when_not_provided() -> None:
 
     response = service.get_throughput(window=None)
 
-    assert data_source.throughput_window == "1h"
+    assert data_source.throughput_window == "1d"
     assert data_source.throughput_start_at is None
     assert data_source.throughput_end_at is None
-    assert response.window == "1h"
+    assert response.window == "1d"
 
 
 def test_get_throughput_forwards_supported_preset_window() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)
 
-    response = service.get_throughput(window="24h")
+    response = service.get_throughput(window="1d")
 
-    assert data_source.throughput_window == "24h"
-    assert response.window == "24h"
+    assert data_source.throughput_window == "1d"
+    assert response.window == "1d"
+
+
+def test_get_throughput_accepts_7d_preset_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window="7d")
+
+    assert data_source.throughput_window == "7d"
+    assert response.window == "7d"
 
 
 def test_get_throughput_accepts_custom_range() -> None:
@@ -452,7 +462,7 @@ def _settings() -> MonitoringUiSettings:
         ui_alerts_refresh_interval_seconds=20,
         ui_query_timeout_seconds=5,
         ui_stale_data_ttl_seconds=120,
-        ui_default_time_window="1h",
+        ui_default_time_window="1d",
         ui_export_max_rows=25,
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",

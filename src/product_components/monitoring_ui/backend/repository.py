@@ -509,7 +509,14 @@ def _safe_identifier(value: str) -> str:
 
 def _window_to_timedelta(window: str) -> timedelta:
     normalized = window.strip().lower()
-    allowed = {"15m": timedelta(minutes=15), "1h": timedelta(hours=1), "24h": timedelta(hours=24)}
+    if normalized == "24h":
+        normalized = "1d"
+    allowed = {
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "1d": timedelta(days=1),
+        "7d": timedelta(days=7),
+    }
     try:
         return allowed[normalized]
     except KeyError as exc:

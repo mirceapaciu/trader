@@ -172,21 +172,21 @@ h2 {
   background: #1d8f6f;
 }
 
-.throughput-custom-form {
+.throughput-end-form {
   display: flex;
   flex-wrap: wrap;
   align-items: end;
   gap: 10px;
 }
 
-.throughput-custom-form label {
+.throughput-end-form label {
   display: grid;
   gap: 6px;
   color: #5d6b65;
   font-size: 0.86rem;
 }
 
-.throughput-custom-form input {
+.throughput-end-form input {
   min-height: 36px;
   min-width: 220px;
   padding: 0 10px;
@@ -195,6 +195,12 @@ h2 {
   color: #18221f;
   background: #ffffff;
   font: inherit;
+}
+
+.throughput-helper {
+  color: #5d6b65;
+  font-size: 0.84rem;
+  line-height: 1.4;
 }
 
 .heading-with-state {
@@ -760,12 +766,12 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .throughput-custom-form {
+  .throughput-end-form {
     align-items: stretch;
   }
 
-  .throughput-custom-form label,
-  .throughput-custom-form input {
+  .throughput-end-form label,
+  .throughput-end-form input {
     min-width: 0;
     width: 100%;
   }

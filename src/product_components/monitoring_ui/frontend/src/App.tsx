@@ -27,21 +27,24 @@ import {
 const THROUGHPUT_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> = [
   { label: "15m", window: "15m" },
   { label: "1h", window: "1h" },
-  { label: "24h", window: "24h" }
+  { label: "1d", window: "1d" },
+  { label: "7d", window: "7d" }
 ];
-const MAX_CUSTOM_THROUGHPUT_RANGE_DAYS = 7;
 
-type ThroughputSelection =
-  | { mode: "preset"; window: ThroughputPresetWindow }
-  | { mode: "custom"; startDate: string; endDate: string };
+type ThroughputSelection = {
+  window: ThroughputPresetWindow;
+  endDate: string;
+};
 
 export function App() {
   const queryClient = useQueryClient();
   const [incorrectlyRejectedOpen, setIncorrectlyRejectedOpen] = useState(false);
   const [evaluationStartRequested, setEvaluationStartRequested] = useState(false);
   const [requestedEvaluationAction, setRequestedEvaluationAction] = useState<"filter-quality" | "simulation" | null>(null);
-  const [throughputSelection, setThroughputSelection] = useState<ThroughputSelection>({ mode: "preset", window: "24h" });
-  const [customThroughputRange, setCustomThroughputRange] = useState(() => defaultCustomRange());
+  const [throughputSelection, setThroughputSelection] = useState<ThroughputSelection>({
+    window: "1d",
+    endDate: ""
+  });
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
   const providers = useQuery({ queryKey: ["providers"], queryFn: fetchProviders, refetchInterval: 10000 });
   const throughputRequest = toThroughputRequest(throughputSelection);
@@ -131,32 +134,6 @@ export function App() {
   const throughputWindowEndAtMs = throughput.data?.window_end_at
     ? new Date(throughput.data.window_end_at).getTime()
     : undefined;
-  const customRangeMissing =
-    !customThroughputRange.startDate || !customThroughputRange.endDate;
-  const customRangeInverted =
-    !customRangeMissing && customThroughputRange.startDate > customThroughputRange.endDate;
-  const customRangeTooWide =
-    !customRangeMissing &&
-    !customRangeInverted &&
-    inclusiveDaySpan(customThroughputRange.startDate, customThroughputRange.endDate) >
-      MAX_CUSTOM_THROUGHPUT_RANGE_DAYS;
-  const customRangeInvalid = customRangeMissing || customRangeInverted || customRangeTooWide;
-  const customRangeError = customRangeInverted
-    ? "End date must be on or after the start date."
-    : customRangeTooWide
-      ? `Custom ranges can be at most ${MAX_CUSTOM_THROUGHPUT_RANGE_DAYS} days.`
-      : null;
-  const applyCustomThroughputRange = () => {
-    if (customRangeInvalid) {
-      return;
-    }
-    setThroughputSelection({
-      mode: "custom",
-      startDate: customThroughputRange.startDate,
-      endDate: customThroughputRange.endDate
-    });
-  };
-
   return (
     <main className="shell">
       <header className="topbar">
@@ -186,50 +163,53 @@ export function App() {
             </div>
           </div>
           <div className="throughput-controls">
-            <div className="window-toggle-group" aria-label="Throughput time window presets">
+            <div className="window-toggle-group" aria-label="Throughput time window">
               {THROUGHPUT_PRESETS.map((preset) => (
                 <button
                   type="button"
                   key={preset.window}
-                  className={throughputSelection.mode === "preset" && throughputSelection.window === preset.window ? "window-toggle active" : "window-toggle"}
-                  onClick={() => setThroughputSelection({ mode: "preset", window: preset.window })}
+                  className={throughputSelection.window === preset.window ? "window-toggle active" : "window-toggle"}
+                  onClick={() =>
+                    setThroughputSelection((current) => ({ ...current, window: preset.window }))
+                  }
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
-            <div className="throughput-custom-form">
+            <div className="throughput-end-form">
               <label>
-                Start
+                Window end
                 <input
                   type="date"
-                  value={customThroughputRange.startDate}
+                  value={throughputSelection.endDate}
                   onChange={(event) =>
-                    setCustomThroughputRange((current) => ({ ...current, startDate: event.target.value }))
-                  }
-                />
-              </label>
-              <label>
-                End
-                <input
-                  type="date"
-                  value={customThroughputRange.endDate}
-                  onChange={(event) =>
-                    setCustomThroughputRange((current) => ({ ...current, endDate: event.target.value }))
+                    setThroughputSelection((current) => ({
+                      ...current,
+                      endDate: event.target.value
+                    }))
                   }
                 />
               </label>
               <button
                 type="button"
                 className="secondary-button"
-                onClick={applyCustomThroughputRange}
-                disabled={customRangeInvalid}
+                onClick={() =>
+                  setThroughputSelection((current) => ({
+                    ...current,
+                    endDate: ""
+                  }))
+                }
+                disabled={!throughputSelection.endDate}
               >
-                Apply range
+                Now
               </button>
             </div>
+            <span className="throughput-helper">
+              Choose a window size, then optionally move where that window ends. When a date is
+              set, the chart ends at the close of that day in your local time.
+            </span>
           </div>
-          {customRangeError && <div className="inline-error">{customRangeError}</div>}
           {throughput.isError && <div className="inline-error">{throughput.error.message}</div>}
           <div className="chart">
             {chartRows.length > 0 ? (
@@ -1092,19 +1072,14 @@ function formatThroughputTooltipLabel(value: number) {
 }
 
 function formatThroughputWindowSummary(
-  response: ThroughputResponse | undefined,
+  _response: ThroughputResponse | undefined,
   selection: ThroughputSelection
 ) {
-  if (response) {
-    if (response.window === "custom") {
-      return `${formatShortDate(response.window_start_at)} to ${formatShortDate(exclusiveEndToInclusiveDisplayDate(response.window_end_at))}`;
-    }
-    return `${response.window} window`;
+  const label = `Last ${selection.window}`;
+  if (!selection.endDate) {
+    return `${label} ending now`;
   }
-  if (selection.mode === "preset") {
-    return `${selection.window} window`;
-  }
-  return `${formatShortDate(dateInputStartToIso(selection.startDate))} to ${formatShortDate(dateInputToInclusiveEndIso(selection.endDate))}`;
+  return `${label} ending ${formatShortDate(windowEndDateToInclusiveIso(selection.endDate))}`;
 }
 
 function formatShortDateTime(value: string) {
@@ -1312,31 +1287,14 @@ function aggregateThroughputRows(response?: ThroughputResponse) {
 }
 
 function toThroughputRequest(selection: ThroughputSelection): ThroughputRequest {
-  if (selection.mode === "preset") {
+  if (!selection.endDate) {
     return { window: selection.window };
   }
+  const endAt = dateInputExclusiveEndToIso(selection.endDate);
   return {
-    startAt: dateInputStartToIso(selection.startDate),
-    endAt: dateInputExclusiveEndToIso(selection.endDate)
+    startAt: subtractThroughputWindow(endAt, selection.window),
+    endAt
   };
-}
-
-function defaultCustomRange() {
-  const end = new Date();
-  const start = new Date(end.getTime() - 6 * 24 * 60 * 60 * 1000);
-  return {
-    startDate: toDateInputValue(start),
-    endDate: toDateInputValue(end)
-  };
-}
-
-function toDateInputValue(value: Date) {
-  const offset = value.getTimezoneOffset() * 60 * 1000;
-  return new Date(value.getTime() - offset).toISOString().slice(0, 10);
-}
-
-function dateInputStartToIso(value: string) {
-  return new Date(`${value}T00:00:00`).toISOString();
 }
 
 function dateInputExclusiveEndToIso(value: string) {
@@ -1345,20 +1303,28 @@ function dateInputExclusiveEndToIso(value: string) {
   return endDate.toISOString();
 }
 
-function dateInputToInclusiveEndIso(value: string) {
+function windowEndDateToInclusiveIso(value: string) {
   return new Date(`${value}T23:59:59`).toISOString();
 }
 
-function exclusiveEndToInclusiveDisplayDate(value: string) {
-  const endDate = new Date(value);
-  endDate.setMilliseconds(endDate.getMilliseconds() - 1);
-  return endDate.toISOString();
-}
-
-function inclusiveDaySpan(startDate: string, endDate: string) {
-  const start = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
-  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+function subtractThroughputWindow(endAtIso: string, window: ThroughputPresetWindow) {
+  const endAt = new Date(endAtIso);
+  const startAt = new Date(endAt.getTime());
+  switch (window) {
+    case "15m":
+      startAt.setUTCMinutes(startAt.getUTCMinutes() - 15);
+      break;
+    case "1h":
+      startAt.setUTCHours(startAt.getUTCHours() - 1);
+      break;
+    case "1d":
+      startAt.setUTCDate(startAt.getUTCDate() - 1);
+      break;
+    case "7d":
+      startAt.setUTCDate(startAt.getUTCDate() - 7);
+      break;
+  }
+  return startAt.toISOString();
 }
 
 function mergeRecommendedKeywords(items: FilterQualityIncorrectlyRejectedItem[]) {

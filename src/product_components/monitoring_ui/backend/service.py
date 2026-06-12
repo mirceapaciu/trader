@@ -138,8 +138,8 @@ class MonitoringService:
                 raise InvalidThroughputWindow("Custom throughput ranges must not exceed 7 days.")
             return self._data_source.get_throughput(window="custom", start_at=normalized_start, end_at=normalized_end)
 
-        selected_window = (window or self._settings.ui_default_time_window).strip().lower()
-        if selected_window not in {"15m", "1h", "24h"}:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d"}:
             raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
         return self._data_source.get_throughput(window=selected_window)
 
@@ -213,6 +213,13 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _normalize_throughput_window(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == "24h":
+        return "1d"
+    return normalized
 
 
 def _config_snapshot(config: NewsFilterConfigPayload) -> dict:
