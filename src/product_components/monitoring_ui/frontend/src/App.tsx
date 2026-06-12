@@ -454,7 +454,8 @@ function IncorrectlyRejectedTable({
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
   const [manualKeyword, setManualKeyword] = useState("");
   const mergedKeywords = mergeRecommendedKeywords(items);
-  const selectedKeywordList = Array.from(selectedKeywords).sort();
+  const manualKeywordList = normalizeList([manualKeyword]);
+  const selectedKeywordList = normalizeList([...selectedKeywords, ...manualKeywordList]);
   const activeTestFilter = displayedTestFilterDraft({
     lastRun,
     testFilter,
@@ -484,20 +485,14 @@ function IncorrectlyRejectedTable({
   const selectAll = () => {
     setSelectedKeywords(new Set(mergedKeywords.map((item) => item.keyword)));
   };
-  const addManualKeyword = () => {
-    const normalized = manualKeyword.trim().toLowerCase();
-    if (!normalized) {
-      return;
-    }
-    setSelectedKeywords((current) => new Set([...current, normalized]));
-    setManualKeyword("");
-  };
   const saveSelectedToTestFilter = () => {
     if (!activeTestFilter) {
       return;
     }
     const include = normalizeList([...activeTestFilter.include_keywords, ...selectedKeywordList]);
     saveTestFilter({ ...activeTestFilter, config_role: "test", status: "active", include_keywords: include });
+    setSelectedKeywords(new Set());
+    setManualKeyword("");
   };
   return (
     <div className="quality-details">
@@ -524,7 +519,6 @@ function IncorrectlyRejectedTable({
             onChange={(event) => setManualKeyword(event.target.value)}
             placeholder="New include keyword"
           />
-          <button type="button" className="secondary-button" onClick={addManualKeyword}>Add</button>
           <button type="button" className="secondary-button" onClick={selectAll} disabled={!mergedKeywords.length}>
             Select all
           </button>
