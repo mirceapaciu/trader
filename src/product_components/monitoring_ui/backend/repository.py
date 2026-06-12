@@ -516,6 +516,7 @@ def _window_to_timedelta(window: str) -> timedelta:
         "1h": timedelta(hours=1),
         "1d": timedelta(days=1),
         "7d": timedelta(days=7),
+        "30d": timedelta(days=30),
     }
     try:
         return allowed[normalized]

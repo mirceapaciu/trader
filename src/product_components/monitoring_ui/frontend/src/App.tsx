@@ -28,7 +28,8 @@ const THROUGHPUT_PRESETS: Array<{ label: string; window: ThroughputPresetWindow 
   { label: "15m", window: "15m" },
   { label: "1h", window: "1h" },
   { label: "1d", window: "1d" },
-  { label: "7d", window: "7d" }
+  { label: "7d", window: "7d" },
+  { label: "30d", window: "30d" }
 ];
 
 type ThroughputSelection = {
@@ -134,15 +135,19 @@ export function App() {
   const throughputWindowEndAtMs = throughput.data?.window_end_at
     ? new Date(throughput.data.window_end_at).getTime()
     : undefined;
-  const throughputWindowDurationMs =
-    throughputWindowStartAtMs != null && throughputWindowEndAtMs != null
-      ? Math.max(0, throughputWindowEndAtMs - throughputWindowStartAtMs)
+  const throughputDataStartAtMs = chartRows[0]?.timestampMs;
+  const throughputDataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
+  const throughputAxisStartAtMs = throughputDataStartAtMs ?? throughputWindowStartAtMs;
+  const throughputAxisEndAtMs = throughputDataEndAtMs ?? throughputWindowEndAtMs;
+  const throughputAxisDurationMs =
+    throughputAxisStartAtMs != null && throughputAxisEndAtMs != null
+      ? Math.max(0, throughputAxisEndAtMs - throughputAxisStartAtMs)
       : undefined;
   const throughputDailyTicks = buildThroughputDailyTicks(
-    throughput.data?.window_start_at,
-    throughput.data?.window_end_at
+    throughputAxisStartAtMs,
+    throughputAxisEndAtMs
   );
-  const throughputTickCount = throughputWindowDurationMs != null && throughputWindowDurationMs <= 3 * 24 * 60 * 60 * 1000
+  const throughputTickCount = throughputAxisDurationMs != null && throughputAxisDurationMs <= 3 * 24 * 60 * 60 * 1000
     ? 4
     : 6;
   return (
@@ -242,8 +247,8 @@ export function App() {
                     type="number"
                     scale="time"
                     domain={[
-                      throughputWindowStartAtMs ?? "dataMin",
-                      throughputWindowEndAtMs ?? "dataMax"
+                      throughputAxisStartAtMs ?? "dataMin",
+                      throughputAxisEndAtMs ?? "dataMax"
                     ]}
                     tickLine={false}
                     axisLine={false}
@@ -253,7 +258,7 @@ export function App() {
                     tickFormatter={(value) =>
                       formatThroughputAxisTick(
                         Number(value),
-                        throughputWindowDurationMs
+                        throughputAxisDurationMs
                       )
                     }
                   />
@@ -1077,14 +1082,14 @@ function formatThroughputAxisTick(
   });
 }
 
-function buildThroughputDailyTicks(windowStartAt?: string, windowEndAt?: string) {
-  if (!windowStartAt || !windowEndAt) {
+function buildThroughputDailyTicks(windowStartAtMs?: number, windowEndAtMs?: number) {
+  if (windowStartAtMs == null || windowEndAtMs == null) {
     return undefined;
   }
-  const start = new Date(windowStartAt);
-  const end = new Date(windowEndAt);
+  const start = new Date(windowStartAtMs);
+  const end = new Date(windowEndAtMs);
   const durationMs = Math.max(0, end.getTime() - start.getTime());
-  if (durationMs < 6 * 24 * 60 * 60 * 1000) {
+  if (durationMs < 6 * 24 * 60 * 60 * 1000 || durationMs > 8 * 24 * 60 * 60 * 1000) {
     return undefined;
   }
 
@@ -1364,6 +1369,9 @@ function subtractThroughputWindow(endAtIso: string, window: ThroughputPresetWind
       break;
     case "7d":
       startAt.setUTCDate(startAt.getUTCDate() - 7);
+      break;
+    case "30d":
+      startAt.setUTCDate(startAt.getUTCDate() - 30);
       break;
   }
   return startAt.toISOString();

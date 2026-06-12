@@ -277,6 +277,16 @@ def test_get_throughput_accepts_7d_preset_window() -> None:
     assert response.window == "7d"
 
 
+def test_get_throughput_accepts_30d_preset_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window="30d")
+
+    assert data_source.throughput_window == "30d"
+    assert response.window == "30d"
+
+
 def test_get_throughput_accepts_custom_range() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)

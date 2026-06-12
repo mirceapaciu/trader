@@ -134,12 +134,12 @@ class MonitoringService:
             normalized_end = _to_utc(end_at)
             if normalized_start >= normalized_end:
                 raise InvalidThroughputWindow("Custom throughput ranges must have start_at earlier than end_at.")
-            if normalized_end - normalized_start > timedelta(days=7):
-                raise InvalidThroughputWindow("Custom throughput ranges must not exceed 7 days.")
+            if normalized_end - normalized_start > timedelta(days=30):
+                raise InvalidThroughputWindow("Custom throughput ranges must not exceed 30 days.")
             return self._data_source.get_throughput(window="custom", start_at=normalized_start, end_at=normalized_end)
 
         selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
-        if selected_window not in {"15m", "1h", "1d", "7d"}:
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
             raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
         return self._data_source.get_throughput(window=selected_window)
 

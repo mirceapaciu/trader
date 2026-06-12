@@ -150,6 +150,25 @@ def test_throughput_endpoint_rejects_invalid_window(monkeypatch) -> None:
     assert "Unsupported throughput window" in response.json()["detail"]
 
 
+def test_throughput_endpoint_accepts_30d_preset_window(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/metrics/throughput", params={"window": "30d"})
+
+    assert response.status_code == 200
+    assert response.json()["window"] == "30d"
+    assert data_source.window == "30d"
+
+
 def _settings() -> MonitoringUiSettings:
     return MonitoringUiSettings(
         ui_port=8080,
