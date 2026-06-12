@@ -443,6 +443,24 @@ th {
   background: #f5f8f6;
 }
 
+.selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #c9d4cd;
+  border-radius: 6px;
+  background: #f5f8f6;
+}
+
+.selection-actions span {
+  color: #26342f;
+  font-size: 0.88rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .review-title {
   color: #176f58;
   font-size: 1.02rem;
@@ -498,6 +516,17 @@ th {
   background: #ffffff;
   color: #26342f;
   font-size: 0.86rem;
+}
+
+.manual-chip {
+  border-color: #9bb7ad;
+  background: #eef8f4;
+  cursor: pointer;
+}
+
+.manual-chip span {
+  color: #64726c;
+  font-weight: 800;
 }
 
 .compact-chip {

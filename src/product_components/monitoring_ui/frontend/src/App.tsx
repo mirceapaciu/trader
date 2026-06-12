@@ -452,9 +452,10 @@ function IncorrectlyRejectedTable({
   promotePending: boolean;
 }) {
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+  const [manualKeywords, setManualKeywords] = useState<Set<string>>(new Set());
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(items[0]?.assessment_id ?? null);
   const mergedKeywords = mergeRecommendedKeywords(items);
-  const selectedKeywordList = normalizeList([...selectedKeywords]);
+  const selectedKeywordList = normalizeList([...selectedKeywords, ...manualKeywords]);
   const activeTestFilter = displayedTestFilterDraft({
     lastRun,
     testFilter,
@@ -495,6 +496,20 @@ function IncorrectlyRejectedTable({
   const selectAll = () => {
     setSelectedKeywords(new Set(mergedKeywords.map((item) => item.keyword)));
   };
+  const addManualKeyword = (keyword: string) => {
+    const normalized = normalizeKeywordText(keyword);
+    if (!normalized) {
+      return;
+    }
+    setManualKeywords((current) => new Set([...current, normalized]));
+  };
+  const removeManualKeyword = (keyword: string) => {
+    setManualKeywords((current) => {
+      const next = new Set(current);
+      next.delete(keyword);
+      return next;
+    });
+  };
   const saveSelectedToTestFilter = () => {
     if (!activeTestFilter) {
       return;
@@ -502,6 +517,7 @@ function IncorrectlyRejectedTable({
     const include = normalizeList([...activeTestFilter.include_keywords, ...selectedKeywordList]);
     saveTestFilter({ ...activeTestFilter, config_role: "test", status: "active", include_keywords: include });
     setSelectedKeywords(new Set());
+    setManualKeywords(new Set());
   };
   return (
     <div className="quality-details">
@@ -618,7 +634,10 @@ function IncorrectlyRejectedTable({
           item={selectedItem}
           lastRun={lastRun}
           selectedKeywords={selectedKeywords}
+          manualKeywords={manualKeywords}
           updateSelected={updateSelected}
+          addManualKeyword={addManualKeyword}
+          removeManualKeyword={removeManualKeyword}
         />
       </div>
     </div>
@@ -629,19 +648,55 @@ function ArticleReviewPanel({
   item,
   lastRun,
   selectedKeywords,
-  updateSelected
+  manualKeywords,
+  updateSelected,
+  addManualKeyword,
+  removeManualKeyword
 }: {
   item?: FilterQualityIncorrectlyRejectedItem;
   lastRun: FilterQualityRunSummary;
   selectedKeywords: Set<string>;
+  manualKeywords: Set<string>;
   updateSelected: (keyword: string, checked: boolean) => void;
+  addManualKeyword: (keyword: string) => void;
+  removeManualKeyword: (keyword: string) => void;
 }) {
+  const [selectedText, setSelectedText] = useState("");
+  const manualKeywordList = Array.from(manualKeywords).sort();
+  useEffect(() => {
+    setSelectedText("");
+    window.getSelection()?.removeAllRanges();
+  }, [item?.assessment_id]);
+  const updateSelectedText = (container: HTMLElement) => {
+    const selection = window.getSelection();
+    const rawText = selection?.toString() ?? "";
+    if (!rawText.trim()) {
+      setSelectedText("");
+      return;
+    }
+    const anchorNode = selection?.anchorNode;
+    if (!anchorNode || !container.contains(anchorNode)) {
+      setSelectedText("");
+      return;
+    }
+    setSelectedText(normalizeKeywordText(rawText));
+  };
+  const useSelectedText = () => {
+    addManualKeyword(selectedText);
+    setSelectedText("");
+    window.getSelection()?.removeAllRanges();
+  };
   if (!item) {
     return <aside className="review-panel"><EmptyState text="Select an article to review" /></aside>;
   }
   const matchedArticle = displayedMatchedArticle(item, lastRun);
   return (
-    <aside className="review-panel" aria-label="Selected article review">
+    <aside
+      className="review-panel"
+      aria-label="Selected article review"
+      onMouseUp={(event) => updateSelectedText(event.currentTarget)}
+      onKeyUp={(event) => updateSelectedText(event.currentTarget)}
+    >
       <div className="review-panel-heading">
         <span>{item.source}</span>
         <strong>{formatDate(item.published_at)}</strong>
@@ -653,6 +708,14 @@ function ArticleReviewPanel({
         <span>{displayedRejectionReason(item, lastRun) ?? "n/a"}</span>
         <span>{formatCause(displayedCause(item, lastRun))}</span>
       </div>
+      {selectedText && (
+        <div className="selection-actions">
+          <span>{selectedText}</span>
+          <button type="button" className="secondary-button" onClick={useSelectedText}>
+            Use as keyword
+          </button>
+        </div>
+      )}
       <section className="review-section">
         <h3>Summary</h3>
         <p className="summary-text">{item.summary || "No article summary available."}</p>
@@ -685,6 +748,25 @@ function ArticleReviewPanel({
           {!item.recommended_include_keywords.length && <span className="muted">No structured keyword recommendations</span>}
         </div>
       </section>
+      {manualKeywordList.length > 0 && (
+        <section className="review-section">
+          <h3>Selected keywords</h3>
+          <div className="keyword-list">
+            {manualKeywordList.map((keyword) => (
+              <button
+                type="button"
+                className="keyword-chip manual-chip"
+                key={`manual-${keyword}`}
+                onClick={() => removeManualKeyword(keyword)}
+                title="Remove selected keyword"
+              >
+                {keyword}
+                <span aria-hidden="true">x</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {item.rationale && (
         <section className="review-section">
           <h3>Rationale</h3>
@@ -989,9 +1071,13 @@ function mergeRecommendedKeywords(items: FilterQualityIncorrectlyRejectedItem[])
     .sort((left, right) => right.count - left.count || left.keyword.localeCompare(right.keyword));
 }
 
+function normalizeKeywordText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function normalizeList(values: string[]) {
   return Array.from(
-    new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))
+    new Set(values.map(normalizeKeywordText).filter(Boolean))
   ).sort();
 }
 
