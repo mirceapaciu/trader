@@ -163,9 +163,38 @@ export type FilterQualityIncorrectlyRejectedResponse = {
   generated_at: string;
 };
 
+export type FilterQualityIncorrectlyAcceptedItem = {
+  assessment_id: string;
+  run_id: string;
+  article_id: string;
+  headline: string;
+  summary?: string | null;
+  url: string;
+  source: string;
+  published_at: string;
+  production_filter_outcome?: string | null;
+  simulation_filter_outcome?: string | null;
+  probable_cause?: string | null;
+  improvement_suggestion?: string | null;
+  rationale?: string | null;
+  classification_confidence?: number | null;
+  suggestion_json: Record<string, unknown>;
+  evaluated_at: string;
+};
+
+export type FilterQualityIncorrectlyAcceptedResponse = {
+  run_id: string;
+  items: FilterQualityIncorrectlyAcceptedItem[];
+  generated_at: string;
+};
+
 export type FilterQualityStartRunResponse = {
   run_id: string;
   status: "running";
+};
+
+export type FilterQualityStartRunRequest = {
+  accepted_audit_enabled?: boolean;
 };
 
 export type NewsFilterConfigPayload = {
@@ -218,8 +247,12 @@ async function getJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function postJson<T>(path: string): Promise<T> {
-  const response = await fetch(apiUrl(path), { method: "POST" });
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    method: "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -288,8 +321,18 @@ export function fetchFilterQualityIncorrectlyRejected(
   );
 }
 
-export function startFilterQualityRun(): Promise<FilterQualityStartRunResponse> {
-  return postJson<FilterQualityStartRunResponse>("/api/filter-quality/runs");
+export function fetchFilterQualityIncorrectlyAccepted(
+  runId: string
+): Promise<FilterQualityIncorrectlyAcceptedResponse> {
+  return getJson<FilterQualityIncorrectlyAcceptedResponse>(
+    `/api/filter-quality/runs/${encodeURIComponent(runId)}/incorrectly-accepted`
+  );
+}
+
+export function startFilterQualityRun(
+  payload?: FilterQualityStartRunRequest
+): Promise<FilterQualityStartRunResponse> {
+  return postJson<FilterQualityStartRunResponse>("/api/filter-quality/runs", payload);
 }
 
 export function fetchProductionFilterConfig(): Promise<NewsFilterConfigPayload> {

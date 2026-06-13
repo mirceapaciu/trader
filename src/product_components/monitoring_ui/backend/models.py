@@ -217,6 +217,41 @@ class FilterQualityIncorrectlyRejectedResponse(BaseModel):
     generated_at: datetime
 
 
+class FilterQualityIncorrectlyAcceptedItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    assessment_id: str
+    run_id: str
+    article_id: str
+    headline: str
+    summary: str | None = None
+    url: str
+    source: str
+    published_at: datetime
+    production_filter_outcome: str | None = None
+    simulation_filter_outcome: str | None = None
+    probable_cause: str | None = None
+    improvement_suggestion: str | None = None
+    rationale: str | None = None
+    classification_confidence: float | None = None
+    suggestion_json: dict[str, Any] = Field(default_factory=dict)
+    evaluated_at: datetime
+
+
+class FilterQualityIncorrectlyAcceptedResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    items: list[FilterQualityIncorrectlyAcceptedItem]
+    generated_at: datetime
+
+
+class FilterQualityStartRunRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    accepted_audit_enabled: bool = False
+
+
 class FilterQualityStartRunResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 

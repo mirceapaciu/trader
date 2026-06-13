@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import {
   fetchBacklog,
   fetchDeadLetters,
+  fetchFilterQualityIncorrectlyAccepted,
   fetchFilterQualityIncorrectlyRejected,
   fetchHealth,
   fetchProductionFilterConfig,
@@ -15,6 +16,7 @@ import {
   runTestFilterSimulation,
   saveTestFilterConfig,
   startFilterQualityRun,
+  type FilterQualityIncorrectlyAcceptedItem,
   type FilterQualityIncorrectlyRejectedItem,
   type FilterQualityRunSummary,
   type HealthState,
@@ -39,7 +41,8 @@ type ThroughputSelection = {
 
 export function App() {
   const queryClient = useQueryClient();
-  const [incorrectlyRejectedOpen, setIncorrectlyRejectedOpen] = useState(false);
+  const [qualityDetailView, setQualityDetailView] = useState<"incorrectly-rejected" | "incorrectly-accepted" | null>(null);
+  const [acceptedAuditEnabled, setAcceptedAuditEnabled] = useState(false);
   const [evaluationStartRequested, setEvaluationStartRequested] = useState(false);
   const [requestedEvaluationAction, setRequestedEvaluationAction] = useState<"filter-quality" | "simulation" | null>(null);
   const [throughputSelection, setThroughputSelection] = useState<ThroughputSelection>({
@@ -64,7 +67,12 @@ export function App() {
   const incorrectlyRejected = useQuery({
     queryKey: ["filter-quality", lastFilterQualityRunId, "incorrectly-rejected"],
     queryFn: () => fetchFilterQualityIncorrectlyRejected(lastFilterQualityRunId ?? ""),
-    enabled: incorrectlyRejectedOpen && Boolean(lastFilterQualityRunId)
+    enabled: qualityDetailView === "incorrectly-rejected" && Boolean(lastFilterQualityRunId)
+  });
+  const incorrectlyAccepted = useQuery({
+    queryKey: ["filter-quality", lastFilterQualityRunId, "incorrectly-accepted"],
+    queryFn: () => fetchFilterQualityIncorrectlyAccepted(lastFilterQualityRunId ?? ""),
+    enabled: qualityDetailView === "incorrectly-accepted" && Boolean(lastFilterQualityRunId)
   });
   const productionFilter = useQuery({
     queryKey: ["filter-config", "production"],
@@ -107,7 +115,7 @@ export function App() {
       setRequestedEvaluationAction("filter-quality");
     },
     onSuccess: () => {
-      setIncorrectlyRejectedOpen(false);
+      setQualityDetailView(null);
       queryClient.invalidateQueries({ queryKey: ["filter-quality"] });
     },
     onError: () => {
@@ -377,14 +385,25 @@ export function App() {
               </span>
             )}
           </div>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={evaluationRunningOrStarting}
-            onClick={() => startFilterQuality.mutate()}
-          >
-            {startFilterQuality.isPending || requestedEvaluationAction === "filter-quality" ? "Starting" : "Run filter quality"}
-          </button>
+          <div className="filter-quality-actions">
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                checked={acceptedAuditEnabled}
+                onChange={(event) => setAcceptedAuditEnabled(event.target.checked)}
+                disabled={evaluationRunningOrStarting}
+              />
+              Evaluate accepted articles
+            </label>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={evaluationRunningOrStarting}
+              onClick={() => startFilterQuality.mutate({ accepted_audit_enabled: acceptedAuditEnabled })}
+            >
+              {startFilterQuality.isPending || requestedEvaluationAction === "filter-quality" ? "Starting" : "Evaluate production filter"}
+            </button>
+          </div>
         </div>
         {startFilterQuality.isError && (
           <div className="inline-error">{startFilterQuality.error.message}</div>
@@ -392,7 +411,10 @@ export function App() {
         {filterQuality.data?.last_run ? (
           <FilterQualityMetrics
             run={filterQuality.data.last_run}
-            incorrectlyRejectedOpen={incorrectlyRejectedOpen}
+            qualityDetailView={qualityDetailView}
+            incorrectlyAcceptedItems={incorrectlyAccepted.data?.items ?? []}
+            incorrectlyAcceptedLoading={!incorrectlyAccepted.data && incorrectlyAccepted.isFetching}
+            incorrectlyAcceptedError={incorrectlyAccepted.isError}
             incorrectlyRejectedItems={incorrectlyRejected.data?.items ?? []}
             incorrectlyRejectedLoading={!incorrectlyRejected.data && incorrectlyRejected.isFetching}
             incorrectlyRejectedError={incorrectlyRejected.isError}
@@ -406,7 +428,16 @@ export function App() {
             evaluationRunningOrStarting={evaluationRunningOrStarting}
             promoteFilter={() => promoteFilter.mutate()}
             promotePending={promoteFilter.isPending}
-            onToggleIncorrectlyRejected={() => setIncorrectlyRejectedOpen((open) => !open)}
+            onToggleIncorrectlyRejected={() =>
+              setQualityDetailView((current) =>
+                current === "incorrectly-rejected" ? null : "incorrectly-rejected"
+              )
+            }
+            onToggleIncorrectlyAccepted={() =>
+              setQualityDetailView((current) =>
+                current === "incorrectly-accepted" ? null : "incorrectly-accepted"
+              )
+            }
           />
         ) : (
           <EmptyState text={filterQuality.isError ? "Filter quality data unavailable" : "No filter quality runs yet"} />
@@ -441,7 +472,10 @@ function EmptyState({ text }: { text: string }) {
 
 function FilterQualityMetrics({
   run,
-  incorrectlyRejectedOpen,
+  qualityDetailView,
+  incorrectlyAcceptedItems,
+  incorrectlyAcceptedLoading,
+  incorrectlyAcceptedError,
   incorrectlyRejectedItems,
   incorrectlyRejectedLoading,
   incorrectlyRejectedError,
@@ -455,10 +489,14 @@ function FilterQualityMetrics({
   evaluationRunningOrStarting,
   promoteFilter,
   promotePending,
-  onToggleIncorrectlyRejected
+  onToggleIncorrectlyRejected,
+  onToggleIncorrectlyAccepted
 }: {
   run: FilterQualityRunSummary;
-  incorrectlyRejectedOpen: boolean;
+  qualityDetailView: "incorrectly-rejected" | "incorrectly-accepted" | null;
+  incorrectlyAcceptedItems: FilterQualityIncorrectlyAcceptedItem[];
+  incorrectlyAcceptedLoading: boolean;
+  incorrectlyAcceptedError: boolean;
   incorrectlyRejectedItems: FilterQualityIncorrectlyRejectedItem[];
   incorrectlyRejectedLoading: boolean;
   incorrectlyRejectedError: boolean;
@@ -473,29 +511,55 @@ function FilterQualityMetrics({
   promoteFilter: () => void;
   promotePending: boolean;
   onToggleIncorrectlyRejected: () => void;
+  onToggleIncorrectlyAccepted: () => void;
 }) {
   return (
     <div className="quality-section">
-      <div className="quality-grid">
-        <QualityValue label="Total quality" value={formatRate(run.total_filter_quality)} />
-        <QualityValue label="Rejection precision" value={formatRate(run.rejection_precision_proxy)} />
-        <QualityValue label="Incorrectly accepted" value={formatRate(run.incorrectly_accepted_rate_estimate)} />
-        <QualityValue
-          label="Incorrectly rejected"
-          value={run.incorrectly_rejected_count}
-          buttonDisabled={run.incorrectly_rejected_count === 0}
-          onClick={run.incorrectly_rejected_count > 0 ? onToggleIncorrectlyRejected : undefined}
-        />
-        <QualityValue label="Rejected evaluated" value={run.rejected_items_evaluated} />
-        <QualityValue label="Accepted sampled" value={run.accepted_items_sampled} />
-        <QualityValue label="Accepted assumed correct" value={run.assumed_correct_accepted_count} />
-        <QualityValue label="Item failures" value={run.item_failed_count} />
-        <QualityValue label="Dataset input" value={run.dataset_input_count} />
-        <QualityValue label="Last finished" value={formatDate(run.finished_at)} />
-        {run.item_failed_count > 0 && <QualityValue label="Failure reason" value={formatErrorCodes(run.item_error_codes)} />}
-        {run.status === "failed" && <QualityValue label="Error" value={run.error_code ?? "unknown_error"} />}
+      <div className="quality-groups">
+        <QualityGroup title="Overview">
+          <QualityValue label="Total quality" value={formatRate(run.total_filter_quality)} />
+          <QualityValue label="Dataset input" value={run.dataset_input_count} />
+          <QualityValue label="Last finished" value={formatDate(run.finished_at)} />
+        </QualityGroup>
+        <QualityGroup title="Rejected">
+          <QualityValue label="Incorrectly rejected rate" value={formatRate(incorrectlyRejectedRate(run))} />
+          <QualityValue label="Rejected evaluated" value={run.rejected_items_evaluated} />
+          <QualityValue
+            label="Incorrectly rejected"
+            value={run.incorrectly_rejected_count}
+            buttonDisabled={run.incorrectly_rejected_count === 0}
+            onClick={run.incorrectly_rejected_count > 0 ? onToggleIncorrectlyRejected : undefined}
+          />
+        </QualityGroup>
+        <QualityGroup title="Accepted">
+          <QualityValue label="Incorrectly accepted rate" value={formatRate(run.incorrectly_accepted_rate_estimate)} />
+          <QualityValue label="Accepted audited" value={run.accepted_items_sampled} />
+          <QualityValue
+            label="Incorrectly accepted"
+            value={run.incorrectly_accepted_count}
+            buttonDisabled={run.incorrectly_accepted_count === 0}
+            onClick={run.incorrectly_accepted_count > 0 ? onToggleIncorrectlyAccepted : undefined}
+          />
+        </QualityGroup>
+        <QualityGroup title="Errors">
+          <QualityValue label="Item failures" value={run.item_failed_count} />
+          <QualityValue label="Failure reason" value={formatErrorCodes(run.item_error_codes)} />
+        </QualityGroup>
       </div>
-      {incorrectlyRejectedOpen && (
+      {run.status === "failed" && (
+        <div className="quality-status-note">
+          <QualityValue label="Error" value={run.error_code ?? "unknown_error"} />
+        </div>
+      )}
+      {qualityDetailView === "incorrectly-accepted" && (
+        <IncorrectlyAcceptedTable
+          items={incorrectlyAcceptedItems}
+          lastRun={run}
+          loading={incorrectlyAcceptedLoading}
+          error={incorrectlyAcceptedError}
+        />
+      )}
+      {qualityDetailView === "incorrectly-rejected" && (
         <IncorrectlyRejectedTable
           items={incorrectlyRejectedItems}
           lastRun={run}
@@ -801,6 +865,104 @@ function IncorrectlyRejectedTable({
   );
 }
 
+function QualityGroup({
+  title,
+  children
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="quality-group">
+      <div className="quality-group-title">{title}</div>
+      <div className="quality-grid">{children}</div>
+    </section>
+  );
+}
+
+function IncorrectlyAcceptedTable({
+  items,
+  lastRun,
+  loading,
+  error
+}: {
+  items: FilterQualityIncorrectlyAcceptedItem[];
+  lastRun: FilterQualityRunSummary;
+  loading: boolean;
+  error: boolean;
+}) {
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(items[0]?.assessment_id ?? null);
+
+  useEffect(() => {
+    if (!items.length) {
+      setSelectedAssessmentId(null);
+      return;
+    }
+    if (!selectedAssessmentId || !items.some((item) => item.assessment_id === selectedAssessmentId)) {
+      setSelectedAssessmentId(items[0].assessment_id);
+    }
+  }, [items, selectedAssessmentId]);
+
+  const selectedItem = items.find((item) => item.assessment_id === selectedAssessmentId) ?? items[0];
+
+  if (loading) {
+    return <EmptyState text="Loading incorrectly accepted records" />;
+  }
+  if (error) {
+    return <EmptyState text="Incorrectly accepted records unavailable" />;
+  }
+  if (!items.length) {
+    return <EmptyState text="No incorrectly accepted records" />;
+  }
+
+  return (
+    <div className="quality-details">
+      <div className="quality-details-header">
+        <strong>Accepted articles flagged as low-value noise</strong>
+        <span>{items.length} articles</span>
+      </div>
+      <div className="review-layout">
+        <div className="table-wrap review-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Article</th>
+                <th>Published</th>
+                <th>Source</th>
+                <th>Cause</th>
+                <th>Confidence</th>
+                <th>Suggested action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr
+                  key={item.assessment_id}
+                  className={item.assessment_id === selectedItem?.assessment_id ? "review-row selected" : "review-row"}
+                  onClick={() => setSelectedAssessmentId(item.assessment_id)}
+                >
+                  <td className="article-cell">
+                    <a href={item.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                      {item.headline}
+                    </a>
+                    {item.rationale && <small>{item.rationale}</small>}
+                  </td>
+                  <td>{formatDate(item.published_at)}</td>
+                  <td>{item.source}</td>
+                  <td>{formatCause(item.probable_cause)}</td>
+                  <td>{formatConfidence(item.classification_confidence)}</td>
+                  <td className="solution-cell">{item.improvement_suggestion ?? "n/a"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <IncorrectlyAcceptedReviewPanel item={selectedItem} lastRun={lastRun} />
+      </div>
+    </div>
+  );
+}
+
 function ArticleReviewPanel({
   item,
   lastRun,
@@ -937,6 +1099,53 @@ function ArticleReviewPanel({
         <section className="review-section">
           <h3>Suggested action</h3>
           <p className="summary-text">{displayedSolution(item, lastRun)}</p>
+        </section>
+      )}
+    </aside>
+  );
+}
+
+function IncorrectlyAcceptedReviewPanel({
+  item,
+  lastRun
+}: {
+  item?: FilterQualityIncorrectlyAcceptedItem;
+  lastRun: FilterQualityRunSummary;
+}) {
+  if (!item) {
+    return <aside className="review-panel"><EmptyState text="Select an article to review" /></aside>;
+  }
+  return (
+    <aside className="review-panel" aria-label="Selected accepted article review">
+      <div className="review-panel-heading">
+        <span>{item.source}</span>
+        <strong>{formatDate(item.published_at)}</strong>
+      </div>
+      <div className="review-title">{item.headline}</div>
+      <div className="review-links">
+        <a href={item.url} target="_blank" rel="noreferrer">
+          Open article
+        </a>
+      </div>
+      <div className="review-meta">
+        <span>{formatEvaluationSubject(lastRun.evaluation_subject)}</span>
+        <span>{formatCause(item.probable_cause)}</span>
+        <span>{formatConfidence(item.classification_confidence)}</span>
+      </div>
+      <section className="review-section">
+        <h3>Summary</h3>
+        <p className="summary-text">{item.summary || "No article summary available."}</p>
+      </section>
+      {item.rationale && (
+        <section className="review-section">
+          <h3>Rationale</h3>
+          <p className="summary-text">{item.rationale}</p>
+        </section>
+      )}
+      {item.improvement_suggestion && (
+        <section className="review-section">
+          <h3>Suggested action</h3>
+          <p className="summary-text">{item.improvement_suggestion}</p>
         </section>
       )}
     </aside>
@@ -1258,6 +1467,20 @@ function formatRate(value?: number | null) {
     return "n/a";
   }
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function incorrectlyRejectedRate(run: FilterQualityRunSummary) {
+  if (run.rejected_items_evaluated <= 0) {
+    return null;
+  }
+  return run.incorrectly_rejected_count / run.rejected_items_evaluated;
+}
+
+function formatConfidence(value?: number | null) {
+  if (value == null) {
+    return "n/a";
+  }
+  return `${(value * 100).toFixed(0)}% confidence`;
 }
 
 function filterQualityState(running?: FilterQualityRunSummary | null, last?: FilterQualityRunSummary | null) {

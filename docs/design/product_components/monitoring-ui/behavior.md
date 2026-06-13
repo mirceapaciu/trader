@@ -104,15 +104,23 @@ The dashboard includes a compact Filter Quality panel.
 The panel must display:
 - Whether a filter quality run is currently `running`.
 - The latest terminal run status: `completed`, `failed`, or no prior runs.
-- The latest terminal run metrics: rejection precision proxy, incorrectly accepted rate estimate, rejected evaluated count, accepted sampled count, dataset input count, finished timestamp, and failed error code when present.
+- The latest terminal run metrics: incorrectly rejected rate, incorrectly accepted rate estimate, rejected evaluated count, accepted audited count, dataset input count, finished timestamp, and failed error code when present.
 
-The Run filter quality button starts one evaluator run for the last 24 hours. UI-triggered runs use the active NewsFetcher filter configuration, set `accepted_audit_enabled=false`, and write their status and summary to `filter_quality_evaluator.t_filter_quality_runs`. If a run is already active, the API returns `409` with the active `run_id`.
+The metrics are arranged in this order for consistent scanning:
+- `Overview`: total quality, dataset input, last finished.
+- `Rejected`: incorrectly rejected rate, rejected evaluated, incorrectly rejected count.
+- `Accepted`: incorrectly accepted rate, accepted audited, incorrectly accepted count.
+- `Errors`: item failures and failure reason.
+
+The Evaluate production filter control starts one evaluator run for the last 24 hours. UI-triggered runs use the active NewsFetcher filter configuration and write their status and summary to `filter_quality_evaluator.t_filter_quality_runs`. Accepted-article evaluation is off by default in the UI. A checkbox labeled `Evaluate accepted articles` lets the operator opt into accepted-news auditing for a specific run; when enabled, the run sets `accepted_audit_enabled=true` and uses `FILTER_QUALITY_ACCEPTED_AUDIT_SAMPLE_SIZE` as the accepted-news audit sample size. If a run is already active, the API returns `409` with the active `run_id`.
 
 The UI seeds the displayed test-filter draft from the latest run's evaluated filter snapshot when available. For production evaluations, incorrectly rejected details display the production rejection reason; for simulation evaluations, they display the simulation rejection reason. Deterministic rejection reasons such as duplicates and excluded keywords take precedence over persisted LLM cause and solution text when displaying the cause and solution columns. The displayed draft is not persisted until the operator saves the test filter.
 
 Incorrectly rejected records use a review-oriented split view. The list remains compact for quick browsing and shows headline, recommended keyword chips, source, published time, rejection reason, cause, and suggested solution. Selecting a record opens a detail panel that keeps the list visible while showing the full stored article summary, external article link, matched duplicate article when available, classifier rationale, suggested action, and item-specific recommended keyword chips. Full summaries are not rendered as a table column because variable-length article text would make the list difficult to scan.
 
 The detail panel allows operators to select article text and convert that selection into a manual keyword chip. Manual chips are visually distinct from evaluator-recommended chips, are removable before saving, and are persisted only when the operator clicks `Add to test filter`. They must not be presented as evaluator recommendations because they are operator-authored filter edits. The UI labels this section as `Manual keywords` to avoid confusion with selected evaluator recommendations.
+
+Incorrectly accepted records use a similar split view. The count tile is clickable and opens a compact list of accepted articles that were classified as low-value noise, with headline, published time, source, probable cause, confidence, and suggested action. Selecting a record opens a detail panel with the stored summary, external article link, classifier rationale, and suggested action. This accepted-news review flow is read-only in the UI and does not reuse the incorrectly rejected keyword-edit workflow.
 
 ### 4.4 Backlog and Dead-Letter Panels
 
@@ -159,6 +167,8 @@ Required read endpoints:
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.
+- `GET /api/filter-quality/runs/{run_id}/incorrectly-rejected` returns review-oriented incorrectly rejected article details for one run.
+- `GET /api/filter-quality/runs/{run_id}/incorrectly-accepted` returns review-oriented incorrectly accepted article details for one run.
 
 Optional operator-action endpoints:
 - `POST /api/actions/refresh` triggers a non-blocking refresh of UI projections when supported.

@@ -36,8 +36,8 @@ class FilterQualityRunCoordinator:
         self._lock = threading.Lock()
         self._active_run_id: str | None = None
 
-    def start_last_24h_run(self) -> str:
-        params = self._build_last_24h_params()
+    def start_last_24h_run(self, *, accepted_audit_enabled: bool = False) -> str:
+        params = self._build_last_24h_params(accepted_audit_enabled=accepted_audit_enabled)
         return self._start(params)
 
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
@@ -59,16 +59,24 @@ class FilterQualityRunCoordinator:
         thread.start()
         return params.run_id
 
-    def _build_last_24h_params(self, filter_config_snapshot_json: dict | None = None) -> FilterQualityRunParams:
+    def _build_last_24h_params(
+        self,
+        filter_config_snapshot_json: dict | None = None,
+        *,
+        accepted_audit_enabled: bool = False,
+    ) -> FilterQualityRunParams:
         now = self._now_factory()
+        settings = self._settings_factory()
         return FilterQualityRunParams(
             run_id=self._run_id_factory(),
             news_window_start_at=now - timedelta(hours=24),
             news_window_end_at=now,
             filter_config_snapshot_json=filter_config_snapshot_json,
             run_note="Started from Monitoring UI",
-            accepted_audit_enabled=False,
-            accepted_audit_sample_size=None,
+            accepted_audit_enabled=accepted_audit_enabled,
+            accepted_audit_sample_size=(
+                settings.accepted_audit_sample_size if accepted_audit_enabled else None
+            ),
         )
 
     def _run_in_background(self, params: FilterQualityRunParams) -> None:

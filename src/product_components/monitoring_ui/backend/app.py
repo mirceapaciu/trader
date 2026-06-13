@@ -13,7 +13,9 @@ from .models import (
     BacklogResponse,
     DeadLetterResponse,
     FilterConfigSimulationStartResponse,
+    FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedResponse,
+    FilterQualityStartRunRequest,
     FilterQualityStartRunResponse,
     FilterQualityStatusResponse,
     HealthResponse,
@@ -105,6 +107,13 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     def list_filter_quality_incorrectly_rejected(run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
         return service.list_filter_quality_incorrectly_rejected(run_id=run_id)
 
+    @app.get(
+        "/api/filter-quality/runs/{run_id}/incorrectly-accepted",
+        response_model=FilterQualityIncorrectlyAcceptedResponse,
+    )
+    def list_filter_quality_incorrectly_accepted(run_id: str) -> FilterQualityIncorrectlyAcceptedResponse:
+        return service.list_filter_quality_incorrectly_accepted(run_id=run_id)
+
     @app.get("/api/filter-configs/production", response_model=NewsFilterConfigPayload)
     def get_production_filter_config() -> NewsFilterConfigPayload:
         return service.get_production_filter_config()
@@ -140,9 +149,9 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         response_model=FilterQualityStartRunResponse,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    def start_filter_quality_run() -> FilterQualityStartRunResponse:
+    def start_filter_quality_run(payload: FilterQualityStartRunRequest | None = None) -> FilterQualityStartRunResponse:
         try:
-            return service.start_filter_quality_run()
+            return service.start_filter_quality_run(payload)
         except FilterQualityRunAlreadyActive as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from src.product_components.monitoring_ui.backend.app import _local_dev_origin_regex, create_app
-from src.product_components.monitoring_ui.backend.models import ProvidersResponse, ProviderStatus, ThroughputResponse
+from src.product_components.monitoring_ui.backend.models import (
+    FilterQualityIncorrectlyAcceptedResponse,
+    ProvidersResponse,
+    ProviderStatus,
+    ThroughputResponse,
+)
 from src.product_components.monitoring_ui.backend.repository import _throughput_granularity_for_window
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 
@@ -25,6 +30,7 @@ class FakeMonitoringDataSource:
         self.window: str | None = None
         self.start_at: datetime | None = None
         self.end_at: datetime | None = None
+        self.incorrectly_accepted_run_id: str | None = None
 
     def bootstrap_news_schema(self, **_: object) -> None:
         return None
@@ -79,6 +85,10 @@ class FakeMonitoringDataSource:
     def list_filter_quality_incorrectly_rejected(self, *, run_id: str):
         raise AssertionError("list_filter_quality_incorrectly_rejected should not be called in throughput endpoint tests")
 
+    def list_filter_quality_incorrectly_accepted(self, *, run_id: str):
+        self.incorrectly_accepted_run_id = run_id
+        return FilterQualityIncorrectlyAcceptedResponse(run_id=run_id, items=[], generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc))
+
     def get_production_filter_config(self):
         raise AssertionError("get_production_filter_config should not be called in throughput endpoint tests")
 
@@ -96,7 +106,11 @@ class FakeMonitoringDataSource:
 
 
 class FakeFilterQualityRunner:
-    def start_last_24h_run(self) -> str:
+    def __init__(self) -> None:
+        self.last_accepted_audit_enabled = False
+
+    def start_last_24h_run(self, *, accepted_audit_enabled: bool = False) -> str:
+        self.last_accepted_audit_enabled = accepted_audit_enabled
         return "unused"
 
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
@@ -219,6 +233,44 @@ def test_providers_endpoint_includes_last_fetch_attempt_timestamp(monkeypatch) -
     assert response.status_code == 200
     payload = response.json()
     assert payload["providers"][0]["last_fetch_attempt_at"] == "2026-06-12T09:50:00Z"
+
+
+def test_incorrectly_accepted_endpoint_returns_items(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/filter-quality/runs/fqe_done/incorrectly-accepted")
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] == "fqe_done"
+    assert data_source.incorrectly_accepted_run_id == "fqe_done"
+
+
+def test_start_filter_quality_endpoint_accepts_accepted_audit_flag(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    runner = FakeFilterQualityRunner()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: runner,
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.post("/api/filter-quality/runs", json={"accepted_audit_enabled": True})
+
+    assert response.status_code == 202
+    assert runner.last_accepted_audit_enabled is True
 
 
 def _settings() -> MonitoringUiSettings:

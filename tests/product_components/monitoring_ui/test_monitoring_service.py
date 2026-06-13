@@ -6,8 +6,11 @@ from src.product_components.monitoring_ui.backend.models import (
     BacklogResponse,
     DeadLetterResponse,
     DependencyHealth,
+    FilterQualityIncorrectlyAcceptedItem,
+    FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedItem,
     FilterQualityIncorrectlyRejectedResponse,
+    FilterQualityStartRunRequest,
     FilterQualityRunSummary,
     FilterQualityStatusResponse,
     NewsFilterConfigPayload,
@@ -18,6 +21,7 @@ from src.product_components.monitoring_ui.backend.models import (
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
 from src.product_components.monitoring_ui.backend.repository import (
     _incorrectly_rejected_item,
+    _incorrectly_accepted_item,
     _throughput_bucket_expression,
     _throughput_granularity_for_window,
 )
@@ -43,6 +47,7 @@ class FakeDataSource:
         self.running_filter_quality_run: FilterQualityRunSummary | None = None
         self.last_filter_quality_run: FilterQualityRunSummary | None = None
         self.incorrectly_rejected_run_id: str | None = None
+        self.incorrectly_accepted_run_id: str | None = None
         self.stale_timeout_seconds: int | None = None
         self.throughput_window: str | None = None
         self.throughput_start_at: datetime | None = None
@@ -129,6 +134,37 @@ class FakeDataSource:
             generated_at=_now(),
         )
 
+    def list_filter_quality_incorrectly_accepted(
+        self,
+        *,
+        run_id: str,
+    ) -> FilterQualityIncorrectlyAcceptedResponse:
+        self.incorrectly_accepted_run_id = run_id
+        return FilterQualityIncorrectlyAcceptedResponse(
+            run_id=run_id,
+            items=[
+                FilterQualityIncorrectlyAcceptedItem(
+                    assessment_id="fqa_a1",
+                    run_id=run_id,
+                    article_id="article_a1",
+                    headline="Five retirement lessons from summer market swings",
+                    summary="A personal finance column about retirement planning and volatility.",
+                    url="https://example.test/article-a1",
+                    source="example",
+                    published_at=_now(),
+                    production_filter_outcome="accepted",
+                    simulation_filter_outcome="accepted",
+                    probable_cause="low_value_noise",
+                    improvement_suggestion="Tighten exclude keywords for retirement-planning content.",
+                    rationale="The article is evergreen advice without a market-moving catalyst.",
+                    classification_confidence=0.82,
+                    suggestion_json={},
+                    evaluated_at=_now(),
+                )
+            ],
+            generated_at=_now(),
+        )
+
     def get_running_filter_quality_run(self) -> FilterQualityRunSummary | None:
         return self.running_filter_quality_run
 
@@ -162,9 +198,11 @@ class FakeFilterQualityRunner:
     def __init__(self, run_id: str = "fqe_started") -> None:
         self.run_id = run_id
         self.starts = 0
+        self.last_accepted_audit_enabled = False
 
-    def start_last_24h_run(self) -> str:
+    def start_last_24h_run(self, *, accepted_audit_enabled: bool = False) -> str:
         self.starts += 1
+        self.last_accepted_audit_enabled = accepted_audit_enabled
         return self.run_id
 
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
@@ -403,6 +441,19 @@ def test_list_filter_quality_incorrectly_rejected_delegates_to_data_source() -> 
     assert response.items[0].summary == "The company raised its revenue outlook after stronger demand."
 
 
+def test_list_filter_quality_incorrectly_accepted_delegates_to_data_source() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.list_filter_quality_incorrectly_accepted(run_id="fqe_done")
+
+    assert data_source.incorrectly_accepted_run_id == "fqe_done"
+    assert response.run_id == "fqe_done"
+    assert response.items[0].probable_cause == "low_value_noise"
+    assert response.items[0].improvement_suggestion == "Tighten exclude keywords for retirement-planning content."
+    assert response.items[0].summary == "A personal finance column about retirement planning and volatility."
+
+
 def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() -> None:
     item = _incorrectly_rejected_item(
         {
@@ -443,6 +494,34 @@ def test_incorrectly_rejected_item_sanitizes_legacy_keyword_recommendations() ->
     assert item.production_matched_article_headline == "How investor euphoria turned one stock-market bull cautious"
 
 
+def test_incorrectly_accepted_item_preserves_rationale_and_suggestion() -> None:
+    item = _incorrectly_accepted_item(
+        {
+            "assessment_id": "fqa_a1",
+            "run_id": "fqe_done",
+            "article_id": "a1",
+            "headline": "Five retirement lessons from summer market swings",
+            "summary": "A personal finance article with no catalyst.",
+            "url": "https://example.com/a1",
+            "source": "rss",
+            "published_at": datetime(2026, 6, 10, tzinfo=timezone.utc),
+            "production_filter_outcome": "accepted",
+            "simulation_filter_outcome": "accepted",
+            "probable_cause": "low_value_noise",
+            "improvement_suggestion": "Tighten exclude keywords.",
+            "rationale": "The article is evergreen advice.",
+            "classification_confidence": 0.73,
+            "suggestion_json": {"review_tags": ["retirement"]},
+            "evaluated_at": datetime(2026, 6, 10, tzinfo=timezone.utc),
+        }
+    )
+
+    assert item.probable_cause == "low_value_noise"
+    assert item.improvement_suggestion == "Tighten exclude keywords."
+    assert item.rationale == "The article is evergreen advice."
+    assert item.suggestion_json["review_tags"] == ["retirement"]
+
+
 def test_start_filter_quality_run_returns_running_when_no_active_run_exists() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     runner = FakeFilterQualityRunner(run_id="fqe_new")
@@ -453,7 +532,23 @@ def test_start_filter_quality_run_returns_running_when_no_active_run_exists() ->
     assert response.run_id == "fqe_new"
     assert response.status == "running"
     assert runner.starts == 1
+    assert runner.last_accepted_audit_enabled is False
     assert data_source.stale_timeout_seconds == 1800
+
+
+def test_start_filter_quality_run_can_enable_accepted_audit() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    runner = FakeFilterQualityRunner(run_id="fqe_new")
+    service = MonitoringService(settings=_settings(), data_source=data_source, filter_quality_runner=runner)
+
+    response = service.start_filter_quality_run(
+        FilterQualityStartRunRequest(accepted_audit_enabled=True)
+    )
+
+    assert response.run_id == "fqe_new"
+    assert response.status == "running"
+    assert runner.starts == 1
+    assert runner.last_accepted_audit_enabled is True
 
 
 def test_start_filter_quality_run_raises_when_run_is_already_running() -> None:
@@ -493,9 +588,10 @@ def test_filter_config_workflow_delegates_to_data_source() -> None:
     assert production.config_role == "production"
 
 
-def test_filter_quality_coordinator_builds_last_24h_params_with_accepted_audit_disabled() -> None:
+def test_filter_quality_coordinator_builds_last_24h_params_with_accepted_audit_disabled_by_default() -> None:
     now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
     coordinator = FilterQualityRunCoordinator(
+        settings_factory=lambda: type("Settings", (), {"accepted_audit_sample_size": 25})(),
         run_id_factory=lambda: "fqe_ui",
         now_factory=lambda: now,
     )
@@ -507,6 +603,24 @@ def test_filter_quality_coordinator_builds_last_24h_params_with_accepted_audit_d
     assert params.news_window_end_at == now
     assert params.accepted_audit_enabled is False
     assert params.accepted_audit_sample_size is None
+    assert params.run_note == "Started from Monitoring UI"
+
+
+def test_filter_quality_coordinator_builds_last_24h_params_with_accepted_audit_when_requested() -> None:
+    now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    coordinator = FilterQualityRunCoordinator(
+        settings_factory=lambda: type("Settings", (), {"accepted_audit_sample_size": 25})(),
+        run_id_factory=lambda: "fqe_ui",
+        now_factory=lambda: now,
+    )
+
+    params = coordinator._build_last_24h_params(accepted_audit_enabled=True)
+
+    assert params.run_id == "fqe_ui"
+    assert params.news_window_start_at == now - timedelta(hours=24)
+    assert params.news_window_end_at == now
+    assert params.accepted_audit_enabled is True
+    assert params.accepted_audit_sample_size == 25
     assert params.run_note == "Started from Monitoring UI"
 
 

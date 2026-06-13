@@ -7,7 +7,9 @@ from .models import (
     BacklogResponse,
     DeadLetterResponse,
     DependencyHealth,
+    FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedResponse,
+    FilterQualityStartRunRequest,
     FilterQualityStartRunResponse,
     FilterQualityStatusResponse,
     FilterConfigSimulationStartResponse,
@@ -44,6 +46,12 @@ class MonitoringDataSource(Protocol):
         run_id: str,
     ) -> FilterQualityIncorrectlyRejectedResponse: ...
 
+    def list_filter_quality_incorrectly_accepted(
+        self,
+        *,
+        run_id: str,
+    ) -> FilterQualityIncorrectlyAcceptedResponse: ...
+
     def get_production_filter_config(self) -> NewsFilterConfigPayload: ...
 
     def get_test_filter_config(self) -> NewsFilterConfigPayload: ...
@@ -58,7 +66,7 @@ class MonitoringDataSource(Protocol):
 
 
 class FilterQualityRunner(Protocol):
-    def start_last_24h_run(self) -> str: ...
+    def start_last_24h_run(self, *, accepted_audit_enabled: bool = False) -> str: ...
 
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str: ...
 
@@ -166,6 +174,9 @@ class MonitoringService:
     def list_filter_quality_incorrectly_rejected(self, *, run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
         return self._data_source.list_filter_quality_incorrectly_rejected(run_id=run_id)
 
+    def list_filter_quality_incorrectly_accepted(self, *, run_id: str) -> FilterQualityIncorrectlyAcceptedResponse:
+        return self._data_source.list_filter_quality_incorrectly_accepted(run_id=run_id)
+
     def get_production_filter_config(self) -> NewsFilterConfigPayload:
         return self._data_source.get_production_filter_config()
 
@@ -191,7 +202,10 @@ class MonitoringService:
     def promote_test_filter_config(self) -> NewsFilterConfigPayload:
         return self._data_source.promote_test_filter_config()
 
-    def start_filter_quality_run(self) -> FilterQualityStartRunResponse:
+    def start_filter_quality_run(
+        self,
+        payload: FilterQualityStartRunRequest | None = None,
+    ) -> FilterQualityStartRunResponse:
         if self._filter_quality_runner is None:
             raise RuntimeError("filter_quality_runner_unavailable")
         self._data_source.mark_stale_filter_quality_runs_failed(
@@ -200,8 +214,11 @@ class MonitoringService:
         active_run = self._data_source.get_running_filter_quality_run()
         if active_run is not None:
             raise FilterQualityRunAlreadyActive(active_run.run_id)
+        accepted_audit_enabled = payload.accepted_audit_enabled if payload is not None else False
         try:
-            run_id = self._filter_quality_runner.start_last_24h_run()
+            run_id = self._filter_quality_runner.start_last_24h_run(
+                accepted_audit_enabled=accepted_audit_enabled
+            )
         except FilterQualityRunAlreadyActive:
             raise
         return FilterQualityStartRunResponse(run_id=run_id, status="running")

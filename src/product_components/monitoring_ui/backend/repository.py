@@ -25,6 +25,8 @@ from .models import (
     DeadLetterItem,
     DeadLetterResponse,
     DependencyHealth,
+    FilterQualityIncorrectlyAcceptedItem,
+    FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedItem,
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityRunSummary,
@@ -289,6 +291,35 @@ class PostgresRedisMonitoringDataSource:
         return FilterQualityIncorrectlyRejectedResponse(
             run_id=run_id,
             items=[_incorrectly_rejected_item(row) for row in rows],
+            generated_at=_utc_now(),
+        )
+
+    def list_filter_quality_incorrectly_accepted(
+        self,
+        *,
+        run_id: str,
+    ) -> FilterQualityIncorrectlyAcceptedResponse:
+        sql = (
+            f"SELECT a.assessment_id, a.run_id, a.article_id, i.headline, i.summary, i.url, a.source, a.published_at, "
+            f"a.production_filter_outcome, a.simulation_filter_outcome, a.probable_cause, "
+            f"a.improvement_suggestion, a.rationale, a.classification_confidence, a.suggestion_json, a.evaluated_at "
+            f"FROM {self._filter_quality_schema}.t_filter_quality_item_assessments a "
+            f"JOIN {self._news_schema}.t_input_news_articles i ON i.id = a.article_id "
+            f"WHERE a.run_id = %s "
+            f"AND a.item_status = 'evaluated' "
+            f"AND a.evaluation_scope = 'accepted_audit' "
+            f"AND a.classification_label = 'incorrectly_accepted' "
+            f"ORDER BY a.evaluated_at DESC, a.article_id"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            try:
+                cur.execute(sql, (run_id,))
+            except (errors.InvalidSchemaName, errors.UndefinedTable):
+                return FilterQualityIncorrectlyAcceptedResponse(run_id=run_id, items=[], generated_at=_utc_now())
+            rows = cur.fetchall()
+        return FilterQualityIncorrectlyAcceptedResponse(
+            run_id=run_id,
+            items=[_incorrectly_accepted_item(row) for row in rows],
             generated_at=_utc_now(),
         )
 
@@ -722,6 +753,27 @@ def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyR
         classification_confidence=_optional_float(row["classification_confidence"]),
         suggestion_json=suggestion_json,
         recommended_include_keywords=normalize_keywords(_string_list(suggestion_json.get("recommended_include_keywords"))),
+        evaluated_at=_to_utc(row["evaluated_at"]),
+    )
+
+
+def _incorrectly_accepted_item(row: dict[str, Any]) -> FilterQualityIncorrectlyAcceptedItem:
+    return FilterQualityIncorrectlyAcceptedItem(
+        assessment_id=str(row["assessment_id"]),
+        run_id=str(row["run_id"]),
+        article_id=str(row["article_id"]),
+        headline=str(row["headline"]),
+        summary=row["summary"],
+        url=str(row["url"]),
+        source=str(row["source"]),
+        published_at=_to_utc(row["published_at"]),
+        production_filter_outcome=row["production_filter_outcome"],
+        simulation_filter_outcome=row["simulation_filter_outcome"],
+        probable_cause=row["probable_cause"],
+        improvement_suggestion=row["improvement_suggestion"],
+        rationale=row["rationale"],
+        classification_confidence=_optional_float(row["classification_confidence"]),
+        suggestion_json=dict(row["suggestion_json"] or {}),
         evaluated_at=_to_utc(row["evaluated_at"]),
     )
 
