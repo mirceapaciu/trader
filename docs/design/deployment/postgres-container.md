@@ -59,7 +59,7 @@ Application settings should match the design configuration:
 The init script creates these schemas in both `POSTGRES_DB` and `POSTGRES_TEST_DB`:
 
 - `news_fetcher`
-- `analyzer_worker`
+- `thesis_builder`
 - `trade_executor`
 - `shared`
 

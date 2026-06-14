@@ -11,7 +11,7 @@ Purpose:
 - Durable review state for thesis cards as approved/rejected by user or policy.
 
 Logical fields:
-- `card_id` (primary key): thesis card identity from AnalyzerWorker.
+- `card_id` (primary key): thesis card identity from ThesisBuilder.
 - `decision_state`: `approved` or `rejected`.
 - `reviewed_by`: user id or system policy actor.
 - `review_reason`: optional explanation for approval/rejection.

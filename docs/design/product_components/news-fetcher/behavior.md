@@ -166,7 +166,7 @@ Each fetched item is normalized to this canonical article object before further 
 - sentiment_source: optional provider score when available.
 
 Constraint-facing requirement:
-- The article contract must preserve enough context quality for AnalyzerWorker to produce exactly three thesis-card evidence bullets with article references.
+- The article contract must preserve enough context quality for ThesisBuilder to produce exactly three thesis-card evidence bullets with article references.
 
 Normalization rules:
 - Trim whitespace for headline and summary.

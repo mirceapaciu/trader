@@ -253,4 +253,4 @@ Consumer components:
 - Monitoring UI may consume analyzer run summaries in a later phase.
 
 No direct coupling requirements:
-- TradeExecutor and AnalyzerWorker trading pipeline do not depend on filter quality evaluator runs.
+- TradeExecutor and ThesisBuilder trading pipeline do not depend on filter quality evaluator runs.

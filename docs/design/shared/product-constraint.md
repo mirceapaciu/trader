@@ -101,7 +101,7 @@ To keep the product focused, the following are out of scope unless they directly
 - Must provide article quality and freshness needed to support exactly three evidence bullets.
 - Must publish article identifiers that remain stable for card evidence references.
 
-### 5.2 AnalyzerWorker
+### 5.2 ThesisBuilder
 
 - Must create thesis cards using the canonical contract.
 - Must fail closed when evidence count, risk box, or confidence validation fails.

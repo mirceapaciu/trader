@@ -47,12 +47,12 @@ def test_expected_component_schemas_exist() -> None:
                 WHERE nspname = ANY(%s)
                 ORDER BY nspname
                 """,
-                (["analyzer_worker", "news_fetcher", "shared", "trade_executor"],),
+                (["thesis_builder", "news_fetcher", "shared", "trade_executor"],),
             )
             rows = cur.fetchall()
 
     assert [row[0] for row in rows] == [
-        "analyzer_worker",
+        "thesis_builder",
         "news_fetcher",
         "shared",
         "trade_executor",

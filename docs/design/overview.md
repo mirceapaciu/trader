@@ -10,9 +10,10 @@ This documentation is split into a system overview and implementation specs:
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
 - Product identity constraint and thesis-card contract: `docs/design/shared/product-constraint.md`.
 - News source guidance: `docs/design/product_components/news-fetcher/news-sources.md`.
+- ThesisBuilder behavior: `docs/design/product_components/thesis-builder/behavior.md`.
 - Filter quality evaluator behavior: `docs/design/product_components/filter-quality-evaluator/behavior.md`.
 - Deployment specs: `docs/design/deployment/`.
-- Component folders (owner-based): `docs/design/product_components/news-fetcher/`, `docs/design/product_components/analyzer-worker/`, `docs/design/product_components/trade-executor/`, `docs/design/product_components/monitoring-ui/`, `docs/design/product_components/filter-quality-evaluator/`, `docs/design/shared/`.
+- Component folders (owner-based): `docs/design/product_components/news-fetcher/`, `docs/design/product_components/thesis-builder/`, `docs/design/product_components/trade-executor/`, `docs/design/product_components/monitoring-ui/`, `docs/design/product_components/filter-quality-evaluator/`, `docs/design/shared/`.
 
 Implementation code and coding agents should follow this map and avoid adding implementation-level detail directly in this overview unless it changes architecture-level behavior.
 
@@ -124,15 +125,15 @@ The canonical contract, validation rules, and acceptance criteria are defined in
 │              Process-Based Service Layer            │
 │                                                     │
 │  [Process A] NewsFetcher                            │
-│  [Process B] AnalyzerWorker                         │
+│  [Process B] ThesisBuilder                         │
 │  [Process C] TradeExecutor                          │
 └──────────────────────┬──────────────────────────────┘
                        │ publish / consume
 ┌──────────────────────▼──────────────────────────────┐
 │         Message Broker (standalone process)         │
 │                                                     │
-│  news_raw_queue    (NewsFetcher → AnalyzerWorker)   │
-│  signal_queue      (AnalyzerWorker → TradeExecutor) │
+│  news_raw_queue    (NewsFetcher → ThesisBuilder)   │
+│  signal_queue      (ThesisBuilder → TradeExecutor) │
 │  failed_messages_dlq  (dead-letter)                 │
 │                                                     │
 │  Backend: Redis Streams (default) or RabbitMQ       │
@@ -163,7 +164,7 @@ For runtime decoupling, these modules run as separate OS processes (or separate 
 
 1. `news_fetcher` process: polls providers, normalizes and deduplicates, then publishes to `news_raw_queue`
 2. `message_broker` process: standalone queue backend that mediates all inter-process communication
-3. `analyzer_worker` process: consumes news from `news_raw_queue`, performs scoring/LLM enrichment, then publishes trade signals to `signal_queue`
+3. `thesis_builder` process: consumes news from `news_raw_queue`, performs scoring/LLM enrichment, then publishes trade signals to `signal_queue`
 4. `trade_executor` process: consumes signals from `signal_queue`, applies risk checks, and executes orders via IBKR
 5. `filter_quality_evaluator` process: runs on demand, evaluates accepted/rejected NewsFetcher outcomes from DB, and produces filter-quality recommendations
 
@@ -182,8 +183,8 @@ The broker exposes three named queues:
 
 | Queue                  | Producer         | Consumer(s)                                    |
 |------------------------|------------------|------------------------------------------------|
-| `news_raw_queue`       | NewsFetcher      | AnalyzerWorker, NarrativeAggregator (planned)  |
-| `signal_queue`         | AnalyzerWorker   | TradeExecutor                                  |
+| `news_raw_queue`       | NewsFetcher      | ThesisBuilder, NarrativeAggregator (planned)  |
+| `signal_queue`         | ThesisBuilder   | TradeExecutor                                  |
 | `failed_messages_dlq`  | any (on failure) | ops / alerting                                 |
 
 `news_raw_queue` has multiple independent consumer groups: each consumer must receive every message and track its own offset. This rules out a simple competing-consumer (work queue) pattern for that stream and requires a broker with native consumer group support.
@@ -308,8 +309,8 @@ Coordinates process startup, health checks, and queue-level flow control.
 
 ```
 1. NewsFetcher.publish(news_raw_queue)                    → queued raw news events
-2. AnalyzerWorker.consume(news_raw_queue)                 → list[NewsAnalysis]
-3. AnalyzerWorker.publish(signal_queue)                   → queued signal events
+2. ThesisBuilder.consume(news_raw_queue)                 → list[NewsAnalysis]
+3. ThesisBuilder.publish(signal_queue)                   → queued signal events
 4. TradeExecutor.consume(signal_queue)                    → list[TradeDecision]
 5. TradeExecutor.execute(decisions)                       → list[TradeExecution]
 6. Repositories.persist(all)                              → audit trail
@@ -333,7 +334,7 @@ Coordinates process startup, health checks, and queue-level flow control.
 The system persists audit-grade records for the end-to-end pipeline in five PostgreSQL tables across component-owned schemas:
 
 - `news_fetcher.t_news_articles`
-- `analyzer_worker.t_news_analyses`
+- `thesis_builder.t_news_analyses`
 - `trade_executor.t_trade_decisions`
 - `trade_executor.t_trade_executions`
 - `shared.t_api_usage`
@@ -449,7 +450,7 @@ The UI (`src/product_components/monitoring_ui/frontend`) provides:
 - Queue deployment spec: `docs/design/deployment/redis-queue-container.md`
 - Data model details: `docs/design/data-model.md`
 - Configuration index: `docs/design/configuration.md`
-- Component configuration specs: `docs/design/product_components/news-fetcher/configuration.md`, `docs/design/product_components/analyzer-worker/configuration.md`, `docs/design/product_components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
+- Component configuration specs: `docs/design/product_components/news-fetcher/configuration.md`, `docs/design/product_components/thesis-builder/configuration.md`, `docs/design/product_components/trade-executor/configuration.md`, `docs/design/shared/configuration.md`
 
 ## 13. Source Code Organization and Core vs Product Boundary
 

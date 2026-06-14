@@ -130,7 +130,7 @@ def bootstrap_newsfetcher_schema(config: dict[str, object]) -> None:
             Path(__file__).resolve().parents[2]
             / "src"
             / "product_components"
-            / "analyzer_worker"
+            / "thesis_builder"
             / "db"
             / "schema.sql"
         ),

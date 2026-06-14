@@ -62,7 +62,7 @@ Required streams:
 Required consumer groups:
 
 - Stream `news_raw_queue`:
-  - `analyzer_worker_group`
+  - `thesis_builder_group`
   - `narrative_aggregator_group` (planned)
 - Stream `signal_queue`:
   - `trade_executor_group`
