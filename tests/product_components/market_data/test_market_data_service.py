@@ -20,7 +20,7 @@ class _FakeClient:
     provider = MarketDataProvider.IBKR
 
     def fetch_quote(self, symbol: ProviderSymbol) -> MarketQuote:
-        now = datetime(2026, 6, 15, 12, tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
         return MarketQuote(
             ticker=symbol.ticker,
             exchange_code=symbol.exchange_code,
@@ -37,7 +37,7 @@ class _FakeClient:
         )
 
     def fetch_daily_bars(self, symbol: ProviderSymbol, *, outputsize: str = "compact") -> list[MarketBar]:
-        now = datetime(2026, 6, 15, 12, tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
         return [
             MarketBar(
                 ticker=symbol.ticker,

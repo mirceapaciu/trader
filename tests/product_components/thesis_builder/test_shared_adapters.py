@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.product_components.shared.adapters import (
+    PostgresSharedApiUsageWriter,
     PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
     PostgresSharedThesisCardReviewWriter,
@@ -100,6 +101,28 @@ def test_shared_review_writer_upserts_review_state(monkeypatch) -> None:
     assert "ON CONFLICT (card_id) DO UPDATE SET" in cursor.sql
     assert cursor.params is not None
     assert cursor.params[0] == "card-1"
+    assert connection.committed is True
+
+
+def test_shared_api_usage_writer_appends_usage(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    writer = PostgresSharedApiUsageWriter(
+        dsn="unused",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(writer, "_connect", lambda: connection)
+
+    called_at = datetime(2026, 6, 15, tzinfo=timezone.utc)
+    writer.record_usage(
+        provider="ibkr",
+        endpoint="quote",
+        called_at=called_at,
+    )
+
+    assert cursor.sql is not None
+    assert "INSERT INTO shared.t_api_usage" in cursor.sql
+    assert cursor.params == ("ibkr", "quote", None, None, called_at)
     assert connection.committed is True
 
 

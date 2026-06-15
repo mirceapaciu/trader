@@ -136,6 +136,41 @@ class PostgresSharedInstrumentAdmin:
         return psycopg.connect(self._dsn, autocommit=False)
 
 
+class PostgresSharedApiUsageWriter:
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        shared_schema: str,
+    ) -> None:
+        self._dsn = dsn
+        self._shared_schema = _safe_identifier(shared_schema)
+
+    def record_usage(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        called_at: datetime,
+        tokens_used: int | None = None,
+        cost_estimate: float | None = None,
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._shared_schema}.t_api_usage "
+            f"(provider, endpoint, tokens_used, cost_estimate, called_at) "
+            f"VALUES (%s, %s, %s, %s, %s)"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (provider, endpoint, tokens_used, cost_estimate, _to_utc(called_at)),
+            )
+            conn.commit()
+
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self._dsn, autocommit=False)
+
+
 class PostgresSharedThesisCardReviewWriter:
     def __init__(
         self,

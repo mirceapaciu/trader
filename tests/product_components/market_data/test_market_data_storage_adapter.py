@@ -5,6 +5,7 @@ from typing import Any
 
 from src.product_components.market_data.models import MarketDataProvider, ProviderSymbol
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
+from src.product_components.shared.adapters import SharedInstrumentRecord
 
 
 class _FakeCursor:
@@ -41,14 +42,27 @@ class _FakeConnection:
         self.committed = True
 
 
+class _FakeInstrumentRegistry:
+    def list_active_instruments(self) -> list[SharedInstrumentRecord]:
+        return [SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",))]
+
+
+class _FakeApiUsageWriter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, datetime]] = []
+
+    def record_usage(self, *, provider: str, endpoint: str, called_at: datetime, **kwargs) -> None:
+        self.calls.append((provider, endpoint, called_at))
+
+
 def test_upsert_provider_symbol_uses_component_owned_schema(monkeypatch) -> None:
     cursor = _FakeCursor()
     connection = _FakeConnection(cursor)
     adapter = PostgresMarketDataStorageAdapter(
         dsn="unused",
         market_data_schema="market_data",
-        shared_schema="shared",
-        watchlist_table="t_watchlist_tickers",
+        instrument_registry=_FakeInstrumentRegistry(),
+        api_usage_writer=_FakeApiUsageWriter(),
     )
     monkeypatch.setattr(adapter, "_connect", lambda: connection)
 
@@ -69,3 +83,32 @@ def test_upsert_provider_symbol_uses_component_owned_schema(monkeypatch) -> None
     assert cursor.params is not None
     assert cursor.params[:5] == ("AXA", "XPAR", "alpha_vantage", "AXA.PAR", "EUR")
     assert connection.committed is True
+
+
+def test_load_active_instruments_uses_shared_registry() -> None:
+    adapter = PostgresMarketDataStorageAdapter(
+        dsn="unused",
+        market_data_schema="market_data",
+        instrument_registry=_FakeInstrumentRegistry(),
+        api_usage_writer=_FakeApiUsageWriter(),
+    )
+
+    rows = adapter.load_active_instruments()
+
+    assert rows[0].ticker == "AAPL"
+    assert rows[0].exchange_code == "XNAS"
+
+
+def test_record_api_usage_uses_shared_usage_writer() -> None:
+    usage_writer = _FakeApiUsageWriter()
+    adapter = PostgresMarketDataStorageAdapter(
+        dsn="unused",
+        market_data_schema="market_data",
+        instrument_registry=_FakeInstrumentRegistry(),
+        api_usage_writer=usage_writer,
+    )
+
+    called_at = datetime(2026, 6, 15, tzinfo=timezone.utc)
+    adapter.record_api_usage(provider=MarketDataProvider.IBKR, endpoint="quote", called_at=called_at)
+
+    assert usage_writer.calls == [("ibkr", "quote", called_at)]

@@ -12,6 +12,7 @@ from src.product_components.market_data.settings import MarketDataSettings
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 from src.product_components.news_fetcher.env_loader import load_env_files
 from src.product_components.shared.adapters import (
+    PostgresSharedApiUsageWriter,
     PostgresSharedInstrumentRegistry,
     PostgresSharedThesisCardReviewWriter,
 )
@@ -75,13 +76,21 @@ def main() -> None:
     market_data_settings = MarketDataSettings.from_env()
     _configure_logging(settings, repo_root)
     _bootstrap_database_schema(settings)
+    instrument_registry = PostgresSharedInstrumentRegistry(
+        dsn=settings.postgres_dsn,
+        shared_schema=settings.shared_db_schema,
+        watchlist_table=market_data_settings.watchlist_table,
+    )
 
     market_data_service = MarketDataService(
         storage=PostgresMarketDataStorageAdapter(
             dsn=market_data_settings.postgres_dsn,
             market_data_schema=market_data_settings.market_data_db_schema,
-            shared_schema=market_data_settings.shared_db_schema,
-            watchlist_table=market_data_settings.watchlist_table,
+            instrument_registry=instrument_registry,
+            api_usage_writer=PostgresSharedApiUsageWriter(
+                dsn=market_data_settings.postgres_dsn,
+                shared_schema=market_data_settings.shared_db_schema,
+            ),
         ),
         provider_clients={},
         quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
@@ -91,11 +100,7 @@ def main() -> None:
     ThesisBuilderRunner(
         settings=settings,
         market_context_client=market_data_service,
-        instrument_registry=PostgresSharedInstrumentRegistry(
-            dsn=settings.postgres_dsn,
-            shared_schema=settings.shared_db_schema,
-            watchlist_table=market_data_settings.watchlist_table,
-        ),
+        instrument_registry=instrument_registry,
         review_writer=PostgresSharedThesisCardReviewWriter(
             dsn=settings.postgres_dsn,
             shared_schema=settings.shared_db_schema,

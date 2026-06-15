@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 
 import psycopg
 from psycopg.rows import dict_row
@@ -19,8 +19,27 @@ from src.product_components.market_data.models import (
     ProviderSymbol,
     QuoteDataType,
 )
+from src.product_components.shared.adapters import SharedInstrumentRecord
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class InstrumentRegistry(Protocol):
+    def list_active_instruments(self) -> list[SharedInstrumentRecord]:
+        """Return active shared instrument registry rows."""
+
+
+class ApiUsageWriter(Protocol):
+    def record_usage(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        called_at: datetime,
+        tokens_used: int | None = None,
+        cost_estimate: float | None = None,
+    ) -> None:
+        """Record shared API usage through the shared-owned contract."""
 
 
 class PostgresMarketDataStorageAdapter:
@@ -31,29 +50,21 @@ class PostgresMarketDataStorageAdapter:
         *,
         dsn: str,
         market_data_schema: str,
-        shared_schema: str,
-        watchlist_table: str,
+        instrument_registry: InstrumentRegistry,
+        api_usage_writer: ApiUsageWriter,
     ) -> None:
         self._dsn = dsn
         self._market_data_schema = _safe_identifier(market_data_schema)
-        self._shared_schema = _safe_identifier(shared_schema)
-        self._watchlist_table = _safe_identifier(watchlist_table)
+        self._instrument_registry = instrument_registry
+        self._api_usage_writer = api_usage_writer
 
     def load_active_instruments(self) -> list[Instrument]:
-        sql = (
-            f"SELECT ticker, exchange_code "
-            f"FROM {self._shared_schema}.{self._watchlist_table} "
-            f"WHERE is_active = TRUE ORDER BY ticker, exchange_code"
-        )
-        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
         return [
             Instrument(
-                ticker=str(row["ticker"]).strip().upper(),
-                exchange_code=str(row["exchange_code"]).strip().upper(),
+                ticker=str(row.ticker).strip().upper(),
+                exchange_code=str(row.exchange_code).strip().upper(),
             )
-            for row in rows
+            for row in self._instrument_registry.list_active_instruments()
         ]
 
     def load_provider_symbols(
@@ -345,14 +356,11 @@ class PostgresMarketDataStorageAdapter:
             conn.commit()
 
     def record_api_usage(self, *, provider: MarketDataProvider, endpoint: str, called_at: datetime) -> None:
-        sql = (
-            f"INSERT INTO {self._shared_schema}.t_api_usage "
-            f"(provider, endpoint, tokens_used, cost_estimate, called_at) "
-            f"VALUES (%s, %s, NULL, NULL, %s)"
+        self._api_usage_writer.record_usage(
+            provider=provider.value,
+            endpoint=endpoint,
+            called_at=called_at,
         )
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (provider.value, endpoint, _to_utc(called_at)))
-            conn.commit()
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)

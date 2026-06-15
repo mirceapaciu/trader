@@ -105,4 +105,4 @@ Logical fields:
 
 Behavioral constraints:
 - Fetch runs are append-only.
-- All external provider usage should also write a coarse record to `shared.t_api_usage`.
+- All external provider usage should also write a coarse record through the shared API usage adapter/contract, which persists the shared audit record in `shared.t_api_usage`.
