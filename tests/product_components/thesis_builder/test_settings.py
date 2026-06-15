@@ -1,0 +1,33 @@
+from src.product_components.thesis_builder.settings import ThesisBuilderSettings
+
+
+def test_thesis_builder_settings_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("THESIS_BUILDER_DB_SCHEMA", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_CONSUMER_GROUP", raising=False)
+    monkeypatch.delenv("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", raising=False)
+
+    settings = ThesisBuilderSettings.from_env()
+
+    assert settings.thesis_builder_db_schema == "thesis_builder"
+    assert settings.consumer_group == "thesis_builder_group"
+    assert settings.news_raw_queue == "news_raw_queue"
+    assert settings.signal_queue == "signal_queue"
+    assert settings.required_evidence_count == 3
+
+
+def test_thesis_builder_settings_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("THESIS_BUILDER_DB_SCHEMA", "tb_test")
+    monkeypatch.setenv("THESIS_BUILDER_CONSUMER_GROUP", "tb_group_test")
+    monkeypatch.setenv("NEWS_RAW_QUEUE", "news_test")
+    monkeypatch.setenv("SIGNAL_QUEUE", "signal_test")
+    monkeypatch.setenv("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", "4")
+    monkeypatch.setenv("THESIS_BUILDER_MIN_CONFIDENCE", "0.7")
+
+    settings = ThesisBuilderSettings.from_env()
+
+    assert settings.thesis_builder_db_schema == "tb_test"
+    assert settings.consumer_group == "tb_group_test"
+    assert settings.news_raw_queue == "news_test"
+    assert settings.signal_queue == "signal_test"
+    assert settings.required_evidence_count == 4
+    assert settings.min_confidence == 0.7

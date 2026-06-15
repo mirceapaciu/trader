@@ -1,0 +1,1 @@
+"""ThesisBuilder product component."""
