@@ -3,12 +3,32 @@
 Cross-cutting tables used by multiple components.
 PostgreSQL schema: `shared`.
 
+## Access Contract
+
+The `shared` schema is the only schema intended for cross-component contracts. It is still not a general-purpose shortcut around component ownership.
+
+Shared tables must be accessed through shared component APIs or documented shared adapters. Product components must not create ad hoc SQL dependencies on shared physical tables unless this file explicitly identifies that access as part of the contract.
+
+Each shared contract must identify:
+- The owning contract.
+- The allowed writers.
+- The allowed readers.
+- Whether direct SQL is permitted or whether access must go through an API/adapter.
+
+Component-owned schemas remain private even when shared tables contain ids copied from them. Consumers should copy ids and snapshots needed for audit rather than relying on foreign table joins.
+
 ## Logical Model
 
 ### `t_thesis_card_reviews`
 
 Purpose:
 - Durable review state for thesis cards as approved/rejected by user or policy.
+
+Contract ownership:
+- Owner: shared review contract.
+- Writers: ThesisBuilder system policy and Monitoring UI review workflow through the shared review API/adapter.
+- Readers: TradeExecutor, Monitoring UI, and audit tooling through the shared review API/adapter.
+- Direct SQL from unrelated product repositories is not permitted.
 
 Logical fields:
 - `card_id` (primary key): thesis card identity from ThesisBuilder.
@@ -27,6 +47,12 @@ Behavioral constraints:
 Purpose:
 - Cross-component accounting of external provider/API usage and estimated cost.
 
+Contract ownership:
+- Owner: shared API usage contract.
+- Writers: components that call external providers, through the shared usage API/adapter.
+- Readers: Monitoring UI, budget checks, and audit tooling through the shared usage API/adapter.
+- Direct SQL from unrelated product repositories is not permitted.
+
 Logical fields:
 - `id` (primary key): usage record identity.
 - `provider`: upstream provider identifier.
@@ -44,6 +70,12 @@ Behavioral constraints:
 Purpose:
 - Shared watchlist universe used by ingestion and downstream components for relevance filtering.
 
+Contract ownership:
+- Owner: shared Instrument Registry contract.
+- Writers: operator/admin workflow and seed/migration tooling.
+- Readers: NewsFetcher, MarketData, ThesisBuilder, Monitoring UI, and other consumers through the Instrument Registry API or documented shared adapter.
+- Direct SQL from unrelated product repositories is not permitted.
+
 Logical fields:
 - `ticker`: instrument symbol.
 - `exchange_code`: market/exchange identifier.
@@ -54,13 +86,19 @@ Logical fields:
 
 Behavioral constraints:
 - Composite uniqueness on (`ticker`, `exchange_code`).
-- Consumers must treat only active rows as eligible watchlist membership.
+- The registry contract must expose only active rows as eligible watchlist membership unless a caller explicitly requests inactive entries for audit.
 
 ### `t_instruments`
 
 Purpose:
 - Shared instrument identity and reusable metadata.
 - Provides a canonical place for names and identifiers that should not be tied to one news provider.
+
+Contract ownership:
+- Owner: shared Instrument Registry contract.
+- Writers: operator/admin workflow and seed/migration tooling.
+- Readers: NewsFetcher, MarketData, ThesisBuilder, Monitoring UI, and other consumers through the Instrument Registry API or documented shared adapter.
+- Direct SQL from unrelated product repositories is not permitted.
 
 Logical fields:
 - `ticker`: application ticker symbol.
@@ -79,6 +117,12 @@ Behavioral constraints:
 
 Purpose:
 - Reusable text terms for attributing unstructured news to instruments.
+
+Contract ownership:
+- Owner: shared Instrument Registry contract.
+- Writers: operator/admin workflow and seed/migration tooling.
+- Readers: NewsFetcher and ThesisBuilder through the Instrument Registry API or documented shared adapter.
+- Direct SQL from unrelated product repositories is not permitted.
 
 Logical fields:
 - `ticker`: application ticker symbol.

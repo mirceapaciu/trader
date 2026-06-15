@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+import redis
+
+from src.core_components.event_ingestion_engine.errors import NonTransientPublishError, TransientPublishError
+from .models import NewsArticle
+
+
+@dataclass(frozen=True)
+class NewsStreamMessage:
+    message_id: str
+    event_id: str
+    event_type: str
+    dedupe_key: str
+    payload: dict[str, Any]
+    raw_fields: dict[str, str]
+
+    @property
+    def article_id(self) -> str:
+        payload_id = self.payload.get("id") or self.payload.get("article_id")
+        if payload_id:
+            return str(payload_id)
+        if self.dedupe_key:
+            return self.dedupe_key
+        return self.event_id
+
+    def as_article(self) -> NewsArticle | None:
+        payload_id = self.payload.get("id") or self.payload.get("article_id")
+        source = self.payload.get("source")
+        headline = self.payload.get("headline")
+        url = self.payload.get("url")
+        published_at = _parse_datetime(self.payload.get("published_at"))
+        fetched_at = _parse_datetime(self.payload.get("fetched_at"))
+        tickers = self.payload.get("tickers")
+        if not (
+            isinstance(payload_id, str)
+            and isinstance(source, str)
+            and isinstance(headline, str)
+            and isinstance(url, str)
+            and isinstance(tickers, list)
+            and published_at is not None
+            and fetched_at is not None
+        ):
+            return None
+        return NewsArticle(
+            id=payload_id,
+            source=source,
+            headline=headline,
+            summary=str(self.payload.get("summary")) if self.payload.get("summary") is not None else None,
+            url=url,
+            tickers=[str(item).strip().upper() for item in tickers if str(item).strip()],
+            published_at=published_at,
+            fetched_at=fetched_at,
+            sentiment_source=_parse_float(self.payload.get("sentiment_source")),
+        )
+
+
+class RedisThesisBuilderIo:
+    def __init__(
+        self,
+        *,
+        queue_url: str,
+        news_raw_queue: str,
+        signal_queue: str,
+        failed_messages_dlq: str,
+        consumer_group: str,
+        consumer_name: str,
+    ) -> None:
+        self._client = redis.from_url(queue_url, decode_responses=True)
+        self._news_raw_queue = news_raw_queue
+        self._signal_queue = signal_queue
+        self._failed_messages_dlq = failed_messages_dlq
+        self._consumer_group = consumer_group
+        self._consumer_name = consumer_name
+
+    def ping(self) -> bool:
+        return bool(self._client.ping())
+
+    def ensure_streams_and_group(self) -> None:
+        for stream_name in (self._news_raw_queue, self._signal_queue, self._failed_messages_dlq):
+            self._ensure_stream(stream_name)
+        try:
+            self._client.xgroup_create(
+                name=self._news_raw_queue,
+                groupname=self._consumer_group,
+                id="0",
+                mkstream=True,
+            )
+        except redis.exceptions.ResponseError as exc:
+            if "busygroup" not in str(exc).lower():
+                raise
+
+    def read(self, *, count: int, block_ms: int) -> list[NewsStreamMessage]:
+        pending_response = self._client.xreadgroup(
+            groupname=self._consumer_group,
+            consumername=self._consumer_name,
+            streams={self._news_raw_queue: "0"},
+            count=count,
+            block=0,
+        )
+        pending_messages = _messages(pending_response)
+        if pending_messages:
+            return pending_messages
+        response = self._client.xreadgroup(
+            groupname=self._consumer_group,
+            consumername=self._consumer_name,
+            streams={self._news_raw_queue: ">"},
+            count=count,
+            block=block_ms,
+        )
+        return _messages(response)
+
+    def ack(self, message_id: str) -> None:
+        self._client.xack(self._news_raw_queue, self._consumer_group, message_id)
+
+    def delivery_count(self, message_id: str) -> int:
+        try:
+            entries = self._client.xpending_range(
+                self._news_raw_queue,
+                self._consumer_group,
+                min=message_id,
+                max=message_id,
+                count=1,
+            )
+        except redis.exceptions.ResponseError:
+            return 1
+        if not entries:
+            return 1
+        entry = entries[0]
+        if isinstance(entry, dict):
+            return int(entry.get("times_delivered") or entry.get("delivery_count") or 1)
+        if isinstance(entry, (tuple, list)) and len(entry) >= 4:
+            return int(entry[3])
+        return 1
+
+    def publish_signal(self, envelope: dict[str, Any]) -> None:
+        self._publish(self._signal_queue, envelope)
+
+    def publish_dlq(self, *, message: NewsStreamMessage, error_code: str) -> None:
+        self._client.xadd(
+            self._failed_messages_dlq,
+            {
+                "source_stream": self._news_raw_queue,
+                "source_message_id": message.message_id,
+                "event_id": message.event_id,
+                "event_type": message.event_type,
+                "dedupe_key": message.dedupe_key,
+                "error_code": error_code,
+                "payload_json": json.dumps(message.payload, separators=(",", ":"), sort_keys=True),
+            },
+        )
+
+    def stream_lengths(self) -> tuple[int | None, int | None]:
+        return _stream_length(self._client, self._news_raw_queue), _stream_length(self._client, self._signal_queue)
+
+    def pending_count(self) -> int | None:
+        try:
+            pending = self._client.xpending(self._news_raw_queue, self._consumer_group)
+        except redis.exceptions.ResponseError as exc:
+            if "nogroup" in str(exc).lower():
+                return 0
+            raise
+        if isinstance(pending, dict):
+            return int(pending.get("pending", 0))
+        if isinstance(pending, (tuple, list)) and pending:
+            return int(pending[0])
+        return 0
+
+    def _publish(self, stream_name: str, envelope: dict[str, Any]) -> None:
+        payload = {
+            "event_id": str(envelope.get("event_id", "")),
+            "event_type": str(envelope.get("event_type", "")),
+            "event_version": str(envelope.get("event_version", "1.0")),
+            "occurred_at": str(envelope.get("occurred_at", "")),
+            "producer": str(envelope.get("producer", "thesis_builder")),
+            "dedupe_key": str(envelope.get("dedupe_key", "")),
+            "payload_json": json.dumps(envelope.get("payload") or {}, separators=(",", ":"), sort_keys=True),
+        }
+        try:
+            self._client.xadd(stream_name, payload)
+        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+            raise TransientPublishError(str(exc)) from exc
+        except redis.exceptions.RedisError as exc:
+            raise NonTransientPublishError(str(exc)) from exc
+
+    def _ensure_stream(self, stream_name: str) -> None:
+        try:
+            self._client.xinfo_stream(stream_name)
+        except redis.exceptions.ResponseError as exc:
+            if "no such key" not in str(exc).lower():
+                raise
+            marker_id = self._client.xadd(stream_name, {"bootstrap": "thesis_builder"})
+            self._client.xdel(stream_name, marker_id)
+
+
+def _message(message_id: str, fields: dict[str, str]) -> NewsStreamMessage:
+    payload_json = fields.get("payload_json") or "{}"
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return NewsStreamMessage(
+        message_id=message_id,
+        event_id=str(fields.get("event_id", "")),
+        event_type=str(fields.get("event_type", "")),
+        dedupe_key=str(fields.get("dedupe_key", "")),
+        payload=payload,
+        raw_fields=dict(fields),
+    )
+
+
+def _messages(response) -> list[NewsStreamMessage]:
+    messages: list[NewsStreamMessage] = []
+    for _stream_name, entries in response:
+        for message_id, fields in entries:
+            messages.append(_message(message_id, fields))
+    return messages
+
+
+def _stream_length(client: redis.Redis, stream_name: str) -> int | None:
+    try:
+        return int(client.xlen(stream_name))
+    except redis.exceptions.RedisError:
+        return None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _parse_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

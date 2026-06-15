@@ -41,10 +41,10 @@ Logical fields:
 Behavioral constraints:
 - Instrument identity is the pair (`ticker`, `exchange_code`) for all downstream joins and lookups.
 - Evidence, confidence, risk, freshness, and review invariants are governed by `docs/design/shared/product-constraint.md`.
-- All evidence items must reference valid `news_fetcher.t_news_articles` rows.
+- All evidence items must reference accepted article ids received from NewsFetcher event payloads or the NewsFetcher API. ThesisBuilder must not validate evidence by querying NewsFetcher-owned tables directly.
 - Evidence must be traceable to at least one `t_news_analyses` row through `source_analysis_ids`.
 - Market context audit data is copied from the MarketData component API response; ThesisBuilder must not query MarketData-owned tables directly.
-- Valid cards must receive a matching shared review row in `shared.t_thesis_card_reviews`.
+- Valid cards must receive a matching shared review state through the shared review contract.
 - Initially, valid cards are preapproved by system policy with `decision_state=approved`, `reviewed_by=system_policy`, and a review reason identifying the policy version.
 - Cards that fail product-constraint validation are persisted only as non-executable rejected records for audit, if persisted at all; they must not be published as executable signals.
 - Cards generated only to estimate missed opportunities from old news use `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the UI labels these as `stale`.
@@ -83,7 +83,7 @@ Logical fields:
 
 Behavioral constraints:
 - Instrument identity is the pair (`ticker`, `exchange_code`) for all downstream joins and lookups.
-- `article_id` must reference an existing NewsFetcher article.
+- `article_id` must reference an accepted NewsFetcher article id from the event payload or NewsFetcher API response.
 - Analysis records are append-oriented for auditability.
 - Scores and classifications must be derived from deterministic thesis-building policy for identical inputs when deterministic mode is enabled.
 - Invalid LLM output is persisted with `validation_status=rejected` and must not contribute to executable card creation.

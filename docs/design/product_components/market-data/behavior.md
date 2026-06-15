@@ -5,7 +5,7 @@
 MarketData is the product component that retrieves, normalizes, and caches current and historical market data for watched instruments.
 
 Responsibilities:
-- Load active watchlist instruments from shared tables.
+- Load active watchlist instruments through the Shared Instrument Registry API or documented shared watchlist contract.
 - Resolve provider-specific symbols and contract metadata.
 - Fetch current quotes and historical bars from low-cost providers.
 - Cache normalized quotes, bars, and derived market context in PostgreSQL.
@@ -51,6 +51,8 @@ Default refresh cadence:
 ## 4. Consumer Contract
 
 Consumers retrieve market context through the MarketData component API. They must not query MarketData-owned tables directly and must not call external market-data providers directly.
+
+This is the required component database encapsulation boundary for current and historical market data. MarketData tables are private to the MarketData component; consumers receive snapshots through the API and copy those snapshots into their own audit records when needed.
 
 Python API:
 

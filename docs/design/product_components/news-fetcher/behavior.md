@@ -12,7 +12,7 @@ NewsFetcher responsibilities:
 - Persist all structurally valid normalized candidates into a 30-day input corpus.
 - Apply production filtering and deduplication without blocking future simulation runs.
 - Persist production filter outcomes and accepted canonical articles in schema news_fetcher.
-- Publish canonical events to queue news_raw_queue.
+- Publish accepted article snapshots as canonical events to queue news_raw_queue.
 - Record provider usage in schema shared. (For measuring the external API consumption)
 - Preserve stable article identifiers for thesis-card evidence linkage.
 
@@ -28,14 +28,12 @@ Process name: news_fetcher
 Inputs:
 - External provider APIs and RSS feeds.
 - Environment configuration.
-- Watchlist loaded from shared schema table `shared.t_watchlist_tickers`.
+- Active watchlist from the Shared Instrument Registry API or explicitly documented shared watchlist contract.
 
 Outputs:
-- Rows in news_fetcher.t_input_news_articles.
-- Rows in news_fetcher.t_news_articles.
-- Rows in news_fetcher.t_news_filter_runs and news_fetcher.t_news_filter_results for the production baseline.
-- Optional rows in shared.t_api_usage for provider usage tracking.
-- Events published to news_raw_queue.
+- Rows in NewsFetcher-owned persistence tables.
+- Optional shared API usage records through the shared usage contract.
+- Accepted article snapshot events published to news_raw_queue.
 
 Delivery semantics:
 - At-least-once publish to the broker.
@@ -167,6 +165,7 @@ Each fetched item is normalized to this canonical article object before further 
 
 Constraint-facing requirement:
 - The article contract must preserve enough context quality for ThesisBuilder to produce exactly three thesis-card evidence bullets with article references.
+- Accepted article events must include this canonical article snapshot so downstream components do not need to query NewsFetcher-owned tables.
 
 Normalization rules:
 - Trim whitespace for headline and summary.
@@ -189,7 +188,7 @@ Relevance rules:
 - Drop otherwise.
 
 Configuration must support:
-- Shared watchlist table (`shared.t_watchlist_tickers`, table name via `WATCHLIST_TABLE`).
+- Shared watchlist access through the Shared Instrument Registry API or shared watchlist contract.
 - Include keywords. 
 - Exclude keywords.
 
@@ -271,6 +270,7 @@ Published event schema:
 
 Publish rules:
 - Publish only for accepted articles from durable obligations created after successful persistence.
+- Include the accepted canonical article snapshot in the event payload. Downstream components must be able to analyze accepted news from the queue payload or a NewsFetcher API, never by reading NewsFetcher tables directly.
 - Use dedupe_key so consumers can enforce idempotency.
 - Retry publish using queue retry policy.
 - On retry exhaustion, send event envelope to failed_messages_dlq.

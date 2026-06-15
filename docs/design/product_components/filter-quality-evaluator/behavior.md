@@ -22,9 +22,9 @@ Out of scope:
 Process name: filter_quality_evaluator
 
 Inputs:
-- Input corpus articles from `news_fetcher.t_input_news_articles`.
-- Production baseline filter results from `news_fetcher.t_news_filter_results`.
-- Accepted production subset from `news_fetcher.t_news_articles` when needed for downstream impact checks.
+- Input corpus articles from the NewsFetcher evaluation dataset API/export.
+- Production baseline filter results from the NewsFetcher evaluation dataset API/export.
+- Accepted production subset from the NewsFetcher evaluation dataset API/export when needed for downstream impact checks.
 - Run parameters (time window required, config fingerprint optional).
 - LLM provider credentials and policy.
 
@@ -76,8 +76,8 @@ Population contract:
 - Simulation population: results written under a new `simulation` filter run created for the requested configuration.
 
 Dataset join and matching rules:
-- Canonical join key is `article_id`, sourced from `news_fetcher.t_input_news_articles.id`.
-- The evaluator first materializes the selected input slice from `t_input_news_articles`, then left-joins the corresponding baseline and simulation rows from `t_news_filter_results`.
+- Canonical join key is `article_id`, sourced from the NewsFetcher evaluation dataset API/export.
+- The evaluator first materializes the selected input slice from the exported dataset, then matches the corresponding baseline and simulation results from the same export.
 - The evaluator creates the simulation filter run with a run-scoped immutable `filter_config_snapshot_json` payload; this payload is stored on the simulation run row and is never written into global NewsFetcher configuration.
 - Baseline rows are selected from exactly one production filter run:
 	- if `filter_config_fingerprint` is provided, use the unique production run with the same fingerprint;
@@ -88,7 +88,7 @@ Dataset join and matching rules:
 - If the baseline row is missing, the item is recorded as a failed item with `item_error_code = missing_production_result`.
 - If the simulation row is missing, the item is recorded as a failed item with `item_error_code = missing_simulation_result`.
 - If both rows exist, the evaluator compares `filter_outcome` values to determine `is_disagreement`.
-- If either row is present more than once for the same `(filter_run_id, article_id)`, the run fails with a hard data-integrity error because `t_news_filter_results` must be unique on that pair.
+- If either row is present more than once for the same `(filter_run_id, article_id)`, the run fails with a hard data-integrity error because the NewsFetcher evaluation dataset contract must be unique on that pair.
 - Rejection reason analysis uses the baseline row for production behavior and the simulation row for proposed behavior; the simulation row wins for the saved `rejection_reason_code` when the simulated outcome is `rejected`.
 
 Rejection reason taxonomy expected from NewsFetcher:
@@ -98,9 +98,9 @@ Rejection reason taxonomy expected from NewsFetcher:
 - rejected_strong_duplicate
 - rejected_soft_duplicate
 
-DB-first source of truth:
-- The analyzer reads datasets from PostgreSQL tables, not directly from queue streams.
-- Simulation writes into NewsFetcher-owned run/result tables and must not affect the production pipeline state.
+Dataset source of truth:
+- The analyzer reads datasets from the NewsFetcher evaluation dataset API/export, not directly from queue streams or NewsFetcher tables.
+- Simulation writes are requested through the NewsFetcher evaluation API/export flow and must not affect the production pipeline state.
 
 ## 5. LLM Classification Rules
 

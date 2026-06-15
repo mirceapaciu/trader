@@ -56,11 +56,11 @@ CHECKPOINT_BOOTSTRAP_LOOKBACK_HOURS=24
 
 NewsFetcher also depends on shared PostgreSQL connection, operational, and queue settings defined in `docs/design/shared/configuration.md`.
 
-Watchlist source for relevance filtering is the shared schema table `shared.t_watchlist_tickers` (table name configurable via `WATCHLIST_TABLE`).
+Watchlist source for relevance filtering is the Shared Instrument Registry API or the documented shared watchlist adapter. Physical shared table names are implementation details of that contract and must not be copied into ad hoc component queries.
 
 NewsFetcher seeds source configuration from JSON into PostgreSQL during startup:
 
 - `NEWS_INSTRUMENTS_CONFIG` defines reusable instrument names, aliases, and identifiers.
 - `NEWS_RSS_SOURCES_CONFIG` defines static RSS feeds, dynamic Yahoo RSS sources, and provider-specific symbol mappings.
 
-Runtime reads RSS configuration from `news_fetcher.t_rss_sources`, `news_fetcher.t_rss_symbol_rules`, and shared instrument alias tables. `RSS_FEED_URLS` remains available only as a legacy fallback and is synced into DB as static RSS sources.
+Runtime reads RSS configuration from NewsFetcher-owned RSS tables and retrieves reusable aliases through the Shared Instrument Registry contract. `RSS_FEED_URLS` remains available only as a legacy fallback and is synced into DB as static RSS sources.

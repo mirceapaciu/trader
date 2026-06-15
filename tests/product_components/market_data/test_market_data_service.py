@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from src.product_components.market_data.models import (
+    ContextSourceStatus,
     FetchRun,
     Instrument,
     MarketBar,
+    MarketContextSnapshot,
     MarketDataProvider,
     MarketQuote,
     ProviderSymbol,
@@ -71,6 +73,7 @@ class _FakeStorage:
         self.fetch_runs: list[FetchRun] = []
         self.api_usage: list[tuple[MarketDataProvider, str]] = []
         self.context_count = 0
+        self.context: MarketContextSnapshot | None = None
 
     def load_active_instruments(self) -> list[Instrument]:
         return [self.instrument]
@@ -92,6 +95,10 @@ class _FakeStorage:
 
     def upsert_context_snapshot(self, snapshot) -> None:
         self.context_count += 1
+        self.context = snapshot
+
+    def get_market_context(self, *, ticker: str, exchange_code: str):
+        return self.context
 
     def record_fetch_run(self, run: FetchRun) -> None:
         self.fetch_runs.append(run)
@@ -105,7 +112,7 @@ def test_market_data_service_refreshes_mapping_and_context() -> None:
     service = MarketDataService(
         storage=storage,  # type: ignore[arg-type]
         provider_clients={MarketDataProvider.IBKR: _FakeClient()},
-        quote_max_age_seconds=1200,
+        quote_max_age_seconds=7200,
         daily_bar_lookback_days=90,
     )
 
@@ -118,4 +125,41 @@ def test_market_data_service_refreshes_mapping_and_context() -> None:
         (MarketDataProvider.IBKR, "quote"),
         (MarketDataProvider.IBKR, "daily_bars"),
     ]
+    assert storage.context_count == 1
+
+
+def test_market_data_service_refreshes_stale_context_on_api_request() -> None:
+    storage = _FakeStorage()
+    storage.context = MarketContextSnapshot(
+        ticker="RHM",
+        exchange_code="XETR",
+        as_of=datetime(2026, 6, 15, 11, tzinfo=timezone.utc),
+        source_status=ContextSourceStatus.STALE,
+        current_price=None,
+        previous_close=None,
+        return_1d=None,
+        return_5d=None,
+        return_20d=None,
+        atr_20d=None,
+        volatility_20d=None,
+        volume_ratio_20d=None,
+        sma_20d=None,
+        sma_50d=None,
+        recent_high_20d=None,
+        recent_low_20d=None,
+        drawdown_from_high_20d=None,
+        quote_fetched_at=None,
+        bars_fetched_at=None,
+    )
+    service = MarketDataService(
+        storage=storage,  # type: ignore[arg-type]
+        provider_clients={MarketDataProvider.IBKR: _FakeClient()},
+        quote_max_age_seconds=7200,
+        daily_bar_lookback_days=90,
+    )
+
+    context = service.get_market_context(ticker="RHM", exchange_code="XETR", refresh_if_stale=True)
+
+    assert context is not None
+    assert context.source_status is ContextSourceStatus.DELAYED
     assert storage.context_count == 1

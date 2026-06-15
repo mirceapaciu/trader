@@ -193,6 +193,22 @@ The broker exposes three named queues:
 
 Default recommendation: Redis Streams in a dedicated Docker container, with `appendonly yes` persistence and an explicit dead-letter stream. Redis Streams consumer groups (`XREADGROUP`) provide native support for multiple independent consumers on the same stream, which is required by `news_raw_queue`.
 
+### 3.3 Component Database Encapsulation
+
+Component-owned PostgreSQL schemas are private implementation details. A product component may directly read and write only its own schema, plus explicitly documented shared contracts exposed by the `shared` component.
+
+Cross-component data flow must use one of these boundaries:
+- An owning component API, such as the MarketData Python API for current and historical market context.
+- A durable event payload, such as NewsFetcher publishing accepted article snapshots to `news_raw_queue`.
+- A shared contract documented in `docs/design/shared/data-model.md`, with named owners and consumers.
+
+Components must not query another component's tables, import another component's storage adapters, or rely on cross-schema joins for runtime behavior. If a consumer needs audit stability, it copies the data returned by the API or event into its own schema instead of storing a foreign table dependency.
+
+Concrete examples:
+- ThesisBuilder consumes accepted article data from `news_raw_queue` or a NewsFetcher API, not from `news_fetcher` tables.
+- ThesisBuilder consumes market context from the MarketData API, not from `market_data` tables.
+- TradeExecutor consumes thesis-card signals and review state through published/shared contracts, not by reading ThesisBuilder tables directly.
+
 ### Layer Responsibilities
 
 | Layer           | Directory          | Responsibility                                         |
@@ -203,7 +219,7 @@ Default recommendation: Redis Streams in a dedicated Docker container, with `app
 | Utilities       | `src/utils`        | Rate limiting, retry logic, logging helpers             |
 | Config          | `src/config.py`    | Environment variables, API keys, thresholds             |
 
-### 3.3 Tech Stack
+### 3.4 Tech Stack
 
 The system uses the following baseline stack:
 
@@ -333,13 +349,7 @@ Coordinates process startup, health checks, and queue-level flow control.
 
 ## 5. Data Model (PostgreSQL, Schema-Per-Component)
 
-The system persists audit-grade records for the end-to-end pipeline in five PostgreSQL tables across component-owned schemas:
-
-- `news_fetcher.t_news_articles`
-- `thesis_builder.t_news_analyses`
-- `trade_executor.t_trade_decisions`
-- `trade_executor.t_trade_executions`
-- `shared.t_api_usage`
+The system persists audit-grade records across component-owned PostgreSQL schemas. Those schemas are ownership boundaries, not integration surfaces; runtime cross-component access must use APIs, events, or documented shared contracts.
 
 Table naming convention: all physical table names use prefix `t_`.
 

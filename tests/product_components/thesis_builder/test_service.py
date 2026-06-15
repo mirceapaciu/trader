@@ -1,69 +1,159 @@
-import redis
+from datetime import datetime, timezone
 
+from src.product_components.thesis_builder.models import InstrumentIdentity, NewsArticle
+from src.product_components.thesis_builder.redis_io import NewsStreamMessage
 from src.product_components.thesis_builder.service import ThesisBuilderRunner
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
 
-class _FakeRedis:
+class _FakeIo:
     def __init__(self) -> None:
-        self.created_groups: list[tuple[str, str, str, bool]] = []
-        self.streams: set[str] = set()
-        self.deleted: list[tuple[str, str]] = []
+        self.bootstrapped = False
+        self.acked: list[str] = []
+        self.signals: list[dict] = []
+        self.dlq: list[tuple[str, str]] = []
+        self.messages: list[NewsStreamMessage] = []
 
     def ping(self) -> bool:
         return True
 
-    def xinfo_stream(self, stream_name: str):
-        if stream_name not in self.streams:
-            raise redis.exceptions.ResponseError("no such key")
-        return {"length": 0}
+    def ensure_streams_and_group(self) -> None:
+        self.bootstrapped = True
 
-    def xadd(self, stream_name: str, _payload: dict[str, str]) -> str:
-        self.streams.add(stream_name)
-        return "1-0"
+    def read(self, *, count: int, block_ms: int):
+        return self.messages[:count]
 
-    def xdel(self, stream_name: str, message_id: str) -> None:
-        self.deleted.append((stream_name, message_id))
+    def ack(self, message_id: str) -> None:
+        self.acked.append(message_id)
 
-    def xgroup_create(self, *, name: str, groupname: str, id: str, mkstream: bool) -> None:
-        self.created_groups.append((name, groupname, id, mkstream))
+    def delivery_count(self, _message_id: str) -> int:
+        return 1
 
-    def xlen(self, stream_name: str) -> int:
-        return 0 if stream_name in self.streams else 0
+    def publish_signal(self, envelope: dict) -> None:
+        self.signals.append(envelope)
 
-    def xpending(self, _stream_name: str, _group_name: str) -> dict[str, int]:
-        return {"pending": 0}
+    def publish_dlq(self, *, message: NewsStreamMessage, error_code: str) -> None:
+        self.dlq.append((message.message_id, error_code))
+
+    def stream_lengths(self):
+        return 0, len(self.signals)
+
+    def pending_count(self):
+        return 0
 
 
-def test_thesis_builder_runner_bootstraps_streams_and_group(monkeypatch) -> None:
-    fake = _FakeRedis()
-    monkeypatch.setattr(
-        "src.product_components.thesis_builder.service.redis.from_url",
-        lambda *_args, **_kwargs: fake,
+class _FakeRepository:
+    def __init__(self, instruments: list[InstrumentIdentity] | None = None) -> None:
+        self.instruments = instruments or []
+        self.rejected: list[str] = []
+
+    def resolve_instruments(self, _article):
+        return self.instruments
+
+    def persist_rejected_analysis(self, **kwargs):
+        self.rejected.append(kwargs["rejection_reason_code"])
+        return 1
+
+
+def test_thesis_builder_runner_bootstraps_io() -> None:
+    io = _FakeIo()
+    runner = ThesisBuilderRunner(
+        settings=_settings(),
+        redis_io=io,
+        repository=_FakeRepository(),
+        analyzer=_NoopAnalyzer(),
     )
-    settings = _settings()
 
-    runner = ThesisBuilderRunner(settings=settings)
     runner.bootstrap()
 
-    assert fake.streams == {"news_raw_queue", "signal_queue", "failed_messages_dlq"}
-    assert fake.created_groups == [("news_raw_queue", "thesis_builder_group", "0", True)]
+    assert io.bootstrapped is True
 
 
-def test_thesis_builder_runner_reports_safe_idle_status(monkeypatch) -> None:
-    fake = _FakeRedis()
-    fake.streams.update({"news_raw_queue", "signal_queue", "failed_messages_dlq"})
-    monkeypatch.setattr(
-        "src.product_components.thesis_builder.service.redis.from_url",
-        lambda *_args, **_kwargs: fake,
+def test_missing_article_goes_to_dlq_and_acks() -> None:
+    io = _FakeIo()
+    message = NewsStreamMessage(
+        message_id="1-0",
+        event_id="evt-1",
+        event_type="news.article.created",
+        dedupe_key="missing",
+        payload={"id": "missing"},
+        raw_fields={},
+    )
+    runner = ThesisBuilderRunner(
+        settings=_settings(),
+        redis_io=io,
+        repository=_FakeRepository(),
+        analyzer=_NoopAnalyzer(),
     )
 
-    status = ThesisBuilderRunner(settings=_settings()).status()
+    result = runner.process_message(message)
 
-    assert status.news_raw_length == 0
-    assert status.pending_count == 0
-    assert status.signal_length == 0
-    assert status.processing_enabled is False
+    assert result.acked is True
+    assert io.acked == ["1-0"]
+    assert io.dlq == [("1-0", "missing_article_payload")]
+
+
+def test_invalid_llm_response_is_persisted_and_acked() -> None:
+    article = _article()
+    repo = _FakeRepository(instruments=[InstrumentIdentity("AAPL", "XNAS")])
+    io = _FakeIo()
+    runner = ThesisBuilderRunner(
+        settings=_settings(),
+        redis_io=io,
+        repository=repo,
+        analyzer=_FailingAnalyzer(),
+    )
+
+    result = runner.process_message(_message(article_id=article.id))
+
+    assert result.acked is True
+    assert result.analyses_created == 1
+    assert repo.rejected == ["invalid_test_response"]
+    assert io.acked == ["1-0"]
+
+
+class _NoopAnalyzer:
+    pass
+
+
+class _FailingAnalyzer:
+    def analyze_article(self, **_kwargs):
+        raise ValueError("invalid_test_response")
+
+
+def _article() -> NewsArticle:
+    now = datetime.now(timezone.utc)
+    return NewsArticle(
+        id="article-1",
+        source="test",
+        headline="Apple raises guidance",
+        summary="Apple raised revenue guidance.",
+        url="https://example.com/aapl",
+        tickers=["AAPL"],
+        published_at=now,
+        fetched_at=now,
+    )
+
+
+def _message(*, article_id: str) -> NewsStreamMessage:
+    article = _article()
+    return NewsStreamMessage(
+        message_id="1-0",
+        event_id="evt-1",
+        event_type="news.article.created",
+        dedupe_key=article_id,
+        payload={
+            "id": article_id,
+            "source": article.source,
+            "headline": article.headline,
+            "summary": article.summary,
+            "url": article.url,
+            "tickers": article.tickers,
+            "published_at": article.published_at.isoformat(),
+            "fetched_at": article.fetched_at.isoformat(),
+        },
+        raw_fields={},
+    )
 
 
 def _settings() -> ThesisBuilderSettings:
@@ -79,10 +169,18 @@ def _settings() -> ThesisBuilderSettings:
         consumer_name="consumer",
         poll_interval_seconds=120,
         heartbeat_interval_seconds=60,
+        batch_size=10,
+        block_ms=5000,
+        max_delivery_attempts=3,
         evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
         required_evidence_count=3,
         min_confidence=0.6,
         contrarian_min_confidence=0.72,
         trend_follow_min_confidence=0.68,
         risk_max_loss_usd=120.0,
+        default_time_horizon="swing_1d_5d",
+        llm_model="test-model",
+        llm_daily_token_budget=10000,
+        llm_max_output_tokens=1200,
     )

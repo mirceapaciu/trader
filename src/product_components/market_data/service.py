@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.product_components.market_data.context import build_market_context
-from src.product_components.market_data.models import FetchRun, MarketDataProvider, ProviderSymbol
+from src.product_components.market_data.models import ContextSourceStatus, FetchRun, MarketContextSnapshot, MarketDataProvider, ProviderSymbol
 from src.product_components.market_data.providers import MarketDataProviderClient
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 
@@ -23,6 +23,22 @@ class MarketDataService:
         self._provider_clients = provider_clients
         self._quote_max_age_seconds = quote_max_age_seconds
         self._daily_bar_lookback_days = daily_bar_lookback_days
+
+    def get_market_context(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        refresh_if_stale: bool = True,
+    ) -> MarketContextSnapshot | None:
+        snapshot = self._storage.get_market_context(ticker=ticker, exchange_code=exchange_code)
+        if refresh_if_stale and (
+            snapshot is None
+            or snapshot.source_status in {ContextSourceStatus.STALE, ContextSourceStatus.MISSING}
+        ):
+            self.refresh_instrument(ticker=ticker, exchange_code=exchange_code)
+            snapshot = self._storage.get_market_context(ticker=ticker, exchange_code=exchange_code)
+        return snapshot
 
     def refresh_watchlist_once(self) -> None:
         for instrument in self._storage.load_active_instruments():

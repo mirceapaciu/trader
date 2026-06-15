@@ -25,9 +25,9 @@ Process name:
 - `thesis_builder`
 
 Inputs:
-- Accepted news envelopes from `news_raw_queue`.
-- Existing accepted articles in `news_fetcher.t_news_articles`.
-- Active watchlist and instrument metadata from shared tables.
+- Accepted news envelopes from `news_raw_queue`, including the accepted article snapshot required for analysis.
+- NewsFetcher component API for rare article rehydration or replay recovery when the queue payload is insufficient.
+- Shared Instrument Registry API or explicitly documented shared read contract for active watchlist and instrument alias resolution.
 - Current and historical market context from the MarketData component API when required by strategy policy.
 - ThesisBuilder configuration and shared queue/database settings.
 
@@ -35,7 +35,7 @@ Outputs:
 - `thesis_builder.t_news_analyses` rows.
 - `thesis_builder.t_evidence_windows` operational aggregation state.
 - `thesis_builder.t_thesis_cards` rows.
-- `shared.t_thesis_card_reviews` rows for cards that pass validation.
+- Initial thesis-card review state through the shared review contract for cards that pass validation.
 - Thesis-card signal envelopes on `signal_queue`.
 - Failed envelopes on `failed_messages_dlq` after retry exhaustion.
 
@@ -48,8 +48,8 @@ Delivery semantics:
 
 For each accepted news event:
 
-1. Resolve eligible instruments using the article ticker list plus shared instrument aliases.
-2. Skip instruments that are not active in the shared watchlist.
+1. Resolve eligible instruments using the article snapshot plus the Shared Instrument Registry API or shared read contract.
+2. Skip instruments that are not active according to the shared watchlist contract.
 3. Run deterministic prechecks for article freshness, source quality, duplicate evidence, and obvious non-market relevance.
 4. Resolve market context through the MarketData component API when the candidate strategy requires price-derived validation.
 5. Call the configured LLM only when deterministic prechecks leave a plausible trading impact.
@@ -60,7 +60,17 @@ For each accepted news event:
 ThesisBuilder must store analyses even when no thesis card is created, so rejected, weak, stale, or conflicting evidence remains auditable.
 Analyses that classify an article as price-actionable for the analyzed instrument must set `is_market_moving=true` so monitoring can distinguish processed news from market-moving news.
 
-## 3.1 Market Context Policy
+## 3.1 Component Boundary Rules
+
+ThesisBuilder may directly access only the `thesis_builder` schema and explicitly documented shared contracts. It must not query `news_fetcher`, `market_data`, `trade_executor`, or any other component-owned schema.
+
+Accepted article content must arrive in the `news_raw_queue` payload. If replay or recovery requires rehydration, ThesisBuilder must call a NewsFetcher API rather than reading `news_fetcher.t_news_articles`.
+
+Instrument and watchlist eligibility must be resolved through the shared Instrument Registry API or an explicitly documented shared read contract. Direct references to shared physical tables are implementation details of that shared contract, not permission for ad hoc cross-schema SQL in ThesisBuilder repositories.
+
+Review state must be written through the shared thesis-card review contract. A failed review write prevents signal publication.
+
+## 3.2 Market Context Policy
 
 News evidence remains the primary source for thesis-card evidence bullets. Market context is used to validate strategy fit, confidence, and risk-box construction; it does not replace the required news evidence from `docs/design/shared/product-constraint.md`.
 
@@ -96,7 +106,7 @@ Strategy market-data requirements:
 
 When a strategy requires market context and that context is unavailable, stale, or insufficient, ThesisBuilder must fail closed for that strategy. It may still create a different strategy card from the same news evidence only if that alternate strategy satisfies its own requirements.
 
-## 3.2 LLM Analysis Contract
+## 3.3 LLM Analysis Contract
 
 The LLM must return structured output that ThesisBuilder can validate deterministically before persistence or card creation.
 
@@ -157,6 +167,7 @@ Card creation steps:
 8. Publish the card signal only if validation passes and review state is approved.
 
 Initially, all valid cards are preapproved by system policy. ThesisBuilder writes `shared.t_thesis_card_reviews.decision_state=approved`, `reviewed_by=system_policy`, and a review reason identifying the ThesisBuilder policy version. If `THESIS_BUILDER_INITIAL_REVIEW_POLICY=manual` is enabled later, valid cards are persisted but not published as executable signals until a UI/user approval exists.
+The physical review state is owned by the shared contract; ThesisBuilder code should use the shared review API/adapter instead of ad hoc SQL against shared tables.
 
 Freshness policy:
 - The maximum allowed age for evidence used in an executable thesis card is `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`, defaulting to 180 minutes.
@@ -227,9 +238,9 @@ Hold or rejected outcomes may be persisted for audit, but they are not executabl
 ThesisBuilder must fail closed:
 - Missing or invalid evidence creates no executable card.
 - Missing risk fields creates no executable card.
-- Missing shared review write prevents signal publication.
+- Missing shared review contract write prevents signal publication.
 - LLM timeout or provider failure retries according to shared queue retry policy, then dead-letters the message.
-- PostgreSQL write failure prevents ACK and must not publish a signal.
+- ThesisBuilder persistence failure or required shared-contract write failure prevents ACK and must not publish a signal.
 - Signal publish failure leaves the message unacknowledged or writes a dead-letter according to retry state.
 
 Failures should include concise machine-readable error codes and enough context to inspect the affected article, instrument, and evidence window.
@@ -239,6 +250,7 @@ Failures should include concise machine-readable error codes and enough context 
 Default implementation placement:
 - Process entry point: `src/product_components/thesis_builder`.
 - ThesisBuilder persistence SQL: `src/product_components/thesis_builder/db/schema.sql`.
+- ThesisBuilder repositories may access only ThesisBuilder-owned tables. External component data must be accessed through API or event adapters.
 - Product-specific strategy, thesis-card, risk-box, and orchestration logic: `src/product_components/thesis_builder`.
 - Reusable event-ingestion or preprocessing primitives, if introduced, belong under `src/core_components`.
 
@@ -259,6 +271,7 @@ Implementation is acceptable when all are true:
 ## 12. Minimum Test Plan
 
 Unit tests:
+- Component-boundary checks that ThesisBuilder repositories do not reference foreign component schemas.
 - Product-constraint validation for evidence count, article diversity, confidence range, risk fields, expiry, and review state.
 - Evidence-window satisfaction, expiry, and rejection paths.
 - Strategy conflict resolution.

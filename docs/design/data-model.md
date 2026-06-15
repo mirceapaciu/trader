@@ -19,5 +19,9 @@ The persistence engine is PostgreSQL, and each component owns a dedicated Postgr
 - Each component owns exactly one PostgreSQL schema and creates tables only in that schema.
 - All physical table names must be prefixed with `t_` (example: `t_news_articles`).
 - Keep cross-cutting tables in schema `shared` via `docs/design/shared/data-model.md`.
-- Foreign-key references are allowed across component files but table definitions are not duplicated.
+- Component-owned schemas are private persistence details. A component must not read from or write to another component-owned schema at runtime.
+- Cross-component data access must use the owning component's API, a published event payload, or an explicitly documented shared contract.
+- Foreign-key references across component-owned schemas are not allowed unless an architecture decision explicitly grants an exception. Prefer stable ids copied into the consuming component's own audit tables.
+- Table names from another component may appear in design docs only to identify ownership, audit lineage, or migration location; they must not be interpreted as permission for direct runtime access.
+- The `shared` schema is allowed only for intentional shared contracts. Each shared table must document its owner, access surface, and allowed consumers in `docs/design/shared/data-model.md`.
 - Overview should reference this index, not inline SQL definitions.

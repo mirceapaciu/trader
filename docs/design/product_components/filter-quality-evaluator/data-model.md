@@ -167,9 +167,10 @@ Columns:
 
 Foreign keys:
 - `run_id -> filter_quality_evaluator.t_filter_quality_runs(run_id) ON DELETE CASCADE`
-- `article_id -> news_fetcher.t_input_news_articles(id) ON DELETE CASCADE`
-- `(filter_run_id_production, article_id) -> news_fetcher.t_news_filter_results(filter_run_id, article_id)`
-- `(filter_run_id_simulation, article_id) -> news_fetcher.t_news_filter_results(filter_run_id, article_id)`
+
+External lineage fields:
+- `article_id`, `filter_run_id_production`, and `filter_run_id_simulation` are copied ids from the NewsFetcher evaluation dataset API/export.
+- They must not be enforced with cross-schema foreign keys. NewsFetcher-owned tables remain private to NewsFetcher.
 
 Uniqueness:
 - `UNIQUE (run_id, article_id)`
@@ -201,13 +202,15 @@ Write semantics:
 - Update run aggregate counters and summaries in-place during execution.
 - Finalize run with terminal `status` and `finished_at`; no further item writes after terminal transition.
 
-## External Read Dependencies (Not Owned)
+## External Data Dependencies (Not Owned)
 
-The component reads but does not own:
-- input corpus articles from `news_fetcher.t_input_news_articles`.
-- production and simulation filter outcomes from `news_fetcher.t_news_filter_results`.
-- filter execution metadata from `news_fetcher.t_news_filter_runs`.
-- accepted production subset from `news_fetcher.t_news_articles`.
+The component consumes but does not own NewsFetcher evaluation datasets:
+- input corpus articles.
+- production and simulation filter outcomes.
+- filter execution metadata.
+- accepted production subset.
+
+These datasets must be supplied through a NewsFetcher-owned evaluation API/export. Filter Quality Evaluator must not query NewsFetcher-owned tables directly.
 
 ## Notes
 

@@ -7,6 +7,9 @@ from pathlib import Path
 
 import psycopg
 
+from src.product_components.market_data.service import MarketDataService
+from src.product_components.market_data.settings import MarketDataSettings
+from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 from src.product_components.news_fetcher.env_loader import load_env_files
 
 from .service import ThesisBuilderRunner
@@ -23,6 +26,7 @@ def _bootstrap_database_schema(settings: ThesisBuilderSettings) -> None:
     schema_files = (
         _repo_root() / "src" / "product_components" / "shared" / "db" / "schema.sql",
         _repo_root() / "src" / "product_components" / "news_fetcher" / "db" / "schema.sql",
+        _repo_root() / "src" / "product_components" / "market_data" / "db" / "schema.sql",
         _repo_root() / "src" / "product_components" / "thesis_builder" / "db" / "schema.sql",
     )
 
@@ -64,10 +68,26 @@ def main() -> None:
     )
 
     settings = ThesisBuilderSettings.from_env()
+    market_data_settings = MarketDataSettings.from_env()
     _configure_logging(settings, repo_root)
     _bootstrap_database_schema(settings)
 
-    ThesisBuilderRunner(settings=settings).run_forever()
+    market_data_service = MarketDataService(
+        storage=PostgresMarketDataStorageAdapter(
+            dsn=market_data_settings.postgres_dsn,
+            market_data_schema=market_data_settings.market_data_db_schema,
+            shared_schema=market_data_settings.shared_db_schema,
+            watchlist_table=market_data_settings.watchlist_table,
+        ),
+        provider_clients={},
+        quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
+        daily_bar_lookback_days=market_data_settings.daily_bar_lookback_days,
+    )
+
+    ThesisBuilderRunner(
+        settings=settings,
+        market_context_client=market_data_service,
+    ).run_forever()
 
 
 if __name__ == "__main__":

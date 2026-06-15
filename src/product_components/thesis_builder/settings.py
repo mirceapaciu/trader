@@ -23,12 +23,20 @@ class ThesisBuilderSettings:
 
     poll_interval_seconds: int
     heartbeat_interval_seconds: int
+    batch_size: int
+    block_ms: int
+    max_delivery_attempts: int
     evidence_collection_max_minutes: int
+    max_evidence_age_minutes: int
     required_evidence_count: int
     min_confidence: float
     contrarian_min_confidence: float
     trend_follow_min_confidence: float
     risk_max_loss_usd: float
+    default_time_horizon: str
+    llm_model: str
+    llm_daily_token_budget: int
+    llm_max_output_tokens: int
 
     log_level: str = "INFO"
     log_file: str = "logs/thesis-builder.log"
@@ -60,12 +68,20 @@ class ThesisBuilderSettings:
             consumer_name=os.getenv("THESIS_BUILDER_CONSUMER_NAME", _default_consumer_name()),
             poll_interval_seconds=_int_env("THESIS_BUILDER_POLL_INTERVAL_SECONDS", _int_env("PIPELINE_INTERVAL", 120)),
             heartbeat_interval_seconds=_int_env("THESIS_BUILDER_HEARTBEAT_INTERVAL_SECONDS", 60),
+            batch_size=_int_env("THESIS_BUILDER_BATCH_SIZE", 10),
+            block_ms=_int_env("THESIS_BUILDER_BLOCK_MS", 5000),
+            max_delivery_attempts=_int_env("THESIS_BUILDER_MAX_DELIVERY_ATTEMPTS", 3),
             evidence_collection_max_minutes=_int_env("THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES", 120),
+            max_evidence_age_minutes=_int_env("THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES", 180),
             required_evidence_count=_int_env("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", 3),
             min_confidence=_float_env("THESIS_BUILDER_MIN_CONFIDENCE", 0.6),
             contrarian_min_confidence=_float_env("THESIS_BUILDER_CONTRARIAN_MIN_CONFIDENCE", 0.72),
             trend_follow_min_confidence=_float_env("THESIS_BUILDER_TREND_FOLLOW_MIN_CONFIDENCE", 0.68),
             risk_max_loss_usd=_float_env("THESIS_BUILDER_RISK_MAX_LOSS_USD", 120.0),
+            default_time_horizon=os.getenv("THESIS_BUILDER_DEFAULT_TIME_HORIZON", "swing_1d_5d"),
+            llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            llm_daily_token_budget=_int_env("LLM_DAILY_TOKEN_BUDGET", 500000),
+            llm_max_output_tokens=_int_env("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", 1200),
             log_level=os.getenv("THESIS_BUILDER_LOG_LEVEL") or os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("THESIS_BUILDER_LOG_FILE", "logs/thesis-builder.log"),
         )

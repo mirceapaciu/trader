@@ -117,7 +117,7 @@ provider_symbol=NVDA
 query_params={}
 ```
 
-Static broad RSS feeds and dynamic Yahoo sources are seeded from `config/news-fetcher/rss-sources.json`. Reusable instrument aliases are seeded from `config/news-fetcher/instruments.json`. Runtime reads from `news_fetcher.t_rss_sources`, `news_fetcher.t_rss_symbol_rules`, shared instrument alias tables, and active `shared.t_watchlist_tickers` rows.
+Static broad RSS feeds and dynamic Yahoo sources are seeded from `config/news-fetcher/rss-sources.json`. Reusable instrument aliases are seeded from `config/news-fetcher/instruments.json`. Runtime reads NewsFetcher-owned RSS configuration and uses the Shared Instrument Registry contract for aliases and active watchlist membership.
 
 Per-ticker vs combined feeds:
 - Prefer grouped Yahoo RSS requests for default ingestion because per-ticker requests hit Yahoo rate limits too easily.
@@ -177,7 +177,7 @@ https://www.marketwatch.com/rss/marketpulse
 ## Acceptance Rules by Source Type
 
 Structured provider articles:
-- Accept when provider tickers intersect `shared.t_watchlist_tickers`.
+- Accept when provider tickers intersect active watchlist membership returned by the Shared Instrument Registry contract.
 - Accept when configured include keywords match headline or summary.
 - Reject when configured exclude keywords match.
 - Deduplicate before persistence and publish.

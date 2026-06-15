@@ -13,6 +13,10 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.news_raw_queue == "news_raw_queue"
     assert settings.signal_queue == "signal_queue"
     assert settings.required_evidence_count == 3
+    assert settings.batch_size == 10
+    assert settings.block_ms == 5000
+    assert settings.max_delivery_attempts == 3
+    assert settings.llm_max_output_tokens == 1200
 
 
 def test_thesis_builder_settings_env_override(monkeypatch) -> None:
@@ -22,6 +26,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("SIGNAL_QUEUE", "signal_test")
     monkeypatch.setenv("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", "4")
     monkeypatch.setenv("THESIS_BUILDER_MIN_CONFIDENCE", "0.7")
+    monkeypatch.setenv("THESIS_BUILDER_BATCH_SIZE", "5")
+    monkeypatch.setenv("THESIS_BUILDER_BLOCK_MS", "250")
+    monkeypatch.setenv("THESIS_BUILDER_MAX_DELIVERY_ATTEMPTS", "7")
+    monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", "900")
 
     settings = ThesisBuilderSettings.from_env()
 
@@ -31,3 +39,7 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.signal_queue == "signal_test"
     assert settings.required_evidence_count == 4
     assert settings.min_confidence == 0.7
+    assert settings.batch_size == 5
+    assert settings.block_ms == 250
+    assert settings.max_delivery_attempts == 7
+    assert settings.llm_max_output_tokens == 900
