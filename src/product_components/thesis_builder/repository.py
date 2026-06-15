@@ -41,37 +41,9 @@ class PostgresThesisBuilderRepository:
         *,
         dsn: str,
         thesis_schema: str,
-        shared_schema: str,
-        watchlist_table: str,
     ) -> None:
         self._dsn = dsn
         self._thesis_schema = _safe_identifier(thesis_schema)
-        self._shared_schema = _safe_identifier(shared_schema)
-        self._watchlist_table = _safe_identifier(watchlist_table)
-
-    def resolve_instruments(self, article: NewsArticle) -> list[InstrumentIdentity]:
-        article_tickers = {ticker.strip().upper() for ticker in article.tickers if ticker.strip()}
-        text = " ".join([article.headline, article.summary or "", article.url]).lower()
-        sql = (
-            f"SELECT w.ticker, w.exchange_code, COALESCE(jsonb_agg(a.alias) FILTER (WHERE a.alias IS NOT NULL), '[]'::jsonb) AS aliases "
-            f"FROM {self._shared_schema}.{self._watchlist_table} w "
-            f"LEFT JOIN {self._shared_schema}.t_instrument_aliases a "
-            f"ON UPPER(a.ticker) = UPPER(w.ticker) AND UPPER(a.exchange_code) = UPPER(w.exchange_code) "
-            f"WHERE w.is_active = TRUE "
-            f"GROUP BY w.ticker, w.exchange_code "
-            f"ORDER BY w.ticker, w.exchange_code"
-        )
-        matches: list[InstrumentIdentity] = []
-        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-        for row in rows:
-            ticker = str(row["ticker"]).strip().upper()
-            exchange_code = str(row["exchange_code"]).strip().upper()
-            aliases = [str(alias).strip().lower() for alias in row["aliases"] or []]
-            if ticker in article_tickers or any(alias and alias in text for alias in aliases):
-                matches.append(InstrumentIdentity(ticker=ticker, exchange_code=exchange_code))
-        return matches
 
     def persist_rejected_analysis(
         self,
@@ -300,8 +272,8 @@ class PostgresThesisBuilderRepository:
         if validation_status is ValidationStatus.REJECTED:
             return None
         signal = self._load_unpublished_signal(conn=conn, card_id=card_id)
-        if inserted:
-            self._write_review(conn=conn, card_id=card_id, created_at=created_at)
+        if not inserted:
+            return None
         return signal
 
     def _load_or_create_window(
@@ -420,18 +392,6 @@ class PostgresThesisBuilderRepository:
                 ),
             )
             return cur.rowcount == 1
-
-    def _write_review(self, *, conn: psycopg.Connection, card_id: str, created_at: datetime) -> None:
-        sql = (
-            f"INSERT INTO {self._shared_schema}.t_thesis_card_reviews "
-            f"(card_id, decision_state, reviewed_by, review_reason, reviewed_at) "
-            f"VALUES (%s, 'approved', 'system_policy', 'thesis_builder_preapproved_v1', %s) "
-            f"ON CONFLICT (card_id) DO UPDATE SET "
-            f"decision_state = EXCLUDED.decision_state, reviewed_by = EXCLUDED.reviewed_by, "
-            f"review_reason = EXCLUDED.review_reason, reviewed_at = EXCLUDED.reviewed_at"
-        )
-        with conn.cursor() as cur:
-            cur.execute(sql, (card_id, _to_utc(created_at)))
 
     def _load_unpublished_signal(self, *, conn: psycopg.Connection, card_id: str) -> ThesisCardSignal | None:
         sql = (

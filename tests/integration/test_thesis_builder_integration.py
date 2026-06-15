@@ -9,6 +9,10 @@ import psycopg
 import pytest
 import redis
 
+from src.product_components.shared.adapters import (
+    PostgresSharedInstrumentRegistry,
+    PostgresSharedThesisCardReviewWriter,
+)
 from src.product_components.thesis_builder.llm_client import ThesisAnalyzer
 from src.product_components.thesis_builder.models import ThesisStrategy, TradeDirection
 from src.product_components.thesis_builder.redis_io import RedisThesisBuilderIo
@@ -84,8 +88,15 @@ def _runner(settings: ThesisBuilderSettings) -> ThesisBuilderRunner:
         repository=PostgresThesisBuilderRepository(
             dsn=settings.postgres_dsn,
             thesis_schema=settings.thesis_builder_db_schema,
+        ),
+        instrument_registry=PostgresSharedInstrumentRegistry(
+            dsn=settings.postgres_dsn,
             shared_schema=settings.shared_db_schema,
             watchlist_table="t_watchlist_tickers",
+        ),
+        review_writer=PostgresSharedThesisCardReviewWriter(
+            dsn=settings.postgres_dsn,
+            shared_schema=settings.shared_db_schema,
         ),
         redis_io=RedisThesisBuilderIo(
             queue_url=settings.queue_url,

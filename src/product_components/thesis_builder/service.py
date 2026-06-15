@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from src.core_components.event_ingestion_engine.errors import TransientPublishError
+from src.product_components.shared.adapters import (
+    PostgresSharedInstrumentRegistry,
+    PostgresSharedThesisCardReviewWriter,
+    SharedInstrumentRecord,
+)
 
 from .llm_client import OpenAIThesisClient, ThesisAnalyzer
 from .models import InstrumentIdentity, NewsArticle
@@ -20,6 +25,16 @@ LOGGER = logging.getLogger("thesis_builder.service")
 class MarketContextClient(Protocol):
     def get_market_context(self, *, ticker: str, exchange_code: str, refresh_if_stale: bool = True):
         """Return a MarketData context snapshot or None."""
+
+
+class InstrumentRegistry(Protocol):
+    def list_active_instruments(self) -> list[SharedInstrumentRecord]:
+        """Return active instrument registry rows with aliases."""
+
+
+class ThesisCardReviewWriter(Protocol):
+    def upsert_system_approved_review(self, *, card_id: str, reviewed_at: datetime, review_reason: str = "thesis_builder_preapproved_v1") -> None:
+        """Persist preapproved shared review state."""
 
 
 @dataclass(frozen=True)
@@ -48,13 +63,13 @@ class ThesisBuilderRunner:
         redis_io: RedisThesisBuilderIo | None = None,
         analyzer: ThesisAnalyzer | None = None,
         market_context_client: MarketContextClient | None = None,
+        instrument_registry: InstrumentRegistry | None = None,
+        review_writer: ThesisCardReviewWriter | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository or PostgresThesisBuilderRepository(
             dsn=settings.postgres_dsn,
             thesis_schema=settings.thesis_builder_db_schema,
-            shared_schema=settings.shared_db_schema,
-            watchlist_table="t_watchlist_tickers",
         )
         self._redis = redis_io or RedisThesisBuilderIo(
             queue_url=settings.queue_url,
@@ -71,6 +86,15 @@ class ThesisBuilderRunner:
             max_tokens_per_item=settings.llm_max_output_tokens,
         )
         self._market_context_client = market_context_client
+        self._instrument_registry = instrument_registry or PostgresSharedInstrumentRegistry(
+            dsn=settings.postgres_dsn,
+            shared_schema=settings.shared_db_schema,
+            watchlist_table="t_watchlist_tickers",
+        )
+        self._review_writer = review_writer or PostgresSharedThesisCardReviewWriter(
+            dsn=settings.postgres_dsn,
+            shared_schema=settings.shared_db_schema,
+        )
 
     def run_forever(self) -> None:
         self.bootstrap()
@@ -147,7 +171,10 @@ class ThesisBuilderRunner:
             self._redis.ack(message.message_id)
             return ProcessMessageResult(acked=True, analyses_created=0, signals_published=0)
 
-        instruments = self._repository.resolve_instruments(article)
+        instruments = _resolve_instruments(
+            article=article,
+            active_instruments=self._instrument_registry.list_active_instruments(),
+        )
         if not instruments:
             self._redis.ack(message.message_id)
             return ProcessMessageResult(acked=True, analyses_created=0, signals_published=0)
@@ -187,6 +214,10 @@ class ThesisBuilderRunner:
             )
             analyses_created += 1
             if result.signal is not None:
+                self._review_writer.upsert_system_approved_review(
+                    card_id=result.signal.thesis_card_id,
+                    reviewed_at=result.signal.created_at,
+                )
                 self._redis.publish_signal(result.signal.envelope())
                 self._repository.mark_signal_published(
                     result.signal.thesis_card_id,
@@ -234,3 +265,22 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_ready(item) for item in value]
     return value
+
+
+def _resolve_instruments(
+    *,
+    article: NewsArticle,
+    active_instruments: list[SharedInstrumentRecord],
+) -> list[InstrumentIdentity]:
+    article_tickers = {ticker.strip().upper() for ticker in article.tickers if ticker.strip()}
+    text = " ".join([article.headline, article.summary or "", article.url]).lower()
+    matches: list[InstrumentIdentity] = []
+    for instrument in active_instruments:
+        if instrument.ticker in article_tickers or any(alias and alias in text for alias in instrument.aliases):
+            matches.append(
+                InstrumentIdentity(
+                    ticker=instrument.ticker,
+                    exchange_code=instrument.exchange_code,
+                )
+            )
+    return matches

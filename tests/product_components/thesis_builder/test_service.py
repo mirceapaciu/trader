@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
-from src.product_components.thesis_builder.models import InstrumentIdentity, NewsArticle
+from src.product_components.shared.adapters import SharedInstrumentRecord
+from src.product_components.thesis_builder.models import NewsArticle
 from src.product_components.thesis_builder.redis_io import NewsStreamMessage
 from src.product_components.thesis_builder.service import ThesisBuilderRunner
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
@@ -43,16 +44,34 @@ class _FakeIo:
 
 
 class _FakeRepository:
-    def __init__(self, instruments: list[InstrumentIdentity] | None = None) -> None:
-        self.instruments = instruments or []
+    def __init__(self) -> None:
         self.rejected: list[str] = []
-
-    def resolve_instruments(self, _article):
-        return self.instruments
 
     def persist_rejected_analysis(self, **kwargs):
         self.rejected.append(kwargs["rejection_reason_code"])
         return 1
+
+
+class _FakeInstrumentRegistry:
+    def __init__(self, rows: list[SharedInstrumentRecord] | None = None) -> None:
+        self.rows = rows or []
+
+    def list_active_instruments(self) -> list[SharedInstrumentRecord]:
+        return list(self.rows)
+
+
+class _FakeReviewWriter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, datetime]] = []
+
+    def upsert_system_approved_review(
+        self,
+        *,
+        card_id: str,
+        reviewed_at: datetime,
+        review_reason: str = "thesis_builder_preapproved_v1",
+    ) -> None:
+        self.calls.append((card_id, reviewed_at))
 
 
 def test_thesis_builder_runner_bootstraps_io() -> None:
@@ -62,6 +81,8 @@ def test_thesis_builder_runner_bootstraps_io() -> None:
         redis_io=io,
         repository=_FakeRepository(),
         analyzer=_NoopAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(),
+        review_writer=_FakeReviewWriter(),
     )
 
     runner.bootstrap()
@@ -84,6 +105,8 @@ def test_missing_article_goes_to_dlq_and_acks() -> None:
         redis_io=io,
         repository=_FakeRepository(),
         analyzer=_NoopAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(),
+        review_writer=_FakeReviewWriter(),
     )
 
     result = runner.process_message(message)
@@ -95,13 +118,17 @@ def test_missing_article_goes_to_dlq_and_acks() -> None:
 
 def test_invalid_llm_response_is_persisted_and_acked() -> None:
     article = _article()
-    repo = _FakeRepository(instruments=[InstrumentIdentity("AAPL", "XNAS")])
+    repo = _FakeRepository()
     io = _FakeIo()
     runner = ThesisBuilderRunner(
         settings=_settings(),
         redis_io=io,
         repository=repo,
         analyzer=_FailingAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(
+            [SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",))]
+        ),
+        review_writer=_FakeReviewWriter(),
     )
 
     result = runner.process_message(_message(article_id=article.id))
@@ -109,6 +136,24 @@ def test_invalid_llm_response_is_persisted_and_acked() -> None:
     assert result.acked is True
     assert result.analyses_created == 1
     assert repo.rejected == ["invalid_test_response"]
+    assert io.acked == ["1-0"]
+
+
+def test_article_without_registry_match_is_acked_without_processing() -> None:
+    io = _FakeIo()
+    runner = ThesisBuilderRunner(
+        settings=_settings(),
+        redis_io=io,
+        repository=_FakeRepository(),
+        analyzer=_NoopAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(),
+        review_writer=_FakeReviewWriter(),
+    )
+
+    result = runner.process_message(_message(article_id="article-1"))
+
+    assert result.acked is True
+    assert result.analyses_created == 0
     assert io.acked == ["1-0"]
 
 

@@ -11,6 +11,10 @@ from src.product_components.market_data.service import MarketDataService
 from src.product_components.market_data.settings import MarketDataSettings
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 from src.product_components.news_fetcher.env_loader import load_env_files
+from src.product_components.shared.adapters import (
+    PostgresSharedInstrumentRegistry,
+    PostgresSharedThesisCardReviewWriter,
+)
 
 from .service import ThesisBuilderRunner
 from .settings import ThesisBuilderSettings
@@ -87,6 +91,15 @@ def main() -> None:
     ThesisBuilderRunner(
         settings=settings,
         market_context_client=market_data_service,
+        instrument_registry=PostgresSharedInstrumentRegistry(
+            dsn=settings.postgres_dsn,
+            shared_schema=settings.shared_db_schema,
+            watchlist_table=market_data_settings.watchlist_table,
+        ),
+        review_writer=PostgresSharedThesisCardReviewWriter(
+            dsn=settings.postgres_dsn,
+            shared_schema=settings.shared_db_schema,
+        ),
     ).run_forever()
 
 
