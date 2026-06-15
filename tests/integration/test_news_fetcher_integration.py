@@ -29,6 +29,7 @@ from src.product_components.news_fetcher.providers import (
 from src.product_components.news_fetcher.service import NewsFetcherService
 from src.product_components.news_fetcher.settings import NewsFetcherSettings
 from src.product_components.news_fetcher.storage_adapter import PostgresNewsStorageAdapter
+from src.product_components.shared.adapters import PostgresSharedInstrumentRegistry
 
 
 pytestmark = pytest.mark.integration
@@ -226,6 +227,18 @@ def _batch_with_one_article(provider_event_id: str) -> ProviderBatch:
     )
 
 
+def _storage_adapter(settings: NewsFetcherSettings) -> PostgresNewsStorageAdapter:
+    return PostgresNewsStorageAdapter(
+        dsn=settings.postgres_dsn,
+        news_schema=settings.newsfetcher_db_schema,
+        instrument_registry=PostgresSharedInstrumentRegistry(
+            dsn=settings.postgres_dsn,
+            shared_schema=settings.shared_db_schema,
+            watchlist_table=settings.watchlist_table,
+        ),
+    )
+
+
 def test_news_fetcher_e2e_persist_then_publish_and_checkpoint() -> None:
     settings = _settings()
     redis_client = _redis_client()
@@ -239,12 +252,7 @@ def test_news_fetcher_e2e_persist_then_publish_and_checkpoint() -> None:
     service = NewsFetcherService(
         settings=settings,
         providers={"finnhub": _StaticProvider(_batch_with_one_article("evt-e2e-1"))},
-        storage=PostgresNewsStorageAdapter(
-            dsn=settings.postgres_dsn,
-            news_schema=settings.newsfetcher_db_schema,
-            shared_schema=settings.shared_db_schema,
-            watchlist_table=settings.watchlist_table,
-        ),
+        storage=_storage_adapter(settings),
         publisher=_RedisPublisher(client=redis_client, stream_name=stream),
     )
 
@@ -274,12 +282,7 @@ def test_news_fetcher_repeated_cycle_is_idempotent_on_articles() -> None:
     service = NewsFetcherService(
         settings=settings,
         providers={"finnhub": _StaticProvider(_batch_with_one_article("evt-repeat-1"))},
-        storage=PostgresNewsStorageAdapter(
-            dsn=settings.postgres_dsn,
-            news_schema=settings.newsfetcher_db_schema,
-            shared_schema=settings.shared_db_schema,
-            watchlist_table=settings.watchlist_table,
-        ),
+        storage=_storage_adapter(settings),
         publisher=_RedisPublisher(client=redis_client, stream_name=settings.news_raw_queue),
     )
 
@@ -302,12 +305,7 @@ def test_news_fetcher_non_transient_publish_moves_to_dead_lettered() -> None:
     service = NewsFetcherService(
         settings=settings,
         providers={"finnhub": _StaticProvider(_batch_with_one_article("evt-dlq-1"))},
-        storage=PostgresNewsStorageAdapter(
-            dsn=settings.postgres_dsn,
-            news_schema=settings.newsfetcher_db_schema,
-            shared_schema=settings.shared_db_schema,
-            watchlist_table=settings.watchlist_table,
-        ),
+        storage=_storage_adapter(settings),
         publisher=_AlwaysFailPublisher(NonTransientPublishError("invalid_envelope")),
     )
 
@@ -326,12 +324,7 @@ def test_news_fetcher_transient_publish_failure_blocks_checkpoint() -> None:
     service = NewsFetcherService(
         settings=settings,
         providers={"finnhub": _StaticProvider(_batch_with_one_article("evt-transient-1"))},
-        storage=PostgresNewsStorageAdapter(
-            dsn=settings.postgres_dsn,
-            news_schema=settings.newsfetcher_db_schema,
-            shared_schema=settings.shared_db_schema,
-            watchlist_table=settings.watchlist_table,
-        ),
+        storage=_storage_adapter(settings),
         publisher=_AlwaysFailPublisher(TransientPublishError("temporary_broker_failure")),
     )
 

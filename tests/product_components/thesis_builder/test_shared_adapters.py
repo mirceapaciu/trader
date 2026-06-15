@@ -4,14 +4,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.product_components.shared.adapters import (
+    PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
     PostgresSharedThesisCardReviewWriter,
+    SharedInstrumentSeed,
 )
 
 
 class _FakeCursor:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.sql: str | None = None
+        self.statements: list[str] = []
+        self.params_history: list[tuple[Any, ...] | None] = []
         self.params: tuple[Any, ...] | None = None
         self._rows = rows or []
 
@@ -23,6 +27,8 @@ class _FakeCursor:
 
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
         self.sql = sql
+        self.statements.append(sql)
+        self.params_history.append(params)
         self.params = params
 
     def fetchall(self) -> list[dict[str, Any]]:
@@ -94,4 +100,34 @@ def test_shared_review_writer_upserts_review_state(monkeypatch) -> None:
     assert "ON CONFLICT (card_id) DO UPDATE SET" in cursor.sql
     assert cursor.params is not None
     assert cursor.params[0] == "card-1"
+    assert connection.committed is True
+
+
+def test_shared_instrument_admin_upserts_instruments_and_aliases(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    admin = PostgresSharedInstrumentAdmin(
+        dsn="unused",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(admin, "_connect", lambda: connection)
+
+    admin.upsert_instruments(
+        (
+            SharedInstrumentSeed(
+                ticker="RHM",
+                exchange_code="ETR",
+                display_name="Rheinmetall",
+                aliases=("RHM", "Rheinmetall AG"),
+                identifiers={"isin": "DE0007030009"},
+                enabled=True,
+            ),
+        )
+    )
+
+    combined_sql = "\n".join(cursor.statements)
+    assert "INSERT INTO shared.t_instruments" in combined_sql
+    assert "INSERT INTO shared.t_instrument_aliases" in combined_sql
+    assert any(params and params[0] == "RHM" and params[2] == "Rheinmetall" for params in cursor.params_history)
+    assert any(params and params[2] == "DE0007030009" and params[3] == "identifier" for params in cursor.params_history)
     assert connection.committed is True

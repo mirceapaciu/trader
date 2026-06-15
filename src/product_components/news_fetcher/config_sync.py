@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 import psycopg
 from psycopg.types.json import Json
 
+from src.product_components.shared.adapters import PostgresSharedInstrumentAdmin, SharedInstrumentSeed
+
 from .settings import NewsFetcherSettings
 
 _SOURCE_KEY = re.compile(r"^rss:[a-z0-9_:-]+$|^[a-z][a-z0-9_:-]*$")
@@ -55,12 +57,16 @@ def sync_seed_configs(*, repo_root: Path, settings: NewsFetcherSettings) -> None
     rss_sources = load_rss_sources_config(settings.rss_sources_config_path(repo_root))
     legacy_sources = _legacy_rss_sources(settings)
 
+    instrument_admin = PostgresSharedInstrumentAdmin(
+        dsn=settings.postgres_dsn,
+        shared_schema=settings.shared_db_schema,
+    )
+    _sync_instruments(
+        instrument_admin=instrument_admin,
+        instruments=instruments,
+    )
+
     with psycopg.connect(settings.postgres_dsn) as conn:
-        _sync_instruments(
-            conn=conn,
-            shared_schema=settings.shared_db_schema,
-            instruments=instruments,
-        )
         _sync_rss_sources(
             conn=conn,
             news_schema=settings.newsfetcher_db_schema,
@@ -194,56 +200,24 @@ def _parse_symbol_mappings(
 
 def _sync_instruments(
     *,
-    conn: psycopg.Connection,
-    shared_schema: str,
+    instrument_admin: PostgresSharedInstrumentAdmin,
     instruments: tuple[InstrumentConfig, ...],
 ) -> None:
     if not instruments:
         return
-    with conn.cursor() as cur:
-        for instrument in instruments:
-            cur.execute(
-                f"""
-                INSERT INTO {shared_schema}.t_instruments
-                    (ticker, exchange_code, display_name, identifiers, is_enabled, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
-                ON CONFLICT (ticker, exchange_code)
-                DO UPDATE SET
-                    display_name = EXCLUDED.display_name,
-                    identifiers = EXCLUDED.identifiers,
-                    is_enabled = EXCLUDED.is_enabled,
-                    updated_at = NOW()
-                """,
-                (
-                    instrument.ticker,
-                    instrument.exchange_code,
-                    instrument.names[0] if instrument.names else instrument.ticker,
-                    Json(instrument.identifiers),
-                    instrument.enabled,
-                ),
+    instrument_admin.upsert_instruments(
+        tuple(
+            SharedInstrumentSeed(
+                ticker=instrument.ticker,
+                exchange_code=instrument.exchange_code,
+                display_name=instrument.names[0] if instrument.names else instrument.ticker,
+                aliases=(*instrument.names, *instrument.aliases),
+                identifiers=instrument.identifiers,
+                enabled=instrument.enabled,
             )
-            aliases = {
-                instrument.ticker,
-                *instrument.names,
-                *instrument.aliases,
-                *[str(value) for value in instrument.identifiers.values()],
-            }
-            for alias in sorted({alias.strip() for alias in aliases if alias and alias.strip()}):
-                cur.execute(
-                    f"""
-                    INSERT INTO {shared_schema}.t_instrument_aliases
-                        (ticker, exchange_code, alias, alias_type, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, NOW(), NOW())
-                    ON CONFLICT (ticker, exchange_code, alias)
-                    DO UPDATE SET alias_type = EXCLUDED.alias_type, updated_at = NOW()
-                    """,
-                    (
-                        instrument.ticker,
-                        instrument.exchange_code,
-                        alias,
-                        "identifier" if alias in {str(value) for value in instrument.identifiers.values()} else "alias",
-                    ),
-                )
+            for instrument in instruments
+        )
+    )
 
 
 def _sync_rss_sources(

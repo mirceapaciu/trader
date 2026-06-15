@@ -8,6 +8,7 @@ from src.core_components.event_ingestion_engine.engine import EventIngestionEngi
 from src.core_components.event_ingestion_engine.errors import NonTransientPublishError, TransientPublishError
 from src.core_components.event_ingestion_engine.interfaces import EventPublisher, StorageAdapter
 from src.core_components.event_ingestion_engine.models import ProcessResult, PublicationStatus, SoftDedupePolicy
+from src.product_components.shared.adapters import PostgresSharedInstrumentRegistry
 
 from .providers import NewsProvider, ProviderRateLimitError, RssProvider
 from .publisher import RedisStreamPublisher
@@ -315,11 +316,15 @@ def build_service(
     providers: dict[str, NewsProvider],
 ) -> NewsFetcherService:
     """Construct default NewsFetcher service with PostgreSQL and Redis adapters."""
+    instrument_registry = PostgresSharedInstrumentRegistry(
+        dsn=settings.postgres_dsn,
+        shared_schema=settings.shared_db_schema,
+        watchlist_table=settings.watchlist_table,
+    )
     storage = PostgresNewsStorageAdapter(
         dsn=settings.postgres_dsn,
         news_schema=settings.newsfetcher_db_schema,
-        shared_schema=settings.shared_db_schema,
-        watchlist_table=settings.watchlist_table,
+        instrument_registry=instrument_registry,
     )
     publisher = RedisStreamPublisher(
         queue_url=settings.queue_url,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 
 import psycopg
 from psycopg.rows import dict_row
@@ -32,8 +32,14 @@ from src.product_components.news_fetcher.rss_feeds import (
     rss_batch_source_key,
     rss_source_key,
 )
+from src.product_components.shared.adapters import SharedInstrumentRecord
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class InstrumentRegistry(Protocol):
+    def list_active_instruments(self) -> list[SharedInstrumentRecord]:
+        """Return active shared instrument registry rows."""
 
 
 class PostgresNewsStorageAdapter(StorageAdapter):
@@ -44,13 +50,11 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         *,
         dsn: str,
         news_schema: str,
-        shared_schema: str,
-        watchlist_table: str,
+        instrument_registry: InstrumentRegistry,
     ) -> None:
         self._dsn = dsn
         self._news_schema = _safe_identifier(news_schema)
-        self._shared_schema = _safe_identifier(shared_schema)
-        self._watchlist_table = _safe_identifier(watchlist_table)
+        self._instrument_registry = instrument_registry
 
     def get_checkpoint(self, source_key: str) -> Checkpoint | None:
         sql = (
@@ -518,17 +522,10 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         return production
 
     def load_active_watchlist_rows(self) -> list[WatchlistTicker]:
-        sql = (
-            f"SELECT ticker, exchange_code FROM {self._shared_schema}.{self._watchlist_table} "
-            f"WHERE is_active = TRUE"
-        )
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
         watchlist: list[WatchlistTicker] = []
-        for row in rows:
-            ticker = str(row[0]).strip().upper()
-            exchange_code = str(row[1]).strip().upper()
+        for row in self._instrument_registry.list_active_instruments():
+            ticker = str(row.ticker).strip().upper()
+            exchange_code = str(row.exchange_code).strip().upper()
             if ticker and exchange_code:
                 watchlist.append(WatchlistTicker(ticker=ticker, exchange_code=exchange_code))
         return watchlist
@@ -562,32 +559,57 @@ class PostgresNewsStorageAdapter(StorageAdapter):
         ]
 
     def _load_dynamic_rss_feed_specs(self) -> list[RssFeedSpec]:
-        sql = (
-            f"SELECT "
-            f"w.ticker, w.exchange_code, s.source_key, s.base_url, s.symbol_param, "
-            f"s.default_query_params, s.max_symbols_per_request, s.min_request_interval_seconds, "
-            f"s.grouping_mode, r.provider_symbol, r.query_params, "
-            f"COALESCE(a.aliases, '[]'::jsonb) AS aliases "
-            f"FROM {self._shared_schema}.{self._watchlist_table} w "
-            f"CROSS JOIN {self._news_schema}.t_rss_sources s "
-            f"LEFT JOIN {self._news_schema}.t_rss_symbol_rules r "
-            f"ON r.source_key = s.source_key "
-            f"AND UPPER(r.ticker) = UPPER(w.ticker) "
-            f"AND UPPER(r.exchange_code) = UPPER(w.exchange_code) "
-            f"AND r.is_enabled = TRUE "
-            f"LEFT JOIN ("
-            f"SELECT ticker, exchange_code, jsonb_agg(alias ORDER BY alias) AS aliases "
-            f"FROM {self._shared_schema}.t_instrument_aliases "
-            f"GROUP BY ticker, exchange_code"
-            f") a ON UPPER(a.ticker) = UPPER(w.ticker) "
-            f"AND UPPER(a.exchange_code) = UPPER(w.exchange_code) "
-            f"WHERE w.is_active = TRUE AND s.is_enabled = TRUE "
-            f"AND s.source_type = 'dynamic_watchlist' "
-            f"ORDER BY s.source_key, w.ticker, w.exchange_code"
+        instruments = self._instrument_registry.list_active_instruments()
+        if not instruments:
+            return []
+
+        source_sql = (
+            f"SELECT source_key, base_url, symbol_param, default_query_params, "
+            f"max_symbols_per_request, min_request_interval_seconds, grouping_mode "
+            f"FROM {self._news_schema}.t_rss_sources "
+            f"WHERE is_enabled = TRUE AND source_type = 'dynamic_watchlist' "
+            f"ORDER BY source_key"
+        )
+        rule_sql = (
+            f"SELECT source_key, ticker, exchange_code, provider_symbol, query_params "
+            f"FROM {self._news_schema}.t_rss_symbol_rules "
+            f"WHERE is_enabled = TRUE "
+            f"ORDER BY source_key, ticker, exchange_code"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
+            cur.execute(source_sql)
+            sources = cur.fetchall()
+            cur.execute(rule_sql)
+            rules = cur.fetchall()
+
+        rule_by_key = {
+            (
+                str(rule["source_key"]).strip(),
+                str(rule["ticker"]).strip().upper(),
+                str(rule["exchange_code"]).strip().upper(),
+            ): rule
+            for rule in rules
+        }
+
+        rows: list[dict[str, Any]] = []
+        for source in sources:
+            source_key = str(source["source_key"]).strip()
+            for instrument in instruments:
+                ticker = str(instrument.ticker).strip().upper()
+                exchange_code = str(instrument.exchange_code).strip().upper()
+                if not ticker or not exchange_code:
+                    continue
+                rule = rule_by_key.get((source_key, ticker, exchange_code), {})
+                rows.append(
+                    {
+                        **source,
+                        "ticker": ticker,
+                        "exchange_code": exchange_code,
+                        "provider_symbol": rule.get("provider_symbol"),
+                        "query_params": rule.get("query_params"),
+                        "aliases": list(instrument.aliases),
+                    }
+                )
 
         grouped_rows: dict[tuple[str, str, str, tuple[tuple[str, str], ...], int, int, str], list[dict[str, Any]]] = {}
         for row in rows:
