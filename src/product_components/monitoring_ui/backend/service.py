@@ -16,6 +16,7 @@ from .models import (
     HealthResponse,
     NewsFilterConfigPayload,
     ProvidersResponse,
+    ThesisBuilderMetricsResponse,
     ThroughputResponse,
 )
 from .settings import MonitoringUiSettings
@@ -33,6 +34,13 @@ class MonitoringDataSource(Protocol):
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> ThroughputResponse: ...
+
+    def get_thesis_builder_metrics(
+        self,
+        *,
+        window: str,
+        evidence_collection_max_minutes: int,
+    ) -> ThesisBuilderMetricsResponse: ...
 
     def get_backlog(self) -> BacklogResponse: ...
 
@@ -156,6 +164,15 @@ class MonitoringService:
         if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
             raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
         return self._data_source.get_throughput(window=selected_window)
+
+    def get_thesis_builder_metrics(self, *, window: str | None) -> ThesisBuilderMetricsResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported thesis-builder metrics window: {selected_window}")
+        return self._data_source.get_thesis_builder_metrics(
+            window=selected_window,
+            evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
+        )
 
     def get_backlog(self) -> BacklogResponse:
         return self._data_source.get_backlog()

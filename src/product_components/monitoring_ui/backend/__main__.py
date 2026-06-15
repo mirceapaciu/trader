@@ -22,6 +22,7 @@ def main() -> None:
             ".env.monitoring-ui",
             ".env.news-fetcher",
             ".env.filter-quality-evaluator",
+            ".env.thesis-builder",
             ".env.secrets",
         ),
         override_existing=False,

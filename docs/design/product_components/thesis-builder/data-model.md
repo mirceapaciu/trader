@@ -30,6 +30,10 @@ Logical fields:
 - `market_context_snapshot`: optional JSON copy of the MarketData context used for strategy validation, confidence, or risk-box generation.
 - `validation_status`: deterministic validation result (`valid` or `rejected`).
 - `validation_errors`: optional machine-readable validation failures.
+- `rejection_reason_code`: optional machine-readable reason for rejected cards, including `stale_evidence`.
+- `max_evidence_age_seconds`: maximum age, in seconds, of any evidence article at card validation time.
+- `allowed_max_evidence_age_seconds`: freshness limit used for validation.
+- `evidence_age_exceeded_seconds`: amount by which evidence age exceeded the freshness limit; zero or null for non-stale cards.
 - `signal_published_at`: optional timestamp when the executable signal was published.
 - `expires_at`: card expiry timestamp.
 - `created_at`: card creation timestamp.
@@ -43,6 +47,7 @@ Behavioral constraints:
 - Valid cards must receive a matching shared review row in `shared.t_thesis_card_reviews`.
 - Initially, valid cards are preapproved by system policy with `decision_state=approved`, `reviewed_by=system_policy`, and a review reason identifying the policy version.
 - Cards that fail product-constraint validation are persisted only as non-executable rejected records for audit, if persisted at all; they must not be published as executable signals.
+- Cards generated only to estimate missed opportunities from old news use `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the UI labels these as `stale`.
 - TradeExecutor must not infer approval from this table alone; executable state is determined by shared review state plus freshness.
 
 ### `t_news_analyses`
@@ -68,6 +73,7 @@ Logical fields:
 - `market_context_status`: optional status returned by the MarketData component API (`fresh`, `delayed`, `stale`, or `missing`).
 - `market_context_as_of`: optional timestamp of the copied market context snapshot.
 - `market_context_snapshot`: optional JSON copy of the MarketData context used for scoring or strategy validation.
+- `is_market_moving`: deterministic/LLM-derived flag indicating that the article was considered market moving for this instrument.
 - `validation_status`: deterministic output validation result (`valid` or `rejected`).
 - `validation_errors`: optional machine-readable validation failures.
 - `rejection_reason_code`: optional machine-readable reason for rejected or non-actionable analyses.

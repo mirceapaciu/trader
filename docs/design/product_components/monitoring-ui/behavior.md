@@ -6,6 +6,7 @@ This file defines the runtime behavior owned by the Monitoring UI process.
 
 Monitoring UI responsibilities:
 - Present near-real-time NewsFetcher operational state to the operator.
+- Present ThesisBuilder operational KPIs in a separate domain tab.
 - Surface provider health, throughput, deduplication, and publish outcomes.
 - Surface queue and dependency health relevant to NewsFetcher.
 - Start a bounded Filter Quality Evaluator run and surface the latest persisted evaluator summary.
@@ -22,6 +23,7 @@ Process name:
 
 Inputs:
 - NewsFetcher operational telemetry (metrics and health state).
+- ThesisBuilder audit tables and evidence-window state.
 - NewsFetcher process logs and cycle summaries.
 - Read-only projections from NewsFetcher-owned persistence tables.
 - Environment configuration.
@@ -48,6 +50,8 @@ Runtime behavior:
 - UI must display last successful refresh timestamp in UTC.
 
 ## 4. Dashboard Behavior
+
+The Monitoring UI is organized as a modular tabbed application. The default tab is `NewsFetcher`; ThesisBuilder monitoring appears in a separate `ThesisBuilder` tab. Domain-specific data access, frontend state, and dashboard composition should stay separated in source code.
 
 ### 4.1 Global Health Panel
 
@@ -130,6 +134,27 @@ Must display:
 - Count of dead-lettered envelopes.
 - Recent dead-letter items with source, reason, and first failure time.
 
+### 4.5 ThesisBuilder Panel
+
+The ThesisBuilder tab displays KPI tiles for:
+- Number of articles processed.
+- Number of market-moving articles.
+- Number of articles included into thesis cards.
+- Number of articles too old to be included into valid cards.
+- Number of created thesis cards.
+- Number of currently pending thesis cards.
+- Oldest and average pending thesis-card age.
+- Minimum and average time remaining before pending evidence windows expire.
+- Estimated missed thesis cards caused by stale evidence.
+- Average, p95, and max evidence-age exceedance for stale audit cards.
+
+Time windows:
+- 15 minutes, 1 hour, 1 day, 7 days, and 30 days.
+
+Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
+
+If ThesisBuilder tables or required columns are not available, the tab renders a degraded empty state without failing the NewsFetcher monitoring tab.
+
 ## 5. Implementation Stack
 
 The Monitoring UI frontend stack is:
@@ -164,6 +189,7 @@ Required read endpoints:
 - `GET /api/health` returns global readiness, liveness, dependency state, and stale-data status.
 - `GET /api/providers` returns provider-level cycle summaries and last error state.
 - `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics for either a preset `window` token or explicit `start_at` and `end_at` bounds.
+- `GET /api/thesis-builder/metrics` returns bounded-window ThesisBuilder KPIs and pending evidence windows for `15m`, `1h`, `1d`, `7d`, or `30d`.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.

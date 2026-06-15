@@ -34,6 +34,8 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderMetricsResponse,
+    ThesisBuilderPendingWindow,
     ThroughputBucket,
     ThroughputResponse,
 )
@@ -48,6 +50,7 @@ class PostgresRedisMonitoringDataSource:
         dsn: str,
         news_schema: str,
         filter_quality_schema: str,
+        thesis_builder_schema: str,
         queue_url: str,
         news_raw_queue: str,
         query_timeout_seconds: int,
@@ -55,6 +58,7 @@ class PostgresRedisMonitoringDataSource:
         self._dsn = dsn
         self._news_schema = _safe_identifier(news_schema)
         self._filter_quality_schema = _safe_identifier(filter_quality_schema)
+        self._thesis_builder_schema = _safe_identifier(thesis_builder_schema)
         self._queue_url = queue_url
         self._news_raw_queue = news_raw_queue
         self._query_timeout_seconds = query_timeout_seconds
@@ -99,6 +103,11 @@ class PostgresRedisMonitoringDataSource:
 
     def bootstrap_news_schema(self, *, repo_root: Path) -> None:
         schema_file = repo_root / "src" / "product_components" / "news_fetcher" / "db" / "schema.sql"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(schema_file.read_text(encoding="utf-8"))
+
+    def bootstrap_thesis_builder_schema(self, *, repo_root: Path) -> None:
+        schema_file = repo_root / "src" / "product_components" / "thesis_builder" / "db" / "schema.sql"
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(schema_file.read_text(encoding="utf-8"))
 
@@ -188,6 +197,151 @@ class PostgresRedisMonitoringDataSource:
             window_end_at=resolved_end_at,
             buckets=buckets,
             generated_at=_utc_now(),
+        )
+
+    def get_thesis_builder_metrics(
+        self,
+        *,
+        window: str,
+        evidence_collection_max_minutes: int,
+    ) -> ThesisBuilderMetricsResponse:
+        resolved_end_at = _utc_now()
+        resolved_start_at = resolved_end_at - _window_to_timedelta(window)
+        schema = self._thesis_builder_schema
+        generated_at = _utc_now()
+        empty_response = ThesisBuilderMetricsResponse(
+            available=False,
+            message="ThesisBuilder telemetry is unavailable.",
+            window=window,
+            window_start_at=resolved_start_at,
+            window_end_at=resolved_end_at,
+            articles_processed_count=0,
+            market_moving_articles_count=0,
+            articles_included_in_cards_count=0,
+            stale_articles_count=0,
+            created_thesis_cards_count=0,
+            pending_thesis_cards_count=0,
+            missed_stale_thesis_cards_count=0,
+            generated_at=generated_at,
+        )
+        try:
+            article_counts = self._fetch_one(
+                (
+                    f"SELECT "
+                    f"COUNT(DISTINCT article_id) AS articles_processed_count, "
+                    f"COUNT(DISTINCT article_id) FILTER (WHERE is_market_moving = TRUE) "
+                    f"AS market_moving_articles_count "
+                    f"FROM {schema}.t_news_analyses "
+                    f"WHERE analyzed_at >= %s AND analyzed_at < %s"
+                ),
+                (resolved_start_at, resolved_end_at),
+            )
+            card_counts = self._fetch_one(
+                (
+                    f"SELECT "
+                    f"COUNT(*) FILTER (WHERE validation_status = 'valid') AS created_thesis_cards_count, "
+                    f"COUNT(*) FILTER ("
+                    f"WHERE validation_status = 'rejected' AND rejection_reason_code = 'stale_evidence'"
+                    f") AS missed_stale_thesis_cards_count, "
+                    f"AVG(evidence_age_exceeded_seconds) FILTER ("
+                    f"WHERE validation_status = 'rejected' AND rejection_reason_code = 'stale_evidence'"
+                    f") AS stale_evidence_exceeded_avg_seconds, "
+                    f"PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY evidence_age_exceeded_seconds) FILTER ("
+                    f"WHERE validation_status = 'rejected' AND rejection_reason_code = 'stale_evidence' "
+                    f"AND evidence_age_exceeded_seconds IS NOT NULL"
+                    f") AS stale_evidence_exceeded_p95_seconds, "
+                    f"MAX(evidence_age_exceeded_seconds) FILTER ("
+                    f"WHERE validation_status = 'rejected' AND rejection_reason_code = 'stale_evidence'"
+                    f") AS stale_evidence_exceeded_max_seconds "
+                    f"FROM {schema}.t_thesis_cards "
+                    f"WHERE created_at >= %s AND created_at < %s"
+                ),
+                (resolved_start_at, resolved_end_at),
+            )
+            included_articles = self._scalar_count(
+                (
+                    f"SELECT COUNT(DISTINCT evidence_item->>'article_id') "
+                    f"FROM {schema}.t_thesis_cards c "
+                    f"CROSS JOIN LATERAL jsonb_array_elements(c.evidence) AS evidence_item "
+                    f"WHERE c.created_at >= %s AND c.created_at < %s "
+                    f"AND evidence_item ? 'article_id'"
+                ),
+                (resolved_start_at, resolved_end_at),
+            )
+            stale_articles = self._scalar_count(
+                (
+                    f"SELECT COUNT(DISTINCT article_id) FROM ("
+                    f"SELECT article_id "
+                    f"FROM {schema}.t_news_analyses "
+                    f"WHERE analyzed_at >= %s AND analyzed_at < %s "
+                    f"AND rejection_reason_code = 'stale_evidence' "
+                    f"UNION "
+                    f"SELECT evidence_item->>'article_id' AS article_id "
+                    f"FROM {schema}.t_thesis_cards c "
+                    f"CROSS JOIN LATERAL jsonb_array_elements(c.evidence) AS evidence_item "
+                    f"WHERE c.created_at >= %s AND c.created_at < %s "
+                    f"AND c.validation_status = 'rejected' "
+                    f"AND c.rejection_reason_code = 'stale_evidence' "
+                    f"AND evidence_item ? 'article_id'"
+                    f") stale_articles "
+                    f"WHERE article_id IS NOT NULL"
+                ),
+                (resolved_start_at, resolved_end_at, resolved_start_at, resolved_end_at),
+            )
+            pending_summary = self._fetch_one(
+                (
+                    f"SELECT COUNT(*) AS pending_thesis_cards_count, "
+                    f"MAX(EXTRACT(EPOCH FROM (NOW() - window_started_at))) AS oldest_pending_age_seconds, "
+                    f"AVG(EXTRACT(EPOCH FROM (NOW() - window_started_at))) AS average_pending_age_seconds, "
+                    f"MIN(EXTRACT(EPOCH FROM ("
+                    f"window_started_at + (%s * INTERVAL '1 minute') - NOW()"
+                    f"))) AS minimum_pending_expires_in_seconds, "
+                    f"AVG(EXTRACT(EPOCH FROM ("
+                    f"window_started_at + (%s * INTERVAL '1 minute') - NOW()"
+                    f"))) AS average_pending_expires_in_seconds "
+                    f"FROM {schema}.t_evidence_windows "
+                    f"WHERE status = 'collecting'"
+                ),
+                (evidence_collection_max_minutes, evidence_collection_max_minutes),
+            )
+            pending_windows = self._fetch_pending_thesis_windows(
+                evidence_collection_max_minutes=evidence_collection_max_minutes,
+            )
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return empty_response
+
+        return ThesisBuilderMetricsResponse(
+            available=True,
+            message=None,
+            window=window,
+            window_start_at=resolved_start_at,
+            window_end_at=resolved_end_at,
+            articles_processed_count=int(article_counts.get("articles_processed_count") or 0),
+            market_moving_articles_count=int(article_counts.get("market_moving_articles_count") or 0),
+            articles_included_in_cards_count=included_articles,
+            stale_articles_count=stale_articles,
+            created_thesis_cards_count=int(card_counts.get("created_thesis_cards_count") or 0),
+            pending_thesis_cards_count=int(pending_summary.get("pending_thesis_cards_count") or 0),
+            oldest_pending_age_seconds=_optional_float(pending_summary.get("oldest_pending_age_seconds")),
+            average_pending_age_seconds=_optional_float(pending_summary.get("average_pending_age_seconds")),
+            minimum_pending_expires_in_seconds=_optional_float(
+                pending_summary.get("minimum_pending_expires_in_seconds")
+            ),
+            average_pending_expires_in_seconds=_optional_float(
+                pending_summary.get("average_pending_expires_in_seconds")
+            ),
+            missed_stale_thesis_cards_count=int(card_counts.get("missed_stale_thesis_cards_count") or 0),
+            stale_evidence_exceeded_avg_seconds=_optional_float(
+                card_counts.get("stale_evidence_exceeded_avg_seconds")
+            ),
+            stale_evidence_exceeded_p95_seconds=_optional_float(
+                card_counts.get("stale_evidence_exceeded_p95_seconds")
+            ),
+            stale_evidence_exceeded_max_seconds=_optional_float(
+                card_counts.get("stale_evidence_exceeded_max_seconds")
+            ),
+            pending_windows=pending_windows,
+            generated_at=generated_at,
         )
 
     def get_backlog(self) -> BacklogResponse:
@@ -448,6 +602,44 @@ class PostgresRedisMonitoringDataSource:
             cur.execute(sql, params)
             row = cur.fetchone()
         return int(row[0]) if row else 0
+
+    def _fetch_one(self, sql: str, params: tuple[Any, ...]) -> dict[str, Any]:
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return dict(row or {})
+
+    def _fetch_pending_thesis_windows(
+        self,
+        *,
+        evidence_collection_max_minutes: int,
+    ) -> list[ThesisBuilderPendingWindow]:
+        sql = (
+            f"SELECT id, ticker, exchange_code, strategy, direction, window_started_at, last_evidence_at, "
+            f"EXTRACT(EPOCH FROM (NOW() - window_started_at)) AS pending_age_seconds, "
+            f"EXTRACT(EPOCH FROM (window_started_at + (%s * INTERVAL '1 minute') - NOW())) "
+            f"AS expires_in_seconds "
+            f"FROM {self._thesis_builder_schema}.t_evidence_windows "
+            f"WHERE status = 'collecting' "
+            f"ORDER BY window_started_at ASC LIMIT 25"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (evidence_collection_max_minutes,))
+            rows = cur.fetchall()
+        return [
+            ThesisBuilderPendingWindow(
+                window_id=int(row["id"]),
+                ticker=str(row["ticker"]),
+                exchange_code=str(row["exchange_code"]),
+                strategy=str(row["strategy"]),
+                direction=str(row["direction"]) if row["direction"] else None,
+                window_started_at=_to_utc(row["window_started_at"]),
+                last_evidence_at=_to_utc(row["last_evidence_at"]),
+                pending_age_seconds=float(row["pending_age_seconds"] or 0),
+                expires_in_seconds=float(row["expires_in_seconds"] or 0),
+            )
+            for row in rows
+        ]
 
     def _fetch_filter_quality_run(
         self,

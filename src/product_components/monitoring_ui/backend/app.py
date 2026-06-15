@@ -21,6 +21,7 @@ from .models import (
     HealthResponse,
     NewsFilterConfigPayload,
     ProvidersResponse,
+    ThesisBuilderMetricsResponse,
     ThroughputResponse,
 )
 from .repository import PostgresRedisMonitoringDataSource
@@ -42,12 +43,14 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         dsn=resolved_settings.postgres_dsn,
         news_schema=resolved_settings.newsfetcher_db_schema,
         filter_quality_schema=resolved_settings.filter_quality_db_schema,
+        thesis_builder_schema=resolved_settings.thesis_builder_db_schema,
         queue_url=resolved_settings.queue_url,
         news_raw_queue=resolved_settings.news_raw_queue,
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
     )
     try:
         data_source.bootstrap_news_schema(repo_root=_repo_root())
+        data_source.bootstrap_thesis_builder_schema(repo_root=_repo_root())
     except Exception:
         # The API still starts in degraded mode; dependency health reports database issues separately.
         pass
@@ -82,6 +85,13 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     ) -> ThroughputResponse:
         try:
             return service.get_throughput(window=window, start_at=start_at, end_at=end_at)
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get("/api/thesis-builder/metrics", response_model=ThesisBuilderMetricsResponse)
+    def get_thesis_builder_metrics(window: str | None = Query(default=None)) -> ThesisBuilderMetricsResponse:
+        try:
+            return service.get_thesis_builder_metrics(window=window)
         except InvalidThroughputWindow as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 

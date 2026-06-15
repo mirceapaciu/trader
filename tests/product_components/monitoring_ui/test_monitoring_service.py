@@ -16,10 +16,13 @@ from src.product_components.monitoring_ui.backend.models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderMetricsResponse,
+    ThesisBuilderPendingWindow,
     ThroughputResponse,
 )
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
 from src.product_components.monitoring_ui.backend.repository import (
+    PostgresRedisMonitoringDataSource,
     _incorrectly_rejected_item,
     _incorrectly_accepted_item,
     _throughput_bucket_expression,
@@ -52,6 +55,8 @@ class FakeDataSource:
         self.throughput_window: str | None = None
         self.throughput_start_at: datetime | None = None
         self.throughput_end_at: datetime | None = None
+        self.thesis_builder_window: str | None = None
+        self.thesis_builder_evidence_collection_max_minutes: int | None = None
         self.test_filter = _filter_config("test_cfg", "test")
         self.production_filter = _filter_config("prod_cfg", "production")
 
@@ -79,6 +84,16 @@ class FakeDataSource:
             buckets=[],
             generated_at=_now(),
         )
+
+    def get_thesis_builder_metrics(
+        self,
+        *,
+        window: str,
+        evidence_collection_max_minutes: int,
+    ) -> ThesisBuilderMetricsResponse:
+        self.thesis_builder_window = window
+        self.thesis_builder_evidence_collection_max_minutes = evidence_collection_max_minutes
+        return _thesis_builder_metrics(window=window)
 
     def get_backlog(self) -> BacklogResponse:
         return BacklogResponse(pending_count=0, retrying_count=0, dead_letter_count=0, generated_at=_now())
@@ -412,6 +427,96 @@ def test_get_throughput_rejects_invalid_window_token() -> None:
         raise AssertionError("expected InvalidThroughputWindow")
 
 
+def test_get_thesis_builder_metrics_forwards_supported_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_builder_metrics(window="7d")
+
+    assert data_source.thesis_builder_window == "7d"
+    assert data_source.thesis_builder_evidence_collection_max_minutes == 120
+    assert response.window == "7d"
+    assert response.created_thesis_cards_count == 2
+
+
+def test_get_thesis_builder_metrics_rejects_invalid_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    try:
+        service.get_thesis_builder_metrics(window="12h")
+    except InvalidThroughputWindow as exc:
+        assert "Unsupported thesis-builder metrics window" in str(exc)
+    else:
+        raise AssertionError("expected InvalidThroughputWindow")
+
+
+def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        query_timeout_seconds=1,
+    )
+    fetches = [
+        {
+            "articles_processed_count": 5,
+            "market_moving_articles_count": 3,
+        },
+        {
+            "created_thesis_cards_count": 2,
+            "missed_stale_thesis_cards_count": 1,
+            "stale_evidence_exceeded_avg_seconds": 300.0,
+            "stale_evidence_exceeded_p95_seconds": 540.0,
+            "stale_evidence_exceeded_max_seconds": 600.0,
+        },
+        {
+            "pending_thesis_cards_count": 2,
+            "oldest_pending_age_seconds": 720.0,
+            "average_pending_age_seconds": 420.0,
+            "minimum_pending_expires_in_seconds": 1200.0,
+            "average_pending_expires_in_seconds": 1800.0,
+        },
+    ]
+
+    monkeypatch.setattr(repository, "_fetch_one", lambda *_args, **_kwargs: fetches.pop(0))
+    monkeypatch.setattr(repository, "_scalar_count", lambda *_args, **_kwargs: 4)
+    monkeypatch.setattr(
+        repository,
+        "_fetch_pending_thesis_windows",
+        lambda **_kwargs: [
+            ThesisBuilderPendingWindow(
+                window_id=9,
+                ticker="AAPL",
+                exchange_code="XNAS",
+                strategy="event_driven",
+                direction="buy",
+                window_started_at=_now(),
+                last_evidence_at=_now(),
+                pending_age_seconds=720.0,
+                expires_in_seconds=1200.0,
+            )
+        ],
+    )
+
+    response = repository.get_thesis_builder_metrics(window="1d", evidence_collection_max_minutes=120)
+
+    assert response.available is True
+    assert response.articles_processed_count == 5
+    assert response.market_moving_articles_count == 3
+    assert response.articles_included_in_cards_count == 4
+    assert response.stale_articles_count == 4
+    assert response.created_thesis_cards_count == 2
+    assert response.pending_thesis_cards_count == 2
+    assert response.oldest_pending_age_seconds == 720.0
+    assert response.missed_stale_thesis_cards_count == 1
+    assert response.stale_evidence_exceeded_p95_seconds == 540.0
+    assert response.pending_windows[0].ticker == "AAPL"
+
+
 def test_filter_quality_status_returns_running_and_last_terminal_run() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     data_source.running_filter_quality_run = _filter_quality_run("fqe_running", "running")
@@ -637,6 +742,8 @@ def _settings() -> MonitoringUiSettings:
         ui_export_max_rows=25,
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",
+        thesis_builder_db_schema="thesis_builder",
+        thesis_builder_evidence_collection_max_minutes=120,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
@@ -691,4 +798,41 @@ def _filter_config(config_id: str, role: str) -> NewsFilterConfigPayload:
         dedupe_algorithm="rapidfuzz_ratio",
         dedupe_similarity_threshold=0.9,
         dedupe_lookback_hours=24,
+    )
+
+
+def _thesis_builder_metrics(window: str = "1d") -> ThesisBuilderMetricsResponse:
+    return ThesisBuilderMetricsResponse(
+        available=True,
+        window=window,
+        window_start_at=_now(),
+        window_end_at=_now(),
+        articles_processed_count=5,
+        market_moving_articles_count=3,
+        articles_included_in_cards_count=4,
+        stale_articles_count=1,
+        created_thesis_cards_count=2,
+        pending_thesis_cards_count=1,
+        oldest_pending_age_seconds=600.0,
+        average_pending_age_seconds=300.0,
+        minimum_pending_expires_in_seconds=1200.0,
+        average_pending_expires_in_seconds=1200.0,
+        missed_stale_thesis_cards_count=1,
+        stale_evidence_exceeded_avg_seconds=300.0,
+        stale_evidence_exceeded_p95_seconds=540.0,
+        stale_evidence_exceeded_max_seconds=600.0,
+        pending_windows=[
+            ThesisBuilderPendingWindow(
+                window_id=1,
+                ticker="AAPL",
+                exchange_code="XNAS",
+                strategy="event_driven",
+                direction="buy",
+                window_started_at=_now(),
+                last_evidence_at=_now(),
+                pending_age_seconds=600.0,
+                expires_in_seconds=1200.0,
+            )
+        ],
+        generated_at=_now(),
     )

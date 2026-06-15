@@ -61,6 +61,42 @@ export type ThroughputRequest =
   | { window: ThroughputPresetWindow }
   | { window: ThroughputPresetWindow; startAt: string; endAt: string };
 
+export type ThesisBuilderPendingWindow = {
+  window_id: number;
+  ticker: string;
+  exchange_code: string;
+  strategy: string;
+  direction?: string | null;
+  window_started_at: string;
+  last_evidence_at: string;
+  pending_age_seconds: number;
+  expires_in_seconds: number;
+};
+
+export type ThesisBuilderMetricsResponse = {
+  available: boolean;
+  message?: string | null;
+  window: string;
+  window_start_at: string;
+  window_end_at: string;
+  articles_processed_count: number;
+  market_moving_articles_count: number;
+  articles_included_in_cards_count: number;
+  stale_articles_count: number;
+  created_thesis_cards_count: number;
+  pending_thesis_cards_count: number;
+  oldest_pending_age_seconds?: number | null;
+  average_pending_age_seconds?: number | null;
+  minimum_pending_expires_in_seconds?: number | null;
+  average_pending_expires_in_seconds?: number | null;
+  missed_stale_thesis_cards_count: number;
+  stale_evidence_exceeded_avg_seconds?: number | null;
+  stale_evidence_exceeded_p95_seconds?: number | null;
+  stale_evidence_exceeded_max_seconds?: number | null;
+  pending_windows: ThesisBuilderPendingWindow[];
+  generated_at: string;
+};
+
 export type BacklogResponse = {
   pending_count: number;
   retrying_count: number;
@@ -299,6 +335,12 @@ export function fetchThroughput(request: ThroughputRequest): Promise<ThroughputR
     end_at: request.endAt
   });
   return getJson<ThroughputResponse>(`/api/metrics/throughput?${params.toString()}`);
+}
+
+export function fetchThesisBuilderMetrics(window: ThroughputPresetWindow): Promise<ThesisBuilderMetricsResponse> {
+  return getJson<ThesisBuilderMetricsResponse>(
+    `/api/thesis-builder/metrics?window=${encodeURIComponent(window)}`
+  );
 }
 
 export function fetchBacklog(): Promise<BacklogResponse> {

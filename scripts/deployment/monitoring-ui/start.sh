@@ -27,7 +27,7 @@ cd "$FRONTEND_DIR"
 if [ ! -d node_modules ]; then
   npm install >>"$FRONTEND_LOG" 2>&1
 fi
-nohup env VITE_UI_API_BASE_URL="$API_BASE_URL" npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" >>"$FRONTEND_LOG" 2>&1 &
+nohup env NO_COLOR=1 FORCE_COLOR=0 VITE_UI_API_BASE_URL="$API_BASE_URL" npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" >>"$FRONTEND_LOG" 2>&1 &
 printf '%s\n' "$!" >"$FRONTEND_PID_FILE"
 
 printf 'Monitoring UI backend starting on %s\n' "$API_BASE_URL"

@@ -77,6 +77,46 @@ class ThroughputResponse(BaseModel):
     generated_at: datetime
 
 
+class ThesisBuilderPendingWindow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    window_id: int
+    ticker: str
+    exchange_code: str
+    strategy: str
+    direction: str | None = None
+    window_started_at: datetime
+    last_evidence_at: datetime
+    pending_age_seconds: float
+    expires_in_seconds: float
+
+
+class ThesisBuilderMetricsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    window: str
+    window_start_at: datetime
+    window_end_at: datetime
+    articles_processed_count: int
+    market_moving_articles_count: int
+    articles_included_in_cards_count: int
+    stale_articles_count: int
+    created_thesis_cards_count: int
+    pending_thesis_cards_count: int
+    oldest_pending_age_seconds: float | None = None
+    average_pending_age_seconds: float | None = None
+    minimum_pending_expires_in_seconds: float | None = None
+    average_pending_expires_in_seconds: float | None = None
+    missed_stale_thesis_cards_count: int
+    stale_evidence_exceeded_avg_seconds: float | None = None
+    stale_evidence_exceeded_p95_seconds: float | None = None
+    stale_evidence_exceeded_max_seconds: float | None = None
+    pending_windows: list[ThesisBuilderPendingWindow] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class BacklogResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 

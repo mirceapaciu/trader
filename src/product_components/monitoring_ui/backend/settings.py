@@ -20,6 +20,8 @@ class MonitoringUiSettings:
     ui_export_max_rows: int
     newsfetcher_db_schema: str
     filter_quality_db_schema: str
+    thesis_builder_db_schema: str
+    thesis_builder_evidence_collection_max_minutes: int
     filter_quality_run_timeout_seconds: int
     queue_url: str
     news_raw_queue: str
@@ -51,6 +53,11 @@ class MonitoringUiSettings:
             ui_export_max_rows=_int_env("UI_EXPORT_MAX_ROWS", 500),
             newsfetcher_db_schema=os.getenv("NEWSFETCHER_DB_SCHEMA", "news_fetcher"),
             filter_quality_db_schema=os.getenv("FILTER_QUALITY_DB_SCHEMA", "filter_quality_evaluator"),
+            thesis_builder_db_schema=os.getenv("THESIS_BUILDER_DB_SCHEMA", "thesis_builder"),
+            thesis_builder_evidence_collection_max_minutes=_int_env(
+                "THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES",
+                120,
+            ),
             filter_quality_run_timeout_seconds=_int_env("FILTER_QUALITY_RUN_TIMEOUT_SECONDS", 1800),
             queue_url=_queue_url_from_env(),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),

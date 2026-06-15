@@ -15,6 +15,31 @@ body {
   min-width: 320px;
 }
 
+.domain-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 14px 28px 0;
+  background: #eef3ed;
+}
+
+.domain-tab {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #b8c4bd;
+  border-radius: 8px;
+  color: #33423c;
+  background: #f6faf7;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.domain-tab.active {
+  border-color: #176f58;
+  color: #ffffff;
+  background: #1d8f6f;
+}
+
 .shell {
   min-height: 100vh;
   padding: 28px;
@@ -77,6 +102,13 @@ h2 {
   gap: 12px;
 }
 
+.thesis-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
 .status-tile,
 .metric,
 .panel {
@@ -124,6 +156,10 @@ h2 {
   gap: 20px;
 }
 
+.thesis-layout {
+  align-items: start;
+}
+
 .panel {
   padding: 18px;
   min-width: 0;
@@ -146,6 +182,10 @@ h2 {
   display: grid;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.thesis-window-panel {
+  margin-bottom: 20px;
 }
 
 .window-toggle-group {
@@ -369,6 +409,13 @@ h2 {
 table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.table-subtext {
+  display: block;
+  margin-top: 2px;
+  color: #64726c;
+  font-size: 0.78rem;
 }
 
 th,
@@ -838,6 +885,7 @@ th {
 
   .status-grid,
   .layout,
+  .thesis-kpi-grid,
   .quality-grid {
     grid-template-columns: 1fr;
   }
@@ -865,8 +913,14 @@ th {
 
 @media (max-width: 560px) {
   .status-grid,
+  .domain-tabs,
   .backlog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .domain-tabs {
+    flex-direction: column;
+    padding-inline: 18px;
   }
 
   .status-tile,

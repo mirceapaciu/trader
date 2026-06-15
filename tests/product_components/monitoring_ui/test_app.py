@@ -10,6 +10,7 @@ from src.product_components.monitoring_ui.backend.models import (
     FilterQualityIncorrectlyAcceptedResponse,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderMetricsResponse,
     ThroughputResponse,
 )
 from src.product_components.monitoring_ui.backend.repository import _throughput_granularity_for_window
@@ -33,6 +34,9 @@ class FakeMonitoringDataSource:
         self.incorrectly_accepted_run_id: str | None = None
 
     def bootstrap_news_schema(self, **_: object) -> None:
+        return None
+
+    def bootstrap_thesis_builder_schema(self, **_: object) -> None:
         return None
 
     def check_dependencies(self) -> list[object]:
@@ -67,6 +71,28 @@ class FakeMonitoringDataSource:
             window_start_at=start_at or datetime(2026, 6, 12, 9, 0, tzinfo=timezone.utc),
             window_end_at=end_at or datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
             buckets=[],
+            generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+        )
+
+    def get_thesis_builder_metrics(
+        self,
+        *,
+        window: str,
+        evidence_collection_max_minutes: int,
+    ) -> ThesisBuilderMetricsResponse:
+        self.window = window
+        return ThesisBuilderMetricsResponse(
+            available=True,
+            window=window,
+            window_start_at=datetime(2026, 6, 12, 9, 0, tzinfo=timezone.utc),
+            window_end_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+            articles_processed_count=5,
+            market_moving_articles_count=3,
+            articles_included_in_cards_count=4,
+            stale_articles_count=1,
+            created_thesis_cards_count=2,
+            pending_thesis_cards_count=1,
+            missed_stale_thesis_cards_count=1,
             generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
         )
 
@@ -197,6 +223,45 @@ def test_throughput_endpoint_accepts_30d_preset_window(monkeypatch) -> None:
     assert data_source.window == "30d"
 
 
+def test_thesis_builder_metrics_endpoint_returns_metrics(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/metrics", params={"window": "1h"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["window"] == "1h"
+    assert payload["articles_processed_count"] == 5
+    assert payload["missed_stale_thesis_cards_count"] == 1
+    assert data_source.window == "1h"
+
+
+def test_thesis_builder_metrics_endpoint_rejects_invalid_window(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FakeMonitoringDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/metrics", params={"window": "12h"})
+
+    assert response.status_code == 422
+    assert "Unsupported thesis-builder metrics window" in response.json()["detail"]
+
+
 def test_providers_endpoint_includes_last_non_zero_fetch_timestamp(monkeypatch) -> None:
     data_source = FakeMonitoringDataSource()
     monkeypatch.setattr(
@@ -286,6 +351,8 @@ def _settings() -> MonitoringUiSettings:
         ui_export_max_rows=25,
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",
+        thesis_builder_db_schema="thesis_builder",
+        thesis_builder_evidence_collection_max_minutes=120,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",

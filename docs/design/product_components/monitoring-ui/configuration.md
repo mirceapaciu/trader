@@ -23,13 +23,17 @@ UI_DEFAULT_TIME_WINDOW=1d
 FILTER_QUALITY_DB_SCHEMA=filter_quality_evaluator
 FILTER_QUALITY_RUN_TIMEOUT_SECONDS=1800
 
+# ThesisBuilder panel
+THESIS_BUILDER_DB_SCHEMA=thesis_builder
+THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES=120
+
 ```
 
 ## Shared Dependencies
 
 Monitoring UI also depends on shared PostgreSQL connection, queue settings, and operational settings defined in `docs/design/shared/configuration.md`.
 
-At startup, the backend loads `.env.shared`, `.env.prod`, `.env.monitoring-ui`, `.env.news-fetcher`, optional `.env.filter-quality-evaluator`, and `.env.secrets`. UI-triggered filter quality runs use `FilterQualityEvaluatorSettings.from_env()` and run inside the Monitoring UI backend process.
+At startup, the backend loads `.env.shared`, `.env.prod`, `.env.monitoring-ui`, `.env.news-fetcher`, optional `.env.filter-quality-evaluator`, optional `.env.thesis-builder`, and `.env.secrets`. UI-triggered filter quality runs use `FilterQualityEvaluatorSettings.from_env()` and run inside the Monitoring UI backend process.
 
 ## Stack Decisions
 

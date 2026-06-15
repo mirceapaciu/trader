@@ -58,6 +58,7 @@ For each accepted news event:
 8. Attempt thesis-card creation immediately after each window update.
 
 ThesisBuilder must store analyses even when no thesis card is created, so rejected, weak, stale, or conflicting evidence remains auditable.
+Analyses that classify an article as price-actionable for the analyzed instrument must set `is_market_moving=true` so monitoring can distinguish processed news from market-moving news.
 
 ## 3.1 Market Context Policy
 
@@ -149,12 +150,21 @@ Card creation steps:
 1. Select the best evidence set from the satisfied window.
 2. Generate exactly the canonical card fields required by `docs/design/shared/product-constraint.md`.
 3. Generate ThesisBuilder-owned initial risk fields: max loss, stop condition, and invalidation condition.
-4. Validate the card deterministically.
-5. Persist the thesis card.
-6. Write the initial shared review state.
-7. Publish the card signal only if validation passes and review state is approved.
+4. Measure evidence freshness from each article `published_at` to the card validation decision time.
+5. Validate the card deterministically.
+6. Persist the thesis card.
+7. Write the initial shared review state.
+8. Publish the card signal only if validation passes and review state is approved.
 
 Initially, all valid cards are preapproved by system policy. ThesisBuilder writes `shared.t_thesis_card_reviews.decision_state=approved`, `reviewed_by=system_policy`, and a review reason identifying the ThesisBuilder policy version. If `THESIS_BUILDER_INITIAL_REVIEW_POLICY=manual` is enabled later, valid cards are persisted but not published as executable signals until a UI/user approval exists.
+
+Freshness policy:
+- The maximum allowed age for evidence used in an executable thesis card is `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`, defaulting to 180 minutes.
+- `max_evidence_age_seconds` is the oldest evidence article age at validation time.
+- `allowed_max_evidence_age_seconds` is the configured freshness limit.
+- `evidence_age_exceeded_seconds` is `max(0, max_evidence_age_seconds - allowed_max_evidence_age_seconds)`.
+- If evidence would otherwise create a thesis card but exceeds the freshness limit, ThesisBuilder persists a non-executable audit card with `validation_status=rejected` and `rejection_reason_code=stale_evidence`. The operator-facing UI label for this status is `stale`.
+- Stale audit cards must not receive shared review rows and must not be published to `signal_queue`.
 
 ## 6. Strategy Policy
 

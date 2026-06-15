@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_news_analyses (
     market_context_status TEXT,
     market_context_as_of TIMESTAMPTZ,
     market_context_snapshot JSONB,
+    is_market_moving BOOLEAN NOT NULL DEFAULT FALSE,
     validation_status TEXT NOT NULL DEFAULT 'valid',
     validation_errors JSONB NOT NULL DEFAULT '[]'::jsonb,
     rejection_reason_code TEXT,
@@ -74,6 +75,9 @@ ALTER TABLE thesis_builder.t_news_analyses
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS market_context_snapshot JSONB;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD COLUMN IF NOT EXISTS is_market_moving BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS validation_status TEXT NOT NULL DEFAULT 'valid';
@@ -153,6 +157,10 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_thesis_cards (
     market_context_snapshot JSONB,
     validation_status TEXT NOT NULL,
     validation_errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+    rejection_reason_code TEXT,
+    max_evidence_age_seconds DOUBLE PRECISION,
+    allowed_max_evidence_age_seconds DOUBLE PRECISION,
+    evidence_age_exceeded_seconds DOUBLE PRECISION,
     signal_published_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -175,14 +183,36 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_thesis_cards (
     CONSTRAINT ck_thesis_cards_market_context_status
         CHECK (market_context_status IS NULL OR market_context_status IN ('fresh', 'delayed', 'stale', 'missing')),
     CONSTRAINT ck_thesis_cards_validation_status
-        CHECK (validation_status IN ('valid', 'rejected'))
+        CHECK (validation_status IN ('valid', 'rejected')),
+    CONSTRAINT ck_thesis_cards_evidence_age_nonnegative
+        CHECK (
+            (max_evidence_age_seconds IS NULL OR max_evidence_age_seconds >= 0)
+            AND (allowed_max_evidence_age_seconds IS NULL OR allowed_max_evidence_age_seconds >= 0)
+            AND (evidence_age_exceeded_seconds IS NULL OR evidence_age_exceeded_seconds >= 0)
+        )
 );
+
+ALTER TABLE thesis_builder.t_thesis_cards
+    ADD COLUMN IF NOT EXISTS rejection_reason_code TEXT;
+
+ALTER TABLE thesis_builder.t_thesis_cards
+    ADD COLUMN IF NOT EXISTS max_evidence_age_seconds DOUBLE PRECISION;
+
+ALTER TABLE thesis_builder.t_thesis_cards
+    ADD COLUMN IF NOT EXISTS allowed_max_evidence_age_seconds DOUBLE PRECISION;
+
+ALTER TABLE thesis_builder.t_thesis_cards
+    ADD COLUMN IF NOT EXISTS evidence_age_exceeded_seconds DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS ix_thesis_cards_instrument_created
     ON thesis_builder.t_thesis_cards (ticker, exchange_code, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS ix_thesis_cards_validation_expiry
     ON thesis_builder.t_thesis_cards (validation_status, expires_at);
+
+CREATE INDEX IF NOT EXISTS ix_thesis_cards_stale_evidence
+    ON thesis_builder.t_thesis_cards (created_at DESC)
+    WHERE validation_status = 'rejected' AND rejection_reason_code = 'stale_evidence';
 
 CREATE INDEX IF NOT EXISTS ix_thesis_cards_unpublished_valid
     ON thesis_builder.t_thesis_cards (created_at)
