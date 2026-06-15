@@ -10,6 +10,7 @@ This documentation is split into a system overview and implementation specs:
 - Configuration index and component-owned settings: `docs/design/configuration.md`.
 - Product identity constraint and thesis-card contract: `docs/design/shared/product-constraint.md`.
 - News source guidance: `docs/design/product_components/news-fetcher/news-sources.md`.
+- MarketData behavior: `docs/design/product_components/market-data/behavior.md`.
 - ThesisBuilder behavior: `docs/design/product_components/thesis-builder/behavior.md`.
 - Filter quality evaluator behavior: `docs/design/product_components/filter-quality-evaluator/behavior.md`.
 - Deployment specs: `docs/design/deployment/`.
@@ -165,8 +166,9 @@ For runtime decoupling, these modules run as separate OS processes (or separate 
 1. `news_fetcher` process: polls providers, normalizes and deduplicates, then publishes to `news_raw_queue`
 2. `message_broker` process: standalone queue backend that mediates all inter-process communication
 3. `thesis_builder` process: consumes news from `news_raw_queue`, performs scoring/LLM enrichment, then publishes trade signals to `signal_queue`
-4. `trade_executor` process: consumes signals from `signal_queue`, applies risk checks, and executes orders via IBKR
-5. `filter_quality_evaluator` process: runs on demand, evaluates accepted/rejected NewsFetcher outcomes from DB, and produces filter-quality recommendations
+4. `market_data` process: retrieves and caches market quotes, historical bars, and derived context for watched instruments
+5. `trade_executor` process: consumes signals from `signal_queue`, applies risk checks, and executes orders via IBKR
+6. `filter_quality_evaluator` process: runs on demand, evaluates accepted/rejected NewsFetcher outcomes from DB, and produces filter-quality recommendations
 
 In-process queues are not used for production because they do not provide durability or cross-process isolation. The message broker must run independently of all producer and consumer processes.
 

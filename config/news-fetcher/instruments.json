@@ -3,7 +3,7 @@
   "instruments": [
     {
       "ticker": "AXA",
-      "exchange_code": "ETR",
+      "exchange_code": "XPAR",
       "names": ["AXA SA"],
       "aliases": ["AXA", "AXA SA"],
       "identifiers": {
@@ -13,7 +13,7 @@
     },
     {
       "ticker": "RHM",
-      "exchange_code": "ETR",
+      "exchange_code": "XETR",
       "names": ["Rheinmetall"],
       "aliases": ["RHM", "Rheinmetall"],
       "identifiers": {

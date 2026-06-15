@@ -1,0 +1,2 @@
+"""MarketData product component."""
+

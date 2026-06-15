@@ -45,8 +45,8 @@
       "symbol_mappings": [
         {
           "ticker": "AXA",
-          "exchange_code": "ETR",
-          "provider_symbol": "AXA.DE",
+          "exchange_code": "XPAR",
+          "provider_symbol": "AXA.PA",
           "query_params": {
             "region": "DE",
             "lang": "en-US"
@@ -54,7 +54,7 @@
         },
         {
           "ticker": "RHM",
-          "exchange_code": "ETR",
+          "exchange_code": "XETR",
           "provider_symbol": "RHM.DE",
           "query_params": {
             "region": "DE",

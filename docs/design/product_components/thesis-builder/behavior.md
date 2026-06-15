@@ -28,6 +28,7 @@ Inputs:
 - Accepted news envelopes from `news_raw_queue`.
 - Existing accepted articles in `news_fetcher.t_news_articles`.
 - Active watchlist and instrument metadata from shared tables.
+- Current and historical market context from the MarketData cache when required by strategy policy.
 - ThesisBuilder configuration and shared queue/database settings.
 
 Outputs:
@@ -50,12 +51,37 @@ For each accepted news event:
 1. Resolve eligible instruments using the article ticker list plus shared instrument aliases.
 2. Skip instruments that are not active in the shared watchlist.
 3. Run deterministic prechecks for article freshness, source quality, duplicate evidence, and obvious non-market relevance.
-4. Call the configured LLM only when deterministic prechecks leave a plausible trading impact.
-5. Persist one `t_news_analyses` row per analyzed article and instrument.
-6. Add eligible analyses to an evidence window keyed by instrument, strategy, and candidate direction.
-7. Attempt thesis-card creation immediately after each window update.
+4. Resolve market context from `market_data.t_market_context_snapshots` when the candidate strategy requires price-derived validation.
+5. Call the configured LLM only when deterministic prechecks leave a plausible trading impact.
+6. Persist one `t_news_analyses` row per analyzed article and instrument.
+7. Add eligible analyses to an evidence window keyed by instrument, strategy, and candidate direction.
+8. Attempt thesis-card creation immediately after each window update.
 
 ThesisBuilder must store analyses even when no thesis card is created, so rejected, weak, stale, or conflicting evidence remains auditable.
+
+## 3.1 Market Context Policy
+
+News evidence remains the primary source for thesis-card evidence bullets. Market context is used to validate strategy fit, confidence, and risk-box construction; it does not replace the required news evidence from `docs/design/shared/product-constraint.md`.
+
+Market context may include:
+- Current price.
+- Previous close.
+- Intraday change.
+- 1-day, 5-day, and 20-day returns.
+- 20-day or 30-day volatility or ATR.
+- Current volume relative to average volume.
+- Moving averages such as 20-day and 50-day averages.
+- Recent high, recent low, drawdown, and support or resistance levels.
+- Optional sector, index, or peer relative movement.
+
+Strategy market-data requirements:
+- `event_driven`: market context is optional, but should be used when available to improve risk-box precision and avoid already-priced moves.
+- `sentiment_momentum`: market context is recommended; missing context should lower confidence unless the news evidence is unusually strong and time-sensitive.
+- `sector_rotation`: requires enough peer, sector, or index context to support any rotation claim.
+- `contrarian_reversal`: requires recent and historical market context. ThesisBuilder must not create a contrarian reversal card unless price evolution shows an overextended move, stabilization or reversal evidence, and a deterministic tight risk box.
+- `trend_follow`: requires historical market context sufficient to establish that the move is a durable trend rather than a short-lived news reaction.
+
+When a strategy requires market context and that context is unavailable, stale, or insufficient, ThesisBuilder must fail closed for that strategy. It may still create a different strategy card from the same news evidence only if that alternate strategy satisfies its own requirements.
 
 ## 4. Evidence Aggregation
 
@@ -108,8 +134,8 @@ Conflict rules:
 - Event-driven cards win over lower-priority strategies when evidence is specific and high confidence.
 - Opposing high-confidence strategies for the same instrument produce no executable card.
 - Sector rotation may create a peer card only when the peer is active in the watchlist and the spillover rationale is explicit.
-- Contrarian reversal requires stronger confidence than momentum and must use a tighter risk box.
-- Trend-follow cards require evidence that the effect is likely to persist beyond five trading days.
+- Contrarian reversal requires stronger confidence than momentum, recent and historical price context, evidence of an overextended prior move, and a tighter risk box.
+- Trend-follow cards require evidence that the effect is likely to persist beyond five trading days plus historical market context that supports a durable trend.
 
 ## 7. Risk Box Policy
 

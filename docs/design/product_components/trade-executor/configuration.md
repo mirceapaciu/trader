@@ -24,3 +24,5 @@ DAILY_LOSS_LIMIT=200         # Stop trading if daily loss exceeds this
 ## Shared Dependencies
 
 TradeExecutor also depends on shared PostgreSQL connection, operational, and queue settings defined in `docs/design/shared/configuration.md`.
+
+TradeExecutor reads cached preliminary market context from the MarketData schema, but must use its own IBKR connection for final execution-time quote refresh.
