@@ -166,7 +166,7 @@ For runtime decoupling, these modules run as separate OS processes (or separate 
 1. `news_fetcher` process: polls providers, normalizes and deduplicates, then publishes to `news_raw_queue`
 2. `message_broker` process: standalone queue backend that mediates all inter-process communication
 3. `thesis_builder` process: consumes news from `news_raw_queue`, performs scoring/LLM enrichment, then publishes trade signals to `signal_queue`
-4. `market_data` process: retrieves and caches market quotes, historical bars, and derived context for watched instruments
+4. `market_data` process: retrieves and caches market quotes, historical bars, and derived context for watched instruments; ThesisBuilder consumes this through the MarketData component API rather than reading MarketData tables directly
 5. `trade_executor` process: consumes signals from `signal_queue`, applies risk checks, and executes orders via IBKR
 6. `filter_quality_evaluator` process: runs on demand, evaluates accepted/rejected NewsFetcher outcomes from DB, and produces filter-quality recommendations
 

@@ -13,6 +13,7 @@ Purpose:
 
 Logical fields:
 - `id` (primary key): thesis card identity.
+- `idempotency_key`: deterministic card identity for retry-safe creation.
 - `ticker`: target instrument symbol.
 - `exchange_code`: target exchange identifier (prefer MIC, for example `XNAS`, `XNYS`).
 - `direction`: proposed direction (`buy`, `sell`, `hold`).
@@ -24,8 +25,12 @@ Logical fields:
 - `risk_max_loss_usd`: max tolerated loss for this thesis.
 - `risk_stop_condition`: stop condition expression.
 - `risk_invalidation_condition`: thesis invalidation expression.
+- `market_context_status`: optional status returned by the MarketData component API (`fresh`, `delayed`, `stale`, or `missing`).
+- `market_context_as_of`: optional timestamp of the copied market context snapshot.
+- `market_context_snapshot`: optional JSON copy of the MarketData context used for strategy validation, confidence, or risk-box generation.
 - `validation_status`: deterministic validation result (`valid` or `rejected`).
 - `validation_errors`: optional machine-readable validation failures.
+- `signal_published_at`: optional timestamp when the executable signal was published.
 - `expires_at`: card expiry timestamp.
 - `created_at`: card creation timestamp.
 
@@ -34,6 +39,7 @@ Behavioral constraints:
 - Evidence, confidence, risk, freshness, and review invariants are governed by `docs/design/shared/product-constraint.md`.
 - All evidence items must reference valid `news_fetcher.t_news_articles` rows.
 - Evidence must be traceable to at least one `t_news_analyses` row through `source_analysis_ids`.
+- Market context audit data is copied from the MarketData component API response; ThesisBuilder must not query MarketData-owned tables directly.
 - Valid cards must receive a matching shared review row in `shared.t_thesis_card_reviews`.
 - Initially, valid cards are preapproved by system policy with `decision_state=approved`, `reviewed_by=system_policy`, and a review reason identifying the policy version.
 - Cards that fail product-constraint validation are persisted only as non-executable rejected records for audit, if persisted at all; they must not be published as executable signals.
@@ -53,10 +59,18 @@ Logical fields:
 - `relevance`: relevance score for the ticker.
 - `urgency`: urgency classification.
 - `suggested_action`: suggested trading action.
+- `strategy`: candidate thesis strategy from the validated LLM output or deterministic policy.
+- `direction`: candidate direction (`buy`, `sell`, or `hold`).
 - `event_type`: optional event classification used by event-driven analysis.
 - `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`).
 - `reasoning`: optional explanatory reasoning text.
 - `confidence`: confidence score.
+- `market_context_status`: optional status returned by the MarketData component API (`fresh`, `delayed`, `stale`, or `missing`).
+- `market_context_as_of`: optional timestamp of the copied market context snapshot.
+- `market_context_snapshot`: optional JSON copy of the MarketData context used for scoring or strategy validation.
+- `validation_status`: deterministic output validation result (`valid` or `rejected`).
+- `validation_errors`: optional machine-readable validation failures.
+- `rejection_reason_code`: optional machine-readable reason for rejected or non-actionable analyses.
 - `llm_model`: model identifier used for the analysis.
 - `tokens_used`: optional token usage for the analysis call.
 - `analyzed_at`: analysis timestamp.
@@ -66,6 +80,8 @@ Behavioral constraints:
 - `article_id` must reference an existing NewsFetcher article.
 - Analysis records are append-oriented for auditability.
 - Scores and classifications must be derived from deterministic thesis-building policy for identical inputs when deterministic mode is enabled.
+- Invalid LLM output is persisted with `validation_status=rejected` and must not contribute to executable card creation.
+- Market context audit data is copied from the MarketData component API response; ThesisBuilder must not query MarketData-owned tables directly.
 - Each executable thesis card must be traceable to one or more analysis records.
 - Analyses may be emitted without a thesis card when evidence is insufficient, conflicting, stale, or below confidence thresholds.
 

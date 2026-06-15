@@ -11,6 +11,16 @@ CREATE TABLE IF NOT EXISTS shared.t_api_usage (
     called_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS shared.t_thesis_card_reviews (
+    card_id TEXT PRIMARY KEY,
+    decision_state TEXT NOT NULL,
+    reviewed_by TEXT NOT NULL,
+    review_reason TEXT,
+    reviewed_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT ck_thesis_card_reviews_decision_state
+        CHECK (decision_state IN ('approved', 'rejected'))
+);
+
 CREATE TABLE IF NOT EXISTS shared.t_watchlist_tickers (
     ticker TEXT NOT NULL,
     exchange_code TEXT NOT NULL,

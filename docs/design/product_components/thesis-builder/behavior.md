@@ -28,7 +28,7 @@ Inputs:
 - Accepted news envelopes from `news_raw_queue`.
 - Existing accepted articles in `news_fetcher.t_news_articles`.
 - Active watchlist and instrument metadata from shared tables.
-- Current and historical market context from the MarketData cache when required by strategy policy.
+- Current and historical market context from the MarketData component API when required by strategy policy.
 - ThesisBuilder configuration and shared queue/database settings.
 
 Outputs:
@@ -51,7 +51,7 @@ For each accepted news event:
 1. Resolve eligible instruments using the article ticker list plus shared instrument aliases.
 2. Skip instruments that are not active in the shared watchlist.
 3. Run deterministic prechecks for article freshness, source quality, duplicate evidence, and obvious non-market relevance.
-4. Resolve market context from `market_data.t_market_context_snapshots` when the candidate strategy requires price-derived validation.
+4. Resolve market context through the MarketData component API when the candidate strategy requires price-derived validation.
 5. Call the configured LLM only when deterministic prechecks leave a plausible trading impact.
 6. Persist one `t_news_analyses` row per analyzed article and instrument.
 7. Add eligible analyses to an evidence window keyed by instrument, strategy, and candidate direction.
@@ -62,6 +62,18 @@ ThesisBuilder must store analyses even when no thesis card is created, so reject
 ## 3.1 Market Context Policy
 
 News evidence remains the primary source for thesis-card evidence bullets. Market context is used to validate strategy fit, confidence, and risk-box construction; it does not replace the required news evidence from `docs/design/shared/product-constraint.md`.
+
+ThesisBuilder consumes market context only through the MarketData component API:
+
+```python
+get_market_context(ticker: str, exchange_code: str, refresh_if_stale: bool = True) -> MarketContextSnapshot
+```
+
+MarketData owns cache reads, freshness evaluation, stale-context refresh, provider pacing, provider failures, and provider usage accounting. ThesisBuilder must not query MarketData tables, import MarketData storage adapters, or call market-data providers directly.
+
+When a candidate strategy requires market context, ThesisBuilder calls `get_market_context(..., refresh_if_stale=True)`. If MarketData cannot refresh successfully or returns a snapshot with `source_status` of `stale` or `missing`, ThesisBuilder treats the context as unusable for that strategy. `fresh` and `delayed` snapshots are usable when the strategy allows delayed data.
+
+Whenever market context affects strategy selection, confidence, or risk-box construction, ThesisBuilder persists a JSON copy of the returned snapshot on the analysis or thesis card that used it. Audit must not depend on rereading the latest MarketData cache because MarketData may refresh the context later.
 
 Market context may include:
 - Current price.
@@ -77,11 +89,34 @@ Market context may include:
 Strategy market-data requirements:
 - `event_driven`: market context is optional, but should be used when available to improve risk-box precision and avoid already-priced moves.
 - `sentiment_momentum`: market context is recommended; missing context should lower confidence unless the news evidence is unusually strong and time-sensitive.
-- `sector_rotation`: requires enough peer, sector, or index context to support any rotation claim.
-- `contrarian_reversal`: requires recent and historical market context. ThesisBuilder must not create a contrarian reversal card unless price evolution shows an overextended move, stabilization or reversal evidence, and a deterministic tight risk box.
-- `trend_follow`: requires historical market context sufficient to establish that the move is a durable trend rather than a short-lived news reaction.
+- `sector_rotation`: requires enough peer, sector, or index context returned by the MarketData API to support any rotation claim.
+- `contrarian_reversal`: requires usable recent and historical market context. ThesisBuilder must not create a contrarian reversal card unless price evolution shows an overextended move, stabilization or reversal evidence, and a deterministic tight risk box.
+- `trend_follow`: requires usable historical market context sufficient to establish that the move is a durable trend rather than a short-lived news reaction.
 
 When a strategy requires market context and that context is unavailable, stale, or insufficient, ThesisBuilder must fail closed for that strategy. It may still create a different strategy card from the same news evidence only if that alternate strategy satisfies its own requirements.
+
+## 3.2 LLM Analysis Contract
+
+The LLM must return structured output that ThesisBuilder can validate deterministically before persistence or card creation.
+
+Required fields:
+- `ticker`
+- `exchange_code`
+- `sentiment`
+- `relevance`
+- `urgency`
+- `suggested_action`
+- `candidate_strategy`
+- `direction`
+- `confidence`
+- `reasoning`
+
+Optional fields:
+- `event_type`
+- `price_impact_magnitude`
+- `evidence_bullet_candidates`
+
+Allowed `candidate_strategy` values are `event_driven`, `sentiment_momentum`, `sector_rotation`, `contrarian_reversal`, and `trend_follow`. Allowed `direction` values are `buy`, `sell`, and `hold`. Invalid enum values, malformed confidence, missing required fields, or instrument mismatch must be persisted as a rejected analysis outcome and must not create an executable thesis card.
 
 ## 4. Evidence Aggregation
 

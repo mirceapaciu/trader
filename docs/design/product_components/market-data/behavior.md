@@ -50,9 +50,24 @@ Default refresh cadence:
 
 ## 4. Consumer Contract
 
-ThesisBuilder reads cached market context only. It must not call external market-data providers directly.
+Consumers retrieve market context through the MarketData component API. They must not query MarketData-owned tables directly and must not call external market-data providers directly.
 
-TradeExecutor may read cached market context for preliminary risk validation, but must refresh the final execution quote through IBKR before order placement.
+Python API:
+
+```python
+get_market_context(ticker: str, exchange_code: str, refresh_if_stale: bool = True) -> MarketContextSnapshot
+```
+
+API behavior:
+- The returned snapshot uses canonical instrument identity (`ticker`, `exchange_code`).
+- When `refresh_if_stale=True`, MarketData may refresh quote and bar data according to provider priority, pacing, delayed-data policy, and configured backfill policy before returning the latest context.
+- MarketData owns cache reads, freshness evaluation, provider refresh, provider failure classification, fetch-run records, and provider usage accounting.
+- If refresh fails, MarketData returns the best available context with `source_status` reflecting whether it is usable, stale, or missing.
+- Callers that need audit stability must copy the returned snapshot into their own records.
+
+ThesisBuilder uses `get_market_context(..., refresh_if_stale=True)` for strategies that require price-derived validation. It must fail closed for those strategies when the returned context remains stale or missing.
+
+TradeExecutor may retrieve cached market context through the MarketData API for preliminary risk validation, but must refresh the final execution quote through IBKR before order placement.
 
 Consumer status rules:
 - `fresh` or `delayed`: usable for ThesisBuilder if the strategy allows delayed data.
