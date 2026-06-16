@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import threading
+from unittest.mock import Mock, patch
 
 import psycopg
 
@@ -11,6 +12,7 @@ from src.product_components.shared.adapters import (
 )
 from src.product_components.shared.instrument_lookup import (
     InstrumentLookupSuggestion,
+    MassiveInstrumentLookupProvider,
     SharedInstrumentLookupAdminService,
 )
 
@@ -129,6 +131,201 @@ def test_lookup_cache_hit_returns_cached_results_without_calling_provider() -> N
     assert results[0].ticker == "NVDA"
 
 
+def test_massive_provider_requests_broader_candidate_set_for_ambiguous_queries() -> None:
+    provider = MassiveInstrumentLookupProvider(api_key="test-key")
+    response = Mock()
+    response.json.return_value = {"results": []}
+    response.raise_for_status.return_value = None
+
+    with patch("src.product_components.shared.instrument_lookup.requests.get", return_value=response) as mock_get:
+        provider.search("Ford")
+
+    assert mock_get.call_count == 1
+    assert mock_get.call_args.kwargs["params"]["limit"] == 50
+
+
+def test_massive_provider_filters_bond_results_from_stock_suggestions() -> None:
+    provider = MassiveInstrumentLookupProvider(api_key="test-key")
+    response = Mock()
+    response.json.return_value = {
+        "results": [
+            {
+                "ticker": "F-BOND",
+                "primary_exchange": "XNYS",
+                "name": "Ford Motor Company Bond",
+                "type": "BOND",
+            },
+            {
+                "ticker": "F",
+                "primary_exchange": "XNYS",
+                "name": "Ford Motor Company",
+                "type": "CS",
+            },
+        ]
+    }
+    response.raise_for_status.return_value = None
+
+    with patch("src.product_components.shared.instrument_lookup.requests.get", return_value=response):
+        results = provider.search("Ford")
+
+    assert [item.ticker for item in results] == ["F"]
+
+
+def test_massive_provider_fetches_exact_single_letter_ticker_candidate() -> None:
+    provider = MassiveInstrumentLookupProvider(api_key="test-key")
+    exact_response = Mock()
+    exact_response.json.return_value = {
+        "results": {
+            "ticker": "F",
+            "primary_exchange": "XNYS",
+            "name": "Ford Motor Company",
+            "type": "CS",
+        }
+    }
+    exact_response.raise_for_status.return_value = None
+    search_response = Mock()
+    search_response.json.return_value = {
+        "results": [
+            {
+                "ticker": "ACDC",
+                "primary_exchange": "XNAS",
+                "name": "ProFrac Holding Corp. Class A Common Stock",
+                "type": "CS",
+            }
+        ]
+    }
+    search_response.raise_for_status.return_value = None
+
+    with patch(
+        "src.product_components.shared.instrument_lookup.requests.get",
+        side_effect=[exact_response, search_response],
+    ) as mock_get:
+        results = provider.search("F")
+
+    assert mock_get.call_count == 2
+    assert mock_get.call_args_list[0].args[0].endswith("/v3/reference/tickers/F")
+    assert [item.ticker for item in results] == ["F", "ACDC"]
+
+
+def test_massive_provider_single_letter_lookup_falls_back_when_exact_fetch_fails() -> None:
+    provider = MassiveInstrumentLookupProvider(api_key="test-key")
+    search_response = Mock()
+    search_response.json.return_value = {
+        "results": [
+            {
+                "ticker": "ACDC",
+                "primary_exchange": "XNAS",
+                "name": "ProFrac Holding Corp. Class A Common Stock",
+                "type": "CS",
+            }
+        ]
+    }
+    search_response.raise_for_status.return_value = None
+
+    with patch(
+        "src.product_components.shared.instrument_lookup.requests.get",
+        side_effect=[RuntimeError("exact lookup failed"), search_response],
+    ):
+        results = provider.search("F")
+
+    assert [item.ticker for item in results] == ["ACDC"]
+
+
+def test_lookup_cache_filters_non_stock_cached_results() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    admin.cache[("search", "ford")] = SharedLookupCacheEntry(
+        operation="search",
+        target="ford",
+        provider="massive",
+        payload={
+            "results": [
+                {
+                    "ticker": "FPC",
+                    "exchange_code": "XNYS",
+                    "display_name": "Ford Motor Company 6.000% Notes due December 1, 2059",
+                    "aliases": ["ford motor company 6.000% notes due december 1, 2059", "fpc"],
+                    "provider": "massive",
+                },
+                {
+                    "ticker": "F",
+                    "exchange_code": "XNYS",
+                    "display_name": "Ford Motor Company",
+                    "aliases": ["f", "ford motor company"],
+                    "provider": "massive",
+                },
+                {
+                    "ticker": "HTAB",
+                    "exchange_code": "ARCX",
+                    "display_name": "Hartford Schroders Tax-Aware Bond ETF",
+                    "aliases": ["hartford schroders tax-aware bond etf", "htab"],
+                    "provider": "massive",
+                },
+            ]
+        },
+        fetched_at=_now(),
+        expires_at=_now() + timedelta(hours=1),
+    )
+    provider = FakeProvider(name="massive", results=[])
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford")
+
+    assert cached is True
+    assert provider.search_calls == 0
+    assert [item.ticker for item in results] == ["F"]
+
+
+def test_lookup_single_letter_cache_returns_only_exact_ticker_matches() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    admin.cache[("search", "f")] = SharedLookupCacheEntry(
+        operation="search",
+        target="f",
+        provider="massive",
+        payload={
+            "results": [
+                {
+                    "ticker": "ACDC",
+                    "exchange_code": "XNYS",
+                    "display_name": "ProFrac Holding Corp. Class A Common Stock",
+                    "aliases": ["profrac holding corp class a common stock", "acdc"],
+                    "provider": "massive",
+                },
+                {
+                    "ticker": "F",
+                    "exchange_code": "XNYS",
+                    "display_name": "Ford Motor Company",
+                    "aliases": ["f", "ford motor company"],
+                    "provider": "massive",
+                },
+            ]
+        },
+        fetched_at=_now(),
+        expires_at=_now() + timedelta(hours=1),
+    )
+    provider = FakeProvider(name="massive", results=[])
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("F")
+
+    assert cached is True
+    assert provider.search_calls == 0
+    assert [item.ticker for item in results] == ["F"]
+
+
 def test_lookup_ignores_cached_empty_results_and_refetches_provider() -> None:
     registry = FakeRegistry()
     admin = FakeAdmin()
@@ -137,6 +334,54 @@ def test_lookup_ignores_cached_empty_results_and_refetches_provider() -> None:
         target="ford",
         provider="massive",
         payload={"results": []},
+        fetched_at=_now(),
+        expires_at=_now() + timedelta(hours=1),
+    )
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            )
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford")
+
+    assert cached is False
+    assert provider.search_calls == 1
+    assert results[0].ticker == "F"
+
+
+def test_lookup_refetches_weak_cached_results_to_surface_better_match() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    admin.cache[("search", "ford")] = SharedLookupCacheEntry(
+        operation="search",
+        target="ford",
+        provider="massive",
+        payload={
+            "results": [
+                {
+                    "ticker": "FND",
+                    "exchange_code": "XNYS",
+                    "display_name": "Founders Bank",
+                    "aliases": ["founders bank"],
+                    "provider": "massive",
+                }
+            ]
+        },
         fetched_at=_now(),
         expires_at=_now() + timedelta(hours=1),
     )
@@ -198,6 +443,50 @@ def test_lookup_falls_back_when_primary_provider_fails() -> None:
     assert fallback.search_calls == 1
     assert admin.saved_provider == "alpha_vantage"
     assert results[0].provider == "alpha_vantage"
+
+
+def test_lookup_merges_fallback_results_when_primary_results_are_partial() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    primary = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="FND",
+                exchange_code="XNYS",
+                display_name="Founders Bank",
+                aliases=("founders bank",),
+                provider="massive",
+            )
+        ],
+    )
+    fallback = FakeProvider(
+        name="alpha_vantage",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="alpha_vantage",
+            )
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(primary, fallback),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford")
+
+    assert cached is False
+    assert primary.search_calls == 1
+    assert fallback.search_calls == 1
+    assert [item.ticker for item in results] == ["F", "FND"]
+    assert admin.saved_provider == "alpha_vantage"
 
 
 def test_watchlist_listing_gracefully_degrades_when_registry_is_unavailable() -> None:
@@ -417,6 +706,157 @@ def test_lookup_ranks_exact_ticker_match_above_display_name_substring_match() ->
 
     assert cached is False
     assert [item.ticker for item in results] == ["TSMC", "TSM"]
+
+
+def test_lookup_ranks_exact_single_letter_ticker_match_first() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="FORD",
+                exchange_code="XNYS",
+                display_name="Forward Industries, Inc.",
+                aliases=("forward industries",),
+                provider="massive",
+            ),
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            ),
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("F")
+
+    assert cached is False
+    assert [item.ticker for item in results] == ["F"]
+
+
+def test_lookup_single_letter_query_returns_only_exact_ticker_matches() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="FORD",
+                exchange_code="XNYS",
+                display_name="Forward Industries, Inc.",
+                aliases=("forward industries",),
+                provider="massive",
+            ),
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            ),
+            InstrumentLookupSuggestion(
+                ticker="FI",
+                exchange_code="XNYS",
+                display_name="Fiserv, Inc.",
+                aliases=("fiserv",),
+                provider="massive",
+            ),
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("F")
+
+    assert cached is False
+    assert [item.ticker for item in results] == ["F"]
+
+
+def test_lookup_ranks_exact_phrase_match_above_single_word_match() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="FMC",
+                exchange_code="XNYS",
+                display_name="Ford Manufacturing Capital",
+                aliases=("ford",),
+                provider="massive",
+            ),
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            ),
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford Motor")
+
+    assert cached is False
+    assert [item.ticker for item in results] == ["F", "FMC"]
+
+
+def test_lookup_prefers_longer_exact_word_match_within_same_rank_tier() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="FS",
+                exchange_code="XNYS",
+                display_name="Ford Short",
+                aliases=("ford short",),
+                provider="massive",
+            ),
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            ),
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford")
+
+    assert cached is False
+    assert [item.ticker for item in results] == ["F", "FS"]
 
 
 def test_lookup_ranking_is_stable_for_same_tier_using_provider_order() -> None:

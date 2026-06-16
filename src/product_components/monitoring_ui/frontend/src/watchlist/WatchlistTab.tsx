@@ -40,7 +40,7 @@ export function WatchlistTab() {
   const lookup = useQuery({
     queryKey: ["watchlist", "lookup", deferredSearchText],
     queryFn: () => lookupWatchlist(deferredSearchText),
-    enabled: lookupProvidersConfigured && deferredSearchText.length >= 2
+    enabled: lookupProvidersConfigured && deferredSearchText.length >= 1
   });
 
   const addMutation = useMutation({
@@ -100,8 +100,11 @@ export function WatchlistTab() {
     if (!lookupProvidersConfigured) {
       return watchlist.data?.lookup_message ?? "Ticker lookup providers are not configured. Manual add is still available.";
     }
-    if (deferredSearchText.length < 2) {
-      return "Type at least two characters to search tickers.";
+    if (deferredSearchText.length < 1) {
+      return "Type a ticker or company name to search.";
+    }
+    if (deferredSearchText.length === 1) {
+      return "Single-letter searches return exact ticker matches.";
     }
     if (lookup.isLoading) {
       return "Looking up symbols...";

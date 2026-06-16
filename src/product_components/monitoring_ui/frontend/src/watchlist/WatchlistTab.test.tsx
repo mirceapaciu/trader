@@ -118,6 +118,31 @@ describe("WatchlistTab", () => {
     expect(screen.getByText(/Searching for:/)).toBeInTheDocument();
   });
 
+  it("looks up single-letter exact ticker searches", async () => {
+    lookupWatchlist.mockResolvedValueOnce({
+      query: "F",
+      suggestions: [
+        {
+          ticker: "F",
+          exchange_code: "XNYS",
+          display_name: "Ford Motor Company",
+          aliases: ["f", "ford motor company"],
+          provider: "massive",
+        }
+      ],
+      cached: false,
+      generated_at: "2026-06-15T00:00:00Z"
+    });
+
+    renderWithQueryClient(<WatchlistTab />);
+
+    fireEvent.change(screen.getByPlaceholderText(/nvidia/i), { target: { value: "F" } });
+
+    expect(await screen.findByText("F:XNYS")).toBeInTheDocument();
+    await waitFor(() => expect(lookupWatchlist).toHaveBeenCalledWith("F"));
+    expect(screen.getByText(/Single-letter searches return exact ticker matches./i)).toBeInTheDocument();
+  });
+
   it("shows a warning and skips lookup when providers are not configured", async () => {
     fetchWatchlist.mockResolvedValueOnce({
       lookup_providers_configured: false,

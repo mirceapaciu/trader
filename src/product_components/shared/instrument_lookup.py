@@ -78,28 +78,37 @@ class MassiveInstrumentLookupProvider:
         api_key: str,
         base_url: str = "https://api.polygon.io",
         timeout_seconds: int = 10,
+        search_limit: int = 50,
     ) -> None:
         self._api_key = api_key.strip()
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._search_limit = max(10, search_limit)
 
     def search(self, query: str) -> list[InstrumentLookupSuggestion]:
         if not self._api_key or not query.strip():
             return []
+        exact_candidates: list[InstrumentLookupSuggestion] = []
+        if _is_single_letter_ticker_query(query):
+            try:
+                exact_candidates = self._fetch_exact_ticker_candidates(query)
+            except Exception:
+                exact_candidates = []
         response = requests.get(
             f"{self._base_url}/v3/reference/tickers",
             params={
                 "search": query.strip(),
                 "market": "stocks",
                 "active": "true",
-                "limit": 10,
+                "limit": self._search_limit,
                 "apiKey": self._api_key,
             },
             timeout=self._timeout_seconds,
         )
         response.raise_for_status()
         payload = response.json()
-        return _normalize_massive_results(payload.get("results"), provider=self.provider_name)
+        search_candidates = _normalize_massive_results(payload.get("results"), provider=self.provider_name)
+        return _merge_suggestions(exact_candidates, search_candidates)
 
     def discover_aliases(
         self,
@@ -118,6 +127,23 @@ class MassiveInstrumentLookupProvider:
             if exact is not None:
                 return exact
         return None
+
+    def _fetch_exact_ticker_candidates(self, query: str) -> list[InstrumentLookupSuggestion]:
+        response = requests.get(
+            f"{self._base_url}/v3/reference/tickers/{query.strip().upper()}",
+            params={
+                "market": "stocks",
+                "active": "true",
+                "apiKey": self._api_key,
+            },
+            timeout=self._timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("results")
+        if isinstance(result, dict):
+            return _normalize_massive_results([result], provider=self.provider_name)
+        return []
 
 
 class AlphaVantageInstrumentLookupProvider:
@@ -209,7 +235,13 @@ class SharedInstrumentLookupAdminService:
         except psycopg.Error:
             cache_entry = None
         cached_suggestions = _suggestions_from_cache(cache_entry) if cache_entry is not None else []
-        if cache_entry is not None and cache_entry.expires_at > _utc_now() and cached_suggestions:
+        cached_suggestions = _filter_query_specific_suggestions(query, cached_suggestions)
+        if (
+            cache_entry is not None
+            and cache_entry.expires_at > _utc_now()
+            and cached_suggestions
+            and _cache_has_strong_match(query, cached_suggestions)
+        ):
             return cached_suggestions, True
         suggestions, provider_name, owns_lookup = self._run_search_with_coalescing(
             cache_key=normalized_query,
@@ -317,16 +349,33 @@ class SharedInstrumentLookupAdminService:
     def _run_search(self, query: str) -> tuple[list[InstrumentLookupSuggestion], str]:
         variants = _search_variants(query)
         last_provider = "none"
+        collected_suggestions: list[InstrumentLookupSuggestion] = []
+        seen_keys: set[tuple[str, str]] = set()
         for provider in self._providers:
             last_provider = provider.provider_name
+            provider_suggestions: list[InstrumentLookupSuggestion] = []
             for candidate_query in variants:
                 try:
                     suggestions = provider.search(candidate_query)
                 except Exception:
                     suggestions = []
                 if suggestions:
-                    return _rank_suggestions(query, suggestions), last_provider
-        return [], last_provider
+                    provider_suggestions = suggestions
+                    break
+            if not provider_suggestions:
+                continue
+            for suggestion in provider_suggestions:
+                dedupe_key = (suggestion.ticker, normalize_exchange_code(suggestion.exchange_code))
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                collected_suggestions.append(suggestion)
+        if not collected_suggestions:
+            return [], last_provider
+        ranked = _rank_suggestions(query, collected_suggestions)
+        ranked = _filter_query_specific_suggestions(query, ranked)
+        top_provider = ranked[0].provider if ranked[0].provider else last_provider
+        return ranked, top_provider
 
     def _run_search_with_coalescing(
         self,
@@ -367,6 +416,8 @@ def _normalize_massive_results(results: object, *, provider: str) -> list[Instru
     for item in results:
         if not isinstance(item, dict):
             continue
+        if not _is_supported_massive_stock_result(item):
+            continue
         ticker = str(item.get("ticker") or "").strip().upper()
         exchange_code = normalize_exchange_code(str(item.get("primary_exchange") or "").strip().upper())
         display_name = str(item.get("name") or ticker).strip()
@@ -381,7 +432,15 @@ def _normalize_massive_results(results: object, *, provider: str) -> list[Instru
                 provider=provider,
             )
         )
-    return suggestions
+    return _filter_supported_stock_suggestions(suggestions)
+
+
+def _is_supported_massive_stock_result(item: dict[str, Any]) -> bool:
+    security_type = str(item.get("type") or "").strip().upper()
+    if not security_type:
+        return True
+    # Keep equity-like instruments and drop fixed-income results that can leak into the search API.
+    return security_type not in {"BOND", "RB", "DBT"}
 
 
 def _normalize_alpha_vantage_matches(matches: object, *, provider: str) -> list[InstrumentLookupSuggestion]:
@@ -406,7 +465,7 @@ def _normalize_alpha_vantage_matches(matches: object, *, provider: str) -> list[
                 provider=provider,
             )
         )
-    return suggestions
+    return _filter_supported_stock_suggestions(suggestions)
 
 
 def _alpha_vantage_exchange_code(raw_symbol: str) -> str:
@@ -444,6 +503,21 @@ def _normalize_aliases(values: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
+def _merge_suggestions(
+    *suggestion_lists: list[InstrumentLookupSuggestion],
+) -> list[InstrumentLookupSuggestion]:
+    merged: list[InstrumentLookupSuggestion] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for suggestions in suggestion_lists:
+        for suggestion in suggestions:
+            dedupe_key = (suggestion.ticker, normalize_exchange_code(suggestion.exchange_code))
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+            merged.append(suggestion)
+    return merged
+
+
 def _rank_suggestions(
     query: str,
     suggestions: list[InstrumentLookupSuggestion],
@@ -470,7 +544,7 @@ def _suggestion_rank_key(
     if not normalized_query:
         return (6, 0, 0, index)
 
-    best_rank = (6, 10_000, 10_000, index)
+    best_rank = (6, 0, 10_000, index)
     for candidate in _candidate_strings(suggestion):
         rank = _match_rank(
             normalized_query,
@@ -516,24 +590,28 @@ def _match_rank(
 ) -> tuple[int, int, int, int]:
     field_length = len(candidate_text)
     extra_tokens = max(0, len(candidate_tokens) - len(query_tokens))
+    query_is_single_word = len(query_tokens) == 1
 
     if candidate_text == normalized_query:
         if candidate_kind == "ticker":
-            return (0, field_length, extra_tokens, index)
-        if candidate_kind == "alias":
-            return (1, field_length, extra_tokens, index)
-        return (2, field_length, extra_tokens, index)
+            return (0, -field_length, extra_tokens, index)
+        if query_is_single_word:
+            return (1, -field_length, extra_tokens, index)
+        return (2, -field_length, extra_tokens, index)
 
-    if _contains_exact_token_sequence(query_tokens, candidate_tokens):
-        return (3, field_length, extra_tokens, index)
+    if query_is_single_word and normalized_query in candidate_tokens:
+        return (1, -field_length, extra_tokens, index)
+
+    if not query_is_single_word and _contains_exact_token_sequence(query_tokens, candidate_tokens):
+        return (2, -field_length, extra_tokens, index)
 
     if _has_prefix_token_match(normalized_query, candidate_tokens):
-        return (4, field_length, extra_tokens, index)
+        return (3, -field_length, extra_tokens, index)
 
     if normalized_query in candidate_text:
-        return (5, field_length, extra_tokens, index)
+        return (4, -field_length, extra_tokens, index)
 
-    return (6, field_length, extra_tokens, index)
+    return (6, -field_length, extra_tokens, index)
 
 
 def _contains_exact_token_sequence(query_tokens: list[str], candidate_tokens: list[str]) -> bool:
@@ -562,6 +640,11 @@ def _search_variants(query: str) -> tuple[str, ...]:
     return (raw,)
 
 
+def _is_single_letter_ticker_query(query: str) -> bool:
+    normalized = query.strip().upper()
+    return len(normalized) == 1 and normalized.isalpha()
+
+
 def _normalize_match_text(value: str) -> str:
     normalized = value.strip().lower()
     normalized = re.sub(r"[\u2010-\u2015_\-./]+", " ", normalized)
@@ -580,11 +663,59 @@ def _suggestions_from_cache(entry: SharedLookupCacheEntry) -> list[InstrumentLoo
     payload_results = entry.payload.get("results")
     if not isinstance(payload_results, list):
         return []
-    return [
+    return _filter_supported_stock_suggestions([
         InstrumentLookupSuggestion.from_payload(item)
         for item in payload_results
         if isinstance(item, dict)
+    ])
+
+
+def _filter_supported_stock_suggestions(
+    suggestions: list[InstrumentLookupSuggestion],
+) -> list[InstrumentLookupSuggestion]:
+    return [suggestion for suggestion in suggestions if _is_supported_stock_suggestion(suggestion)]
+
+
+def _filter_query_specific_suggestions(
+    query: str,
+    suggestions: list[InstrumentLookupSuggestion],
+) -> list[InstrumentLookupSuggestion]:
+    normalized_query = _normalize_match_text(query)
+    if len(normalized_query) != 1:
+        return suggestions
+    return [
+        suggestion
+        for suggestion in suggestions
+        if _normalize_match_text(suggestion.ticker) == normalized_query
     ]
+
+
+def _is_supported_stock_suggestion(suggestion: InstrumentLookupSuggestion) -> bool:
+    name = _normalize_match_text(suggestion.display_name)
+    if not name:
+        return False
+    blocked_phrases = (
+        " etf",
+        " bond",
+        " notes due",
+        " note due",
+        " preferred stock",
+        " preferred shares",
+        " depositary shares",
+        " depositary share",
+        " term preferred stock",
+        " cumulative redeemable preferred stock",
+        " non cumulative preferred stock",
+    )
+    if any(phrase in f" {name}" for phrase in blocked_phrases):
+        return False
+    if "%" in suggestion.display_name:
+        return False
+    return True
+
+
+def _cache_has_strong_match(query: str, suggestions: list[InstrumentLookupSuggestion]) -> bool:
+    return any(_suggestion_rank_key(query, suggestion, index)[0] <= 2 for index, suggestion in enumerate(suggestions))
 
 
 def _utc_now() -> datetime:
