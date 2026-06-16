@@ -17,8 +17,13 @@ $backendPidFile = Join-Path $logsDir 'monitoring-ui-backend.pid'
 $frontendPidFile = Join-Path $logsDir 'monitoring-ui-frontend.pid'
 $apiBaseUrl = "http://127.0.0.1:$BackendPort"
 $uiUrl = "http://127.0.0.1:$FrontendPort"
+$stopScript = Join-Path $scriptDir 'stop.ps1'
 
 $null = New-Item -ItemType Directory -Path $logsDir -Force
+
+if (Test-Path -LiteralPath $stopScript) {
+    & $stopScript -BackendPort $BackendPort -FrontendPort $FrontendPort
+}
 
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 Out-File -LiteralPath $backendLog -InputObject "[$timestamp] starting backend on $apiBaseUrl" -Append -Encoding utf8

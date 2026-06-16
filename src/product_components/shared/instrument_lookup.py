@@ -635,9 +635,24 @@ def _search_variants(query: str) -> tuple[str, ...]:
     normalized = _normalize_match_text(raw)
     if not raw:
         return ()
-    if normalized and normalized != raw:
-        return (raw, normalized)
-    return (raw,)
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def _append(value: str) -> None:
+        candidate = value.strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        variants.append(candidate)
+
+    _append(raw)
+    _append(normalized)
+
+    normalized_tokens = normalized.split(" ") if normalized else []
+    for end in range(len(normalized_tokens) - 1, 0, -1):
+        _append(" ".join(normalized_tokens[:end]))
+
+    return tuple(variants)
 
 
 def _is_single_letter_ticker_query(query: str) -> bool:

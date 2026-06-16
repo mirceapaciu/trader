@@ -585,6 +585,42 @@ def test_lookup_retries_with_normalized_hyphenated_query() -> None:
     assert results[0].ticker == "NVO"
 
 
+def test_lookup_retries_with_shorter_multi_word_query_variants() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+
+    class PhraseFallbackProvider(FakeProvider):
+        def search(self, query: str) -> list[InstrumentLookupSuggestion]:
+            self.search_calls += 1
+            self.queries.append(query)
+            if query == "ford motor":
+                return [
+                    InstrumentLookupSuggestion(
+                        ticker="F",
+                        exchange_code="XNYS",
+                        display_name="Ford Motor Company",
+                        aliases=("ford", "ford motor company"),
+                        provider="massive",
+                    )
+                ]
+            return []
+
+    provider = PhraseFallbackProvider(name="massive", results=[])
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford motor company")
+
+    assert cached is False
+    assert provider.queries == ["Ford motor company", "ford motor company", "ford motor"]
+    assert [item.ticker for item in results] == ["F"]
+
+
 def test_lookup_coalesces_concurrent_external_calls_for_same_query() -> None:
     registry = FakeRegistry()
     admin = FakeAdmin()

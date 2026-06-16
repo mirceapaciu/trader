@@ -1,3 +1,8 @@
+param(
+    [int]$BackendPort = 8090,
+    [int]$FrontendPort = 5174
+)
+
 $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -8,32 +13,96 @@ $frontendPidFile = Join-Path $logsDir 'monitoring-ui-frontend.pid'
 $backendLog = Join-Path $logsDir 'monitoring-ui-backend.log'
 $frontendLog = Join-Path $logsDir 'monitoring-ui-frontend.log'
 
+function Write-BestEffortLog {
+    param(
+        [string]$LogFile,
+        [string]$Message
+    )
+
+    try {
+        Out-File -LiteralPath $LogFile -InputObject $Message -Append -Encoding utf8
+    }
+    catch {
+        # Ignore locked log files while shutting down existing processes.
+    }
+}
+
+function Get-ListeningPid {
+    param(
+        [int]$Port
+    )
+
+    $line = netstat -ano | Select-String "127.0.0.1:$Port\s+.*LISTENING\s+(\d+)" | Select-Object -First 1
+    if (-not $line) {
+        $line = netstat -ano | Select-String "0.0.0.0:$Port\s+.*LISTENING\s+(\d+)" | Select-Object -First 1
+    }
+    if (-not $line) {
+        return $null
+    }
+
+    $parts = ($line.ToString() -split '\s+') | Where-Object { $_ }
+    if ($parts.Length -lt 5) {
+        return $null
+    }
+    return $parts[-1]
+}
+
 function Stop-MonitoringProcess {
     param(
         [string]$Name,
         [string]$PidFile,
-        [string]$LogFile
+        [string]$LogFile,
+        [int]$Port
     )
 
-    if (-not (Test-Path -LiteralPath $PidFile)) {
-        Write-Host "$Name PID file not found: $PidFile"
-        return
-    }
-
-    $rawPid = (Get-Content -LiteralPath $PidFile -ErrorAction Stop | Select-Object -First 1).Trim()
-    if (-not $rawPid) {
-        Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
-        Write-Host "$Name PID file was empty and has been removed."
-        return
-    }
-
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Out-File -LiteralPath $LogFile -InputObject "[$timestamp] stopping $Name via PID $rawPid" -Append -Encoding utf8
+    $rawPid = $null
 
-    cmd.exe /c "taskkill /PID $rawPid /T /F" | Out-Null
+    if (Test-Path -LiteralPath $PidFile) {
+        $rawPid = (Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
+    }
+
+    $portPid = Get-ListeningPid -Port $Port
+    $pidCandidates = @($rawPid, $portPid) | Where-Object { $_ } | Select-Object -Unique
+
+    if (-not $pidCandidates) {
+        if (Test-Path -LiteralPath $PidFile) {
+            Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "$Name is not running."
+        return
+    }
+
+    $failedIds = @()
+    foreach ($processId in $pidCandidates) {
+        Write-BestEffortLog -LogFile $LogFile -Message "[$timestamp] stopping $Name via PID $processId"
+        $taskkillOutput = ""
+        try {
+            $taskkillOutput = cmd.exe /c "taskkill /PID $processId /T /F" 2>&1 | Out-String
+        }
+        catch {
+            $taskkillOutput = $_.Exception.Message
+        }
+        if ($LASTEXITCODE -ne 0 -or $taskkillOutput -match 'Access denied') {
+            $failedIds += $processId
+            Write-BestEffortLog -LogFile $LogFile -Message "[$timestamp] failed to stop $Name via PID ${processId}: $taskkillOutput"
+        }
+    }
+
+    $remainingPortPid = Get-ListeningPid -Port $Port
+    if ($remainingPortPid -and ($pidCandidates -contains $remainingPortPid)) {
+        $failedIds += $remainingPortPid
+    }
+    $failedIds = $failedIds | Select-Object -Unique
+
+    if ($failedIds) {
+        Write-Host "Failed to stop $Name (PID(s): $($failedIds -join ', '))."
+        return
+    }
+
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
-    Write-Host "Stopped $Name (PID $rawPid)."
+    Write-Host "Stopped $Name (PID(s): $($pidCandidates -join ', '))."
 }
 
-Stop-MonitoringProcess -Name 'Monitoring UI backend' -PidFile $backendPidFile -LogFile $backendLog
-Stop-MonitoringProcess -Name 'Monitoring UI frontend' -PidFile $frontendPidFile -LogFile $frontendLog
+Stop-MonitoringProcess -Name 'Monitoring UI backend' -PidFile $backendPidFile -LogFile $backendLog -Port $BackendPort
+Stop-MonitoringProcess -Name 'Monitoring UI frontend' -PidFile $frontendPidFile -LogFile $frontendLog -Port $FrontendPort
