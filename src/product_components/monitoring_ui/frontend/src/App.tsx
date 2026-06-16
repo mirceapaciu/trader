@@ -2,12 +2,14 @@ import { useState } from "react";
 
 import { NewsFetcherTab } from "./newsFetcher/NewsFetcherTab";
 import { ThesisBuilderTab } from "./thesisBuilder/ThesisBuilderTab";
+import { WatchlistTab } from "./watchlist/WatchlistTab";
 
-type DomainTab = "news-fetcher" | "thesis-builder";
+type DomainTab = "news-fetcher" | "thesis-builder" | "watchlist";
 
 const DOMAIN_TABS: Array<{ id: DomainTab; label: string }> = [
   { id: "news-fetcher", label: "NewsFetcher" },
-  { id: "thesis-builder", label: "ThesisBuilder" }
+  { id: "thesis-builder", label: "ThesisBuilder" },
+  { id: "watchlist", label: "Watchlist" }
 ];
 
 export function App() {
@@ -27,7 +29,9 @@ export function App() {
           </button>
         ))}
       </nav>
-      {activeTab === "news-fetcher" ? <NewsFetcherTab /> : <ThesisBuilderTab />}
+      {activeTab === "news-fetcher" ? <NewsFetcherTab /> : null}
+      {activeTab === "thesis-builder" ? <ThesisBuilderTab /> : null}
+      {activeTab === "watchlist" ? <WatchlistTab /> : null}
     </>
   );
 }

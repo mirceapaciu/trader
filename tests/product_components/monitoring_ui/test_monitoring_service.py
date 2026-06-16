@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import psycopg
+import redis
+
 from src.product_components.monitoring_ui.backend.models import (
+    AliasDiscoveryResponse,
     BacklogResponse,
     DeadLetterResponse,
     DependencyHealth,
@@ -19,6 +23,8 @@ from src.product_components.monitoring_ui.backend.models import (
     ThesisBuilderMetricsResponse,
     ThesisBuilderPendingWindow,
     ThroughputResponse,
+    WatchlistItemPayload,
+    WatchlistResponse,
 )
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
 from src.product_components.monitoring_ui.backend.repository import (
@@ -34,6 +40,11 @@ from src.product_components.monitoring_ui.backend.service import (
     MonitoringService,
 )
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
+from src.product_components.shared.adapters import SharedWatchlistEntryInput, SharedWatchlistRecord
+from src.product_components.shared.instrument_lookup import (
+    DuplicateActiveWatchlistEntry,
+    InstrumentLookupSuggestion,
+)
 
 
 class FakeDataSource:
@@ -206,7 +217,33 @@ class FakeDataSource:
 
 class FailingProviderDataSource(FakeDataSource):
     def list_providers(self) -> ProvidersResponse:
-        raise RuntimeError("database unavailable")
+        raise psycopg.OperationalError("database unavailable")
+
+
+class FailingThroughputDataSource(FakeDataSource):
+    def get_throughput(
+        self,
+        *,
+        window: str,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> ThroughputResponse:
+        raise psycopg.OperationalError("database unavailable")
+
+
+class FailingBacklogDataSource(FakeDataSource):
+    def get_backlog(self) -> BacklogResponse:
+        raise redis.ConnectionError("redis unavailable")
+
+
+class FailingDeadLettersDataSource(FakeDataSource):
+    def list_dead_letters(self, *, limit: int, offset: int) -> DeadLetterResponse:
+        raise psycopg.OperationalError("database unavailable")
+
+
+class FailingFilterQualityStatusDataSource(FakeDataSource):
+    def mark_stale_filter_quality_runs_failed(self, *, timeout_seconds: int) -> int:
+        raise psycopg.OperationalError("database unavailable")
 
 
 class FakeFilterQualityRunner:
@@ -225,6 +262,83 @@ class FakeFilterQualityRunner:
         return self.run_id
 
 
+class FakeWatchlistAdmin:
+    def __init__(self) -> None:
+        self.items = [
+            SharedWatchlistRecord(
+                ticker="AAPL",
+                exchange_code="XNAS",
+                display_name="Apple Inc",
+                aliases=("apple",),
+                is_active=True,
+                source="manual",
+            )
+        ]
+        self.lookup_query: str | None = None
+        self.lookup_cached = False
+        self.alias_cached = False
+        self.alias_discovery_result: InstrumentLookupSuggestion | None = InstrumentLookupSuggestion(
+            ticker="NVDA",
+            exchange_code="XNAS",
+            display_name="NVIDIA Corporation",
+            aliases=("nvidia", "nvidia corporation"),
+            provider="massive",
+        )
+        self.deactivated: tuple[str, str] | None = None
+
+    def list_watchlist(self) -> list[SharedWatchlistRecord]:
+        return self.items
+
+    def lookup(self, query: str):
+        self.lookup_query = query
+        return (
+            [
+                InstrumentLookupSuggestion(
+                    ticker="NVDA",
+                    exchange_code="XNAS",
+                    display_name="NVIDIA Corporation",
+                    aliases=("nvidia", "nvidia corporation"),
+                    provider="massive",
+                )
+            ],
+            self.lookup_cached,
+        )
+
+    def discover_aliases(self, *, ticker: str, exchange_code: str, display_name: str | None):
+        return self.alias_discovery_result, self.alias_cached
+
+    def add_watchlist_entry(self, entry: SharedWatchlistEntryInput) -> SharedWatchlistRecord:
+        if any(item.ticker == entry.ticker and item.exchange_code == entry.exchange_code and item.is_active for item in self.items):
+            raise DuplicateActiveWatchlistEntry("duplicate")
+        record = SharedWatchlistRecord(
+            ticker=entry.ticker,
+            exchange_code=entry.exchange_code,
+            display_name=entry.display_name,
+            aliases=tuple(alias.lower() for alias in entry.aliases),
+            is_active=True,
+            source=entry.source,
+        )
+        self.items.append(record)
+        return record
+
+    def update_watchlist_entry(self, entry: SharedWatchlistEntryInput) -> SharedWatchlistRecord:
+        record = SharedWatchlistRecord(
+            ticker=entry.ticker,
+            exchange_code=entry.exchange_code,
+            display_name=entry.display_name,
+            aliases=tuple(alias.lower() for alias in entry.aliases),
+            is_active=True,
+            source=entry.source,
+        )
+        self.items = [
+            item for item in self.items if not (item.ticker == entry.ticker and item.exchange_code == entry.exchange_code)
+        ] + [record]
+        return record
+
+    def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str) -> None:
+        self.deactivated = (ticker, exchange_code)
+
+
 def test_health_is_healthy_when_dependencies_are_up_and_provider_data_is_fresh() -> None:
     data_source = FakeDataSource(
         dependencies=[
@@ -240,6 +354,80 @@ def test_health_is_healthy_when_dependencies_are_up_and_provider_data_is_fresh()
     assert health.readiness == "healthy"
     assert health.liveness == "healthy"
     assert health.stale_data is False
+
+
+def test_watchlist_lookup_and_alias_discovery_are_delegated_to_shared_admin() -> None:
+    data_source = FakeDataSource(
+        dependencies=[
+            DependencyHealth(name="postgres", kind="postgres", state="healthy", checked_at=_now()),
+            DependencyHealth(name="redis", kind="redis", state="healthy", checked_at=_now()),
+        ],
+        providers=[ProviderStatus(source_key="finnhub", last_cycle_end_at=_now())],
+    )
+    watchlist_admin = FakeWatchlistAdmin()
+    service = MonitoringService(settings=_settings(), data_source=data_source, watchlist_admin=watchlist_admin)
+
+    lookup = service.lookup_watchlist_candidates(query="nvidia")
+    aliases = service.discover_watchlist_aliases(ticker="NVDA", exchange_code="XNAS")
+
+    assert watchlist_admin.lookup_query == "nvidia"
+    assert lookup.suggestions[0].ticker == "NVDA"
+    assert lookup.lookup_providers_configured is False
+    assert lookup.lookup_message is not None
+    assert aliases.found is True
+    assert aliases.aliases == ["nvidia", "nvidia corporation"]
+
+
+def test_watchlist_list_reports_lookup_provider_configuration_state() -> None:
+    data_source = FakeDataSource(
+        dependencies=[],
+        providers=[],
+    )
+    watchlist_admin = FakeWatchlistAdmin()
+    service = MonitoringService(settings=_settings(), data_source=data_source, watchlist_admin=watchlist_admin)
+
+    response = service.list_watchlist()
+
+    assert response.lookup_providers_configured is False
+    assert response.lookup_message is not None
+
+
+def test_watchlist_add_update_and_deactivate_work() -> None:
+    data_source = FakeDataSource(
+        dependencies=[
+            DependencyHealth(name="postgres", kind="postgres", state="healthy", checked_at=_now()),
+            DependencyHealth(name="redis", kind="redis", state="healthy", checked_at=_now()),
+        ],
+        providers=[ProviderStatus(source_key="finnhub", last_cycle_end_at=_now())],
+    )
+    watchlist_admin = FakeWatchlistAdmin()
+    service = MonitoringService(settings=_settings(), data_source=data_source, watchlist_admin=watchlist_admin)
+
+    created = service.add_watchlist_entry(
+        WatchlistItemPayload(
+            ticker="NVDA",
+            exchange_code="XNAS",
+            display_name="NVIDIA Corporation",
+            aliases=["NVIDIA", "NVIDIA Corporation"],
+            source="manual",
+        )
+    )
+    updated = service.update_watchlist_entry(
+        ticker="NVDA",
+        exchange_code="XNAS",
+        payload=WatchlistItemPayload(
+            ticker="ignored",
+            exchange_code="ignored",
+            display_name="NVIDIA Corp",
+            aliases=["NVIDIA"],
+            source="manual",
+        ),
+    )
+    service.deactivate_watchlist_entry(ticker="NVDA", exchange_code="XNAS")
+
+    assert created.ticker == "NVDA"
+    assert updated.display_name == "NVIDIA Corp"
+    assert watchlist_admin.deactivated == ("NVDA", "XNAS")
 
 
 def test_health_marks_readiness_unhealthy_when_dependency_fails() -> None:
@@ -293,6 +481,17 @@ def test_health_degrades_when_provider_telemetry_query_fails() -> None:
     assert health.stale_data is True
 
 
+def test_list_providers_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingProviderDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.list_providers()
+
+    assert response.available is False
+    assert response.message == "Provider telemetry unavailable."
+    assert response.providers == []
+
+
 def test_dead_letter_query_bounds_limit_and_offset() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)
@@ -301,6 +500,28 @@ def test_dead_letter_query_bounds_limit_and_offset() -> None:
 
     assert data_source.dead_letter_limit == 25
     assert data_source.dead_letter_offset == 0
+
+
+def test_get_backlog_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingBacklogDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_backlog()
+
+    assert response.available is False
+    assert response.message == "Backlog data unavailable."
+    assert response.dead_letter_count == 0
+
+
+def test_list_dead_letters_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingDeadLettersDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.list_dead_letters(limit=25, offset=0)
+
+    assert response.available is False
+    assert response.message == "Dead-letter data unavailable."
+    assert response.items == []
 
 
 def test_get_throughput_uses_default_window_when_not_provided() -> None:
@@ -313,6 +534,18 @@ def test_get_throughput_uses_default_window_when_not_provided() -> None:
     assert data_source.throughput_start_at is None
     assert data_source.throughput_end_at is None
     assert response.window == "1d"
+
+
+def test_get_throughput_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingThroughputDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_throughput(window="1d")
+
+    assert response.available is False
+    assert response.message == "Throughput data unavailable."
+    assert response.window == "1d"
+    assert response.buckets == []
 
 
 def test_get_throughput_forwards_supported_preset_window() -> None:
@@ -532,6 +765,18 @@ def test_filter_quality_status_returns_running_and_last_terminal_run() -> None:
     assert status.last_run.run_id == "fqe_done"
 
 
+def test_filter_quality_status_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingFilterQualityStatusDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    status = service.get_filter_quality_status()
+
+    assert status.available is False
+    assert status.message == "Filter-quality data unavailable."
+    assert status.running_run is None
+    assert status.last_run is None
+
+
 def test_list_filter_quality_incorrectly_rejected_delegates_to_data_source() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)
@@ -743,10 +988,18 @@ def _settings() -> MonitoringUiSettings:
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",
         thesis_builder_db_schema="thesis_builder",
+        shared_db_schema="shared",
+        watchlist_table="t_watchlist_tickers",
         thesis_builder_evidence_collection_max_minutes=120,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
+        massive_api_key="",
+        massive_api_base_url="https://api.polygon.io",
+        alpha_vantage_api_key="",
+        instrument_lookup_cache_ttl_seconds=21600,
+        instrument_alias_cache_ttl_seconds=86400,
+        instrument_lookup_provider_debounce_ms=300,
     )
 
 

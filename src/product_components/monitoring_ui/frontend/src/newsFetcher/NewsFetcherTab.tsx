@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import {
+  ApiError,
   fetchBacklog,
   fetchDeadLetters,
   fetchFilterQualityIncorrectlyAccepted,
@@ -164,6 +165,21 @@ export function NewsFetcherTab() {
     ? 4
         : 6
       : undefined;
+  const availabilityNotices = uniqueMessages([
+    unavailableMessage(providers.data),
+    unavailableMessage(throughput.data),
+    unavailableMessage(backlog.data),
+    unavailableMessage(deadLetters.data),
+    unavailableMessage(filterQuality.data),
+    queryUnavailableMessage(incorrectlyRejected.error),
+    queryUnavailableMessage(incorrectlyAccepted.error),
+    queryUnavailableMessage(productionFilter.error),
+    queryUnavailableMessage(testFilter.error),
+    queryUnavailableMessage(startFilterQuality.error),
+    queryUnavailableMessage(runSimulation.error),
+    queryUnavailableMessage(promoteFilter.error),
+    queryUnavailableMessage(saveTestFilter.error)
+  ]);
   return (
     <main className="shell">
       <header className="topbar">
@@ -183,6 +199,13 @@ export function NewsFetcherTab() {
         <MetricTile label="Incidents" value={health.data?.active_incident_count ?? 0} />
         <MetricTile label="Dead letters" value={backlog.data?.dead_letter_count ?? 0} />
       </section>
+      {availabilityNotices.length > 0 ? (
+        <section className="inline-warning-stack" aria-label="Data source warnings">
+          {availabilityNotices.map((message) => (
+            <DataSourceNotice key={message} text={message} />
+          ))}
+        </section>
+      ) : null}
 
       <section className="layout">
         <div className="panel panel-large">
@@ -240,7 +263,9 @@ export function NewsFetcherTab() {
               set, the chart ends at the close of that day in your local time.
             </span>
           </div>
-          {throughput.isError && <div className="inline-error">{throughput.error.message}</div>}
+          {throughput.data && !throughput.data.available ? (
+            <DataSourceNotice text={throughput.data.message ?? "Throughput data unavailable."} compact />
+          ) : null}
           <div className="chart">
             {chartRows.length > 0 ? (
               <ResponsiveContainer width="100%" height={290} minWidth={0}>
@@ -285,7 +310,7 @@ export function NewsFetcherTab() {
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
-              <EmptyState text={throughput.isError ? "Throughput data unavailable" : "No throughput data yet"} />
+              <EmptyState text={!throughput.data?.available ? "Throughput data unavailable" : "No throughput data yet"} />
             )}
           </div>
         </div>
@@ -339,7 +364,9 @@ export function NewsFetcherTab() {
               ))}
             </tbody>
           </table>
-          {!providers.data?.providers.length && <EmptyState text="No provider telemetry yet" />}
+          {!providers.data?.providers.length && (
+            <EmptyState text={!providers.data?.available ? "Provider telemetry unavailable" : "No provider telemetry yet"} />
+          )}
         </div>
       </section>
 
@@ -348,6 +375,9 @@ export function NewsFetcherTab() {
           <div className="panel-heading">
             <h2>Backlog</h2>
           </div>
+          {backlog.data && !backlog.data.available ? (
+            <DataSourceNotice text={backlog.data.message ?? "Backlog data unavailable."} compact />
+          ) : null}
           <div className="backlog-grid">
             <MetricTile label="Pending" value={backlog.data?.pending_count ?? 0} compact />
             <MetricTile label="Retrying" value={backlog.data?.retrying_count ?? 0} compact />
@@ -359,6 +389,9 @@ export function NewsFetcherTab() {
           <div className="panel-heading">
             <h2>Dead Letter</h2>
           </div>
+          {deadLetters.data && !deadLetters.data.available ? (
+            <DataSourceNotice text={deadLetters.data.message ?? "Dead-letter data unavailable."} compact />
+          ) : null}
           <div className="dead-letter-list">
             {(deadLetters.data?.items ?? []).map((item) => (
               <div className="dead-letter" key={item.obligation_id}>
@@ -367,7 +400,9 @@ export function NewsFetcherTab() {
                 <small>{formatDate(item.updated_at)}</small>
               </div>
             ))}
-            {!deadLetters.data?.items.length && <EmptyState text="No dead-lettered items" />}
+            {!deadLetters.data?.items.length && (
+              <EmptyState text={!deadLetters.data?.available ? "Dead-letter data unavailable" : "No dead-lettered items"} />
+            )}
           </div>
         </div>
       </section>
@@ -405,9 +440,9 @@ export function NewsFetcherTab() {
             </button>
           </div>
         </div>
-        {startFilterQuality.isError && (
-          <div className="inline-error">{startFilterQuality.error.message}</div>
-        )}
+        {filterQuality.data && !filterQuality.data.available ? (
+          <DataSourceNotice text={filterQuality.data.message ?? "Filter-quality data unavailable."} compact />
+        ) : null}
         {filterQuality.data?.last_run ? (
           <FilterQualityMetrics
             run={filterQuality.data.last_run}
@@ -440,7 +475,7 @@ export function NewsFetcherTab() {
             }
           />
         ) : (
-          <EmptyState text={filterQuality.isError ? "Filter quality data unavailable" : "No filter quality runs yet"} />
+          <EmptyState text={!filterQuality.data?.available ? "Filter quality data unavailable" : "No filter quality runs yet"} />
         )}
       </section>
     </main>
@@ -468,6 +503,10 @@ function MetricTile({ label, value, compact = false }: { label: string; value: s
 
 function EmptyState({ text }: { text: string }) {
   return <div className="empty">{text}</div>;
+}
+
+function DataSourceNotice({ text, compact = false }: { text: string; compact?: boolean }) {
+  return <div className={compact ? "inline-warning compact" : "inline-warning"}>{text}</div>;
 }
 
 function FilterQualityMetrics({
@@ -1622,6 +1661,28 @@ function formatErrorCodes(codes: Record<string, number>) {
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .map(([code, count]) => `${code} (${count})`)
     .join(", ");
+}
+
+function unavailableMessage(
+  response:
+    | { available: boolean; message?: string | null }
+    | undefined
+) {
+  if (!response || response.available) {
+    return null;
+  }
+  return response.message ?? "Data source unavailable.";
+}
+
+function queryUnavailableMessage(error: unknown) {
+  if (!(error instanceof ApiError) || error.status !== 503) {
+    return null;
+  }
+  return error.message || "Data source unavailable.";
+}
+
+function uniqueMessages(values: Array<string | null>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function formatCause(value?: string | null) {

@@ -53,6 +53,8 @@ Runtime behavior:
 
 The Monitoring UI is organized as a modular tabbed application. The default tab is `NewsFetcher`; ThesisBuilder monitoring appears in a separate `ThesisBuilder` tab. Domain-specific data access, frontend state, and dashboard composition should stay separated in source code.
 
+The Monitoring UI also includes a top-level `Watchlist` tab for operator/admin workflows around shared watchlist membership and instrument alias maintenance. This tab is distinct from NewsFetcher filter tuning and must use the Monitoring UI HTTP API rather than direct browser access to external providers or databases.
+
 ### 4.1 Global Health Panel
 
 Must display:
@@ -200,8 +202,40 @@ Optional operator-action endpoints:
 - `POST /api/actions/refresh` triggers a non-blocking refresh of UI projections when supported.
 - `POST /api/actions/alert-test` sends a test alert when alert webhooks are enabled.
 - `POST /api/filter-quality/runs` starts an in-process background Filter Quality Evaluator run for the last 24 hours and returns `202` when accepted.
+- `GET /api/watchlist` returns active shared watchlist rows with alias completeness state.
+- `GET /api/watchlist/lookups` returns external instrument suggestions for operator search input.
+- `POST /api/watchlist` adds or reactivates a shared watchlist entry through the shared instrument-registry/admin capability.
+- `PUT /api/watchlist/{ticker}/{exchange_code}` updates persisted display name and aliases for one watchlist row.
+- `POST /api/watchlist/{ticker}/{exchange_code}/alias-discovery` attempts shared-owned alias discovery for one watchlist row.
+- `DELETE /api/watchlist/{ticker}/{exchange_code}` soft-disables one watchlist row.
 
 All response timestamps must be UTC ISO 8601 strings. Endpoint responses must include enough metadata for the frontend to render degraded panels without treating one failed source as a full dashboard failure.
+
+Watchlist lookup ordering rules:
+- `GET /api/watchlist/lookups` must return suggestions ordered by descending match quality.
+- Exact ticker matches outrank exact alias matches; exact alias matches outrank exact display-name matches.
+- Exact-word company-name or alias matches outrank prefix-only and broad substring matches.
+- Backend/shared lookup owns suggestion ranking before caching and response serialization. The browser must render returned order and must not apply its own relevance sorting.
+
+### 7.1 Failure Handling Contract
+
+CORS middleware is necessary for local browser development but is not sufficient to make endpoint failures safe. Unhandled backend exceptions that produce `500` responses are a Monitoring UI contract violation because browsers can surface them as misleading cross-origin failures when the response is missing expected application-level handling.
+
+Failure-handling rules:
+- Route handlers and service entrypoints must catch infrastructure failures before they escape FastAPI. Relevant failure families include PostgreSQL driver errors, Redis client/connection errors, timeout/network failures from shared provider adapters, and expected degraded-startup repository bootstrap failures.
+- `GET /api/health` is always best-effort. It must degrade rather than fail when individual dependencies are unavailable.
+- Other read/dashboard endpoints must either:
+  - return a degraded `200` response with explicit availability metadata such as `available=false`, `message`, safe empty collections, and `generated_at` when the response contract can represent degraded state without being misleading, or
+  - return a structured `503 Service Unavailable` response with a short stable `detail` message when the existing response contract cannot represent degradation cleanly.
+- Detail/read endpoints must prefer structured `503` over fabricated empty success when empty data would incorrectly imply that no records exist.
+- Mutation/admin endpoints must never degrade to success. They return structured `422` for validation errors, `409` for business conflicts, and `503` for dependency/storage/provider outages.
+- API responses must not expose raw driver or provider exception text to the frontend.
+
+Current default guidance:
+- `GET /api/health` must degrade.
+- Existing dashboard endpoints such as `providers`, `throughput`, `backlog`, `dead-letter`, `filter-quality`, and ThesisBuilder metrics should explicitly choose between degraded `200` and structured `503` based on whether their response models can represent unavailable state safely.
+- `ThesisBuilderMetricsResponse` already supports degraded success with `available` and `message`. Other response models should add comparable fields before adopting degraded `200` behavior.
+- New endpoints must reuse a shared backend exception-mapping helper rather than introducing ad hoc route-specific `try/except` logic.
 
 ## 8. Live Update Policy
 
@@ -232,6 +266,7 @@ Implementation is acceptable when all are true:
 - UI renders global health and provider status for all enabled providers.
 - Throughput and error metrics are visible for required windows.
 - Degraded data-source conditions are explicit and non-blocking.
+- Backend-managed dependency failures do not surface to the browser as raw `500` errors or misleading pseudo-CORS failures.
 - UI never mutates NewsFetcher article or checkpoint state.
 - Browser code communicates through the Monitoring UI HTTP API and does not connect directly to PostgreSQL or Redis.
 - Required tests pass.
@@ -242,6 +277,7 @@ Unit tests:
 - Health aggregation rules from provider-level inputs.
 - Panel degradation behavior on source-specific failures.
 - Stale-data banner behavior and TTL enforcement.
+- Each new Monitoring UI endpoint must include at least one dependency-unavailable test that verifies degraded `200` behavior or structured `503` handling.
 
 Integration tests:
 - Dashboard loads with NewsFetcher telemetry backend.

@@ -52,6 +52,8 @@ class ProviderStatus(BaseModel):
 class ProvidersResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    available: bool = True
+    message: str | None = None
     providers: list[ProviderStatus]
     generated_at: datetime
 
@@ -69,6 +71,8 @@ class ThroughputBucket(BaseModel):
 class ThroughputResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    available: bool = True
+    message: str | None = None
     window: str
     granularity: ThroughputGranularity
     window_start_at: datetime
@@ -120,6 +124,8 @@ class ThesisBuilderMetricsResponse(BaseModel):
 class BacklogResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    available: bool = True
+    message: str | None = None
     pending_count: int
     retrying_count: int
     dead_letter_count: int
@@ -141,6 +147,8 @@ class DeadLetterItem(BaseModel):
 class DeadLetterResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    available: bool = True
+    message: str | None = None
     items: list[DeadLetterItem]
     limit: int
     offset: int
@@ -202,6 +210,8 @@ class FilterQualityRunSummary(BaseModel):
 class FilterQualityStatusResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    available: bool = True
+    message: str | None = None
     running_run: FilterQualityRunSummary | None
     last_run: FilterQualityRunSummary | None
     generated_at: datetime
@@ -297,3 +307,68 @@ class FilterQualityStartRunResponse(BaseModel):
 
     run_id: str
     status: Literal["running"]
+
+
+class WatchlistItemPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ticker: str = Field(min_length=1)
+    exchange_code: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    aliases: list[str] = Field(default_factory=list)
+    source: str = "manual"
+
+
+class WatchlistItemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ticker: str
+    exchange_code: str
+    display_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    source: str = "manual"
+    has_missing_aliases: bool = False
+
+
+class WatchlistResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    lookup_providers_configured: bool = True
+    lookup_message: str | None = None
+    items: list[WatchlistItemResponse]
+    generated_at: datetime
+
+
+class WatchlistLookupSuggestionResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ticker: str
+    exchange_code: str
+    display_name: str
+    aliases: list[str] = Field(default_factory=list)
+    provider: str
+
+
+class WatchlistLookupResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    query: str
+    lookup_providers_configured: bool = True
+    lookup_message: str | None = None
+    suggestions: list[WatchlistLookupSuggestionResponse]
+    cached: bool = False
+    generated_at: datetime
+
+
+class AliasDiscoveryResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ticker: str
+    exchange_code: str
+    display_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    found: bool = False
+    cached: bool = False
+    generated_at: datetime

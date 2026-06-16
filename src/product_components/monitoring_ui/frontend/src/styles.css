@@ -260,6 +260,158 @@ h2 {
   white-space: nowrap;
 }
 
+.watchlist-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.watchlist-side {
+  display: grid;
+  gap: 20px;
+}
+
+.watchlist-list,
+.watchlist-suggestions,
+.manual-form,
+.lookup-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.watchlist-card {
+  border: 1px solid #d0dbd4;
+  border-radius: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.watchlist-card-header,
+.warning-row,
+.chip-row,
+.manual-grid {
+  display: flex;
+  gap: 10px;
+}
+
+.watchlist-card-header,
+.warning-row {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.watchlist-card-header span,
+.helper-text,
+.warning-text {
+  color: #64726c;
+  font-size: 0.88rem;
+}
+
+.chip-row {
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: #245142;
+  background: #ddf1ea;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.chip.warning {
+  color: #8e3f2b;
+  background: #f7e1d8;
+}
+
+.stacked-field {
+  display: grid;
+  gap: 6px;
+  color: #5d6b65;
+  font-size: 0.86rem;
+}
+
+.stacked-field input,
+.stacked-field textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #c8d3cc;
+  border-radius: 8px;
+  color: #18221f;
+  background: #ffffff;
+  font: inherit;
+}
+
+.stacked-field textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.suggestion-button,
+.primary-button,
+.secondary-button,
+.danger-button {
+  min-height: 38px;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.suggestion-button {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  padding: 10px 12px;
+  border: 1px solid #d0dbd4;
+  color: #21302a;
+  background: #f9fbfa;
+}
+
+.suggestion-button.active {
+  border-color: #176f58;
+  background: #ddf1ea;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  padding: 0 14px;
+  border: 1px solid transparent;
+}
+
+.primary-button {
+  color: #ffffff;
+  background: #1d8f6f;
+}
+
+.secondary-button {
+  color: #245142;
+  border-color: #b9d9cf;
+  background: #edf8f4;
+}
+
+.danger-button {
+  color: #ffffff;
+  background: #b45045;
+}
+
+@media (max-width: 980px) {
+  .watchlist-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-grid,
+  .warning-row,
+  .watchlist-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 .state-pill.running {
   color: #7a4a16;
   background: #f6e2c4;
@@ -330,6 +482,26 @@ h2 {
   color: #973030;
   background: #fff5f5;
   overflow-wrap: anywhere;
+}
+
+.inline-warning-stack {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.inline-warning {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d8c28d;
+  border-radius: 6px;
+  color: #73511a;
+  background: #fff8e8;
+  overflow-wrap: anywhere;
+}
+
+.inline-warning.compact {
+  margin-bottom: 12px;
 }
 
 .chart {

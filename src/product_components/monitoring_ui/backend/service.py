@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+import psycopg
+import redis
+
+from src.product_components.shared.adapters import SharedWatchlistEntryInput
+from src.product_components.shared.instrument_lookup import (
+    DuplicateActiveWatchlistEntry,
+    InstrumentLookupSuggestion,
+    SharedInstrumentLookupAdminService,
+)
+
 from .models import (
+    AliasDiscoveryResponse,
     BacklogResponse,
     DeadLetterResponse,
     DependencyHealth,
@@ -17,9 +28,17 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
+    ThroughputGranularity,
     ThroughputResponse,
+    WatchlistItemPayload,
+    WatchlistItemResponse,
+    WatchlistLookupResponse,
+    WatchlistLookupSuggestionResponse,
+    WatchlistResponse,
 )
 from .settings import MonitoringUiSettings
+
+_INFRASTRUCTURE_ERRORS = (psycopg.Error, redis.RedisError, TimeoutError)
 
 
 class MonitoringDataSource(Protocol):
@@ -96,10 +115,12 @@ class MonitoringService:
         settings: MonitoringUiSettings,
         data_source: MonitoringDataSource,
         filter_quality_runner: FilterQualityRunner | None = None,
+        watchlist_admin: SharedInstrumentLookupAdminService | None = None,
     ) -> None:
         self._settings = settings
         self._data_source = data_source
         self._filter_quality_runner = filter_quality_runner
+        self._watchlist_admin = watchlist_admin
 
     def get_health(self) -> HealthResponse:
         now = _utc_now()
@@ -132,7 +153,15 @@ class MonitoringService:
         )
 
     def list_providers(self) -> ProvidersResponse:
-        return self._data_source.list_providers()
+        try:
+            return self._data_source.list_providers()
+        except _INFRASTRUCTURE_ERRORS:
+            return ProvidersResponse(
+                available=False,
+                message="Provider telemetry unavailable.",
+                providers=[],
+                generated_at=_utc_now(),
+            )
 
     def get_throughput(
         self,
@@ -141,6 +170,9 @@ class MonitoringService:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> ThroughputResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
         if start_at is not None or end_at is not None:
             if start_at is None or end_at is None:
                 raise InvalidThroughputWindow("Custom throughput ranges require both start_at and end_at.")
@@ -150,43 +182,103 @@ class MonitoringService:
                 raise InvalidThroughputWindow("Custom throughput ranges must have start_at earlier than end_at.")
             if normalized_end - normalized_start > timedelta(days=30):
                 raise InvalidThroughputWindow("Custom throughput ranges must not exceed 30 days.")
-            selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
-            if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
-                raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
-            response = self._data_source.get_throughput(
-                window=selected_window,
-                start_at=normalized_start,
-                end_at=normalized_end,
-            )
+            try:
+                response = self._data_source.get_throughput(
+                    window=selected_window,
+                    start_at=normalized_start,
+                    end_at=normalized_end,
+                )
+            except _INFRASTRUCTURE_ERRORS:
+                return _unavailable_throughput_response(
+                    window="custom",
+                    selected_window=selected_window,
+                    start_at=normalized_start,
+                    end_at=normalized_end,
+                    message="Throughput data unavailable.",
+                )
             return response.model_copy(update={"window": "custom"})
 
-        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
-        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
-            raise InvalidThroughputWindow(f"Unsupported throughput window: {selected_window}")
-        return self._data_source.get_throughput(window=selected_window)
+        try:
+            return self._data_source.get_throughput(window=selected_window)
+        except _INFRASTRUCTURE_ERRORS:
+            now = _utc_now()
+            return _unavailable_throughput_response(
+                window=selected_window,
+                selected_window=selected_window,
+                start_at=now - _window_duration(selected_window),
+                end_at=now,
+                message="Throughput data unavailable.",
+            )
 
     def get_thesis_builder_metrics(self, *, window: str | None) -> ThesisBuilderMetricsResponse:
         selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
         if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
             raise InvalidThroughputWindow(f"Unsupported thesis-builder metrics window: {selected_window}")
-        return self._data_source.get_thesis_builder_metrics(
-            window=selected_window,
-            evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
-        )
+        try:
+            return self._data_source.get_thesis_builder_metrics(
+                window=selected_window,
+                evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
+            )
+        except _INFRASTRUCTURE_ERRORS:
+            now = _utc_now()
+            return ThesisBuilderMetricsResponse(
+                available=False,
+                message="ThesisBuilder telemetry unavailable.",
+                window=selected_window,
+                window_start_at=now - _window_duration(selected_window),
+                window_end_at=now,
+                articles_processed_count=0,
+                market_moving_articles_count=0,
+                articles_included_in_cards_count=0,
+                stale_articles_count=0,
+                created_thesis_cards_count=0,
+                pending_thesis_cards_count=0,
+                missed_stale_thesis_cards_count=0,
+                generated_at=now,
+            )
 
     def get_backlog(self) -> BacklogResponse:
-        return self._data_source.get_backlog()
+        try:
+            return self._data_source.get_backlog()
+        except _INFRASTRUCTURE_ERRORS:
+            return BacklogResponse(
+                available=False,
+                message="Backlog data unavailable.",
+                pending_count=0,
+                retrying_count=0,
+                dead_letter_count=0,
+                generated_at=_utc_now(),
+            )
 
     def list_dead_letters(self, *, limit: int, offset: int) -> DeadLetterResponse:
         bounded_limit = max(1, min(limit, self._settings.ui_export_max_rows))
         bounded_offset = max(0, offset)
-        return self._data_source.list_dead_letters(limit=bounded_limit, offset=bounded_offset)
+        try:
+            return self._data_source.list_dead_letters(limit=bounded_limit, offset=bounded_offset)
+        except _INFRASTRUCTURE_ERRORS:
+            return DeadLetterResponse(
+                available=False,
+                message="Dead-letter data unavailable.",
+                items=[],
+                limit=bounded_limit,
+                offset=bounded_offset,
+                generated_at=_utc_now(),
+            )
 
     def get_filter_quality_status(self) -> FilterQualityStatusResponse:
-        self._data_source.mark_stale_filter_quality_runs_failed(
-            timeout_seconds=self._settings.filter_quality_run_timeout_seconds,
-        )
-        return self._data_source.get_filter_quality_status()
+        try:
+            self._data_source.mark_stale_filter_quality_runs_failed(
+                timeout_seconds=self._settings.filter_quality_run_timeout_seconds,
+            )
+            return self._data_source.get_filter_quality_status()
+        except _INFRASTRUCTURE_ERRORS:
+            return FilterQualityStatusResponse(
+                available=False,
+                message="Filter-quality data unavailable.",
+                running_run=None,
+                last_run=None,
+                generated_at=_utc_now(),
+            )
 
     def list_filter_quality_incorrectly_rejected(self, *, run_id: str) -> FilterQualityIncorrectlyRejectedResponse:
         return self._data_source.list_filter_quality_incorrectly_rejected(run_id=run_id)
@@ -240,6 +332,143 @@ class MonitoringService:
             raise
         return FilterQualityStartRunResponse(run_id=run_id, status="running")
 
+    def list_watchlist(self) -> WatchlistResponse:
+        admin = self._require_watchlist_admin()
+        items = [
+            WatchlistItemResponse(
+                ticker=row.ticker,
+                exchange_code=row.exchange_code,
+                display_name=row.display_name,
+                aliases=list(row.aliases),
+                is_active=row.is_active,
+                source=row.source,
+                has_missing_aliases=row.has_missing_aliases,
+            )
+            for row in admin.list_watchlist()
+        ]
+        lookup_providers_configured = bool(
+            self._settings.massive_api_key.strip() or self._settings.alpha_vantage_api_key.strip()
+        )
+        return WatchlistResponse(
+            lookup_providers_configured=lookup_providers_configured,
+            lookup_message=(
+                None
+                if lookup_providers_configured
+                else "Ticker lookup providers are not configured. Add MASSIVE_API_KEY or ALPHA_VANTAGE_API_KEY to enable suggestions."
+            ),
+            items=items,
+            generated_at=_utc_now(),
+        )
+
+    def lookup_watchlist_candidates(self, *, query: str) -> WatchlistLookupResponse:
+        admin = self._require_watchlist_admin()
+        lookup_providers_configured = bool(
+            self._settings.massive_api_key.strip() or self._settings.alpha_vantage_api_key.strip()
+        )
+        suggestions, cached = admin.lookup(query)
+        return WatchlistLookupResponse(
+            query=query,
+            lookup_providers_configured=lookup_providers_configured,
+            lookup_message=(
+                None
+                if lookup_providers_configured
+                else "Ticker lookup providers are not configured. Add MASSIVE_API_KEY or ALPHA_VANTAGE_API_KEY to enable suggestions."
+            ),
+            suggestions=[_lookup_suggestion_response(item) for item in suggestions],
+            cached=cached,
+            generated_at=_utc_now(),
+        )
+
+    def add_watchlist_entry(self, payload: WatchlistItemPayload) -> WatchlistItemResponse:
+        admin = self._require_watchlist_admin()
+        try:
+            row = admin.add_watchlist_entry(_watchlist_input(payload))
+        except DuplicateActiveWatchlistEntry:
+            raise
+        return WatchlistItemResponse(
+            ticker=row.ticker,
+            exchange_code=row.exchange_code,
+            display_name=row.display_name,
+            aliases=list(row.aliases),
+            is_active=row.is_active,
+            source=row.source,
+            has_missing_aliases=row.has_missing_aliases,
+        )
+
+    def update_watchlist_entry(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        payload: WatchlistItemPayload,
+    ) -> WatchlistItemResponse:
+        admin = self._require_watchlist_admin()
+        row = admin.update_watchlist_entry(
+            _watchlist_input(
+                payload.model_copy(
+                    update={
+                        "ticker": ticker.strip().upper(),
+                        "exchange_code": exchange_code.strip().upper(),
+                    }
+                )
+            )
+        )
+        return WatchlistItemResponse(
+            ticker=row.ticker,
+            exchange_code=row.exchange_code,
+            display_name=row.display_name,
+            aliases=list(row.aliases),
+            is_active=row.is_active,
+            source=row.source,
+            has_missing_aliases=row.has_missing_aliases,
+        )
+
+    def discover_watchlist_aliases(self, *, ticker: str, exchange_code: str) -> AliasDiscoveryResponse:
+        admin = self._require_watchlist_admin()
+        current = next(
+            (
+                item
+                for item in admin.list_watchlist()
+                if item.ticker == ticker.strip().upper() and item.exchange_code == exchange_code.strip().upper()
+            ),
+            None,
+        )
+        suggestion, cached = admin.discover_aliases(
+            ticker=ticker,
+            exchange_code=exchange_code,
+            display_name=current.display_name if current is not None else None,
+        )
+        if suggestion is None:
+            return AliasDiscoveryResponse(
+                ticker=ticker.strip().upper(),
+                exchange_code=exchange_code.strip().upper(),
+                display_name=current.display_name if current is not None else None,
+                aliases=[],
+                provider=None,
+                found=False,
+                cached=cached,
+                generated_at=_utc_now(),
+            )
+        return AliasDiscoveryResponse(
+            ticker=suggestion.ticker,
+            exchange_code=suggestion.exchange_code,
+            display_name=suggestion.display_name,
+            aliases=list(suggestion.aliases),
+            provider=suggestion.provider,
+            found=bool(suggestion.aliases),
+            cached=cached,
+            generated_at=_utc_now(),
+        )
+
+    def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str) -> None:
+        admin = self._require_watchlist_admin()
+        admin.deactivate_watchlist_entry(ticker=ticker, exchange_code=exchange_code)
+
+    def _require_watchlist_admin(self) -> SharedInstrumentLookupAdminService:
+        if self._watchlist_admin is None:
+            raise RuntimeError("watchlist_admin_unavailable")
+        return self._watchlist_admin
+
 
 def _dependency_healthy(dependencies: list[DependencyHealth], kind: str) -> bool:
     return any(dependency.kind == kind and dependency.state == "healthy" for dependency in dependencies)
@@ -262,6 +491,50 @@ def _normalize_throughput_window(value: str) -> str:
     return normalized
 
 
+def _window_duration(window: str) -> timedelta:
+    if window == "15m":
+        return timedelta(minutes=15)
+    if window == "1h":
+        return timedelta(hours=1)
+    if window == "1d":
+        return timedelta(days=1)
+    if window == "7d":
+        return timedelta(days=7)
+    if window == "30d":
+        return timedelta(days=30)
+    raise ValueError(f"Unsupported throughput window: {window}")
+
+
+def _throughput_granularity(window: str) -> ThroughputGranularity:
+    if window in {"15m", "1h"}:
+        return "raw"
+    if window in {"1d", "7d"}:
+        return "hour"
+    if window == "30d":
+        return "day"
+    raise ValueError(f"Unsupported throughput window: {window}")
+
+
+def _unavailable_throughput_response(
+    *,
+    window: str,
+    selected_window: str,
+    start_at: datetime,
+    end_at: datetime,
+    message: str,
+) -> ThroughputResponse:
+    return ThroughputResponse(
+        available=False,
+        message=message,
+        window=window,
+        granularity=_throughput_granularity(selected_window),
+        window_start_at=start_at,
+        window_end_at=end_at,
+        buckets=[],
+        generated_at=_utc_now(),
+    )
+
+
 def _config_snapshot(config: NewsFilterConfigPayload) -> dict:
     return {
         "include_keywords": config.include_keywords,
@@ -271,3 +544,23 @@ def _config_snapshot(config: NewsFilterConfigPayload) -> dict:
         "dedupe_similarity_threshold": config.dedupe_similarity_threshold,
         "dedupe_lookback_hours": config.dedupe_lookback_hours,
     }
+
+
+def _watchlist_input(payload: WatchlistItemPayload) -> SharedWatchlistEntryInput:
+    return SharedWatchlistEntryInput(
+        ticker=payload.ticker.strip().upper(),
+        exchange_code=payload.exchange_code.strip().upper(),
+        display_name=payload.display_name.strip(),
+        aliases=tuple(str(alias).strip() for alias in payload.aliases if str(alias).strip()),
+        source=payload.source.strip() or "manual",
+    )
+
+
+def _lookup_suggestion_response(item: InstrumentLookupSuggestion) -> WatchlistLookupSuggestionResponse:
+    return WatchlistLookupSuggestionResponse(
+        ticker=item.ticker,
+        exchange_code=item.exchange_code,
+        display_name=item.display_name,
+        aliases=list(item.aliases),
+        provider=item.provider,
+    )

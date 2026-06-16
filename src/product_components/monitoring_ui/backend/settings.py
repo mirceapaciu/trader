@@ -21,10 +21,18 @@ class MonitoringUiSettings:
     newsfetcher_db_schema: str
     filter_quality_db_schema: str
     thesis_builder_db_schema: str
+    shared_db_schema: str
+    watchlist_table: str
     thesis_builder_evidence_collection_max_minutes: int
     filter_quality_run_timeout_seconds: int
     queue_url: str
     news_raw_queue: str
+    massive_api_key: str
+    massive_api_base_url: str
+    alpha_vantage_api_key: str
+    instrument_lookup_cache_ttl_seconds: int
+    instrument_alias_cache_ttl_seconds: int
+    instrument_lookup_provider_debounce_ms: int
 
     @property
     def postgres_dsn(self) -> str:
@@ -54,6 +62,8 @@ class MonitoringUiSettings:
             newsfetcher_db_schema=os.getenv("NEWSFETCHER_DB_SCHEMA", "news_fetcher"),
             filter_quality_db_schema=os.getenv("FILTER_QUALITY_DB_SCHEMA", "filter_quality_evaluator"),
             thesis_builder_db_schema=os.getenv("THESIS_BUILDER_DB_SCHEMA", "thesis_builder"),
+            shared_db_schema=os.getenv("SHARED_DB_SCHEMA", "shared"),
+            watchlist_table=os.getenv("WATCHLIST_TABLE", "t_watchlist_tickers"),
             thesis_builder_evidence_collection_max_minutes=_int_env(
                 "THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES",
                 120,
@@ -61,6 +71,12 @@ class MonitoringUiSettings:
             filter_quality_run_timeout_seconds=_int_env("FILTER_QUALITY_RUN_TIMEOUT_SECONDS", 1800),
             queue_url=_queue_url_from_env(),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
+            massive_api_key=os.getenv("MASSIVE_API_KEY", ""),
+            massive_api_base_url=os.getenv("MASSIVE_API_BASE_URL", "https://api.polygon.io"),
+            alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
+            instrument_lookup_cache_ttl_seconds=_int_env("INSTRUMENT_LOOKUP_CACHE_TTL_SECONDS", 21600),
+            instrument_alias_cache_ttl_seconds=_int_env("INSTRUMENT_ALIAS_CACHE_TTL_SECONDS", 86400),
+            instrument_lookup_provider_debounce_ms=_int_env("INSTRUMENT_LOOKUP_PROVIDER_DEBOUNCE_MS", 300),
         )
 
 

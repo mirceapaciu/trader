@@ -15,7 +15,7 @@ if [[ ! -x "$REPO_ROOT/.venv/bin/python" ]]; then
 fi
 
 printf '[%s] starting thesis-builder\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
-nohup "$REPO_ROOT/.venv/bin/python" -m src.product_components.thesis_builder >> "$LOG_FILE" 2>&1 &
+nohup "$REPO_ROOT/.venv/bin/python" -m src.product_components.thesis_builder >/dev/null 2>&1 &
 echo "$!" > "$PID_FILE"
 
 echo "ThesisBuilder starting."

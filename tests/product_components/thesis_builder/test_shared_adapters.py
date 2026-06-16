@@ -7,8 +7,10 @@ from src.product_components.shared.adapters import (
     PostgresSharedApiUsageWriter,
     PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
+    SharedLookupCacheEntry,
     PostgresSharedThesisCardReviewWriter,
     SharedInstrumentSeed,
+    SharedWatchlistEntryInput,
 )
 
 
@@ -34,6 +36,9 @@ class _FakeCursor:
 
     def fetchall(self) -> list[dict[str, Any]]:
         return list(self._rows)
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
 
 
 class _FakeConnection:
@@ -153,4 +158,81 @@ def test_shared_instrument_admin_upserts_instruments_and_aliases(monkeypatch) ->
     assert "INSERT INTO shared.t_instrument_aliases" in combined_sql
     assert any(params and params[0] == "RHM" and params[2] == "Rheinmetall" for params in cursor.params_history)
     assert any(params and params[2] == "DE0007030009" and params[3] == "identifier" for params in cursor.params_history)
+    assert connection.committed is True
+
+
+def test_shared_instrument_registry_lists_watchlist_records(monkeypatch) -> None:
+    cursor = _FakeCursor(
+        rows=[
+            {
+                "ticker": "AAPL",
+                "exchange_code": "XNAS",
+                "display_name": "Apple Inc",
+                "aliases": ["apple", "apple inc"],
+                "is_active": True,
+                "source": "manual",
+            }
+        ]
+    )
+    connection = _FakeConnection(cursor)
+    registry = PostgresSharedInstrumentRegistry(
+        dsn="unused",
+        shared_schema="shared",
+        watchlist_table="t_watchlist_tickers",
+    )
+    monkeypatch.setattr(registry, "_connect", lambda: connection)
+
+    rows = registry.list_watchlist_records(active_only=True)
+
+    assert rows[0].display_name == "Apple Inc"
+    assert rows[0].aliases == ("apple", "apple inc")
+    assert rows[0].has_missing_aliases is False
+
+
+def test_shared_instrument_admin_upserts_watchlist_entry_and_cache(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    admin = PostgresSharedInstrumentAdmin(
+        dsn="unused",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(admin, "_connect", lambda: connection)
+
+    admin.upsert_watchlist_entry(
+        SharedWatchlistEntryInput(
+            ticker="NVDA",
+            exchange_code="XNAS",
+            display_name="NVIDIA Corporation",
+            aliases=("nvidia", "nvidia corporation"),
+        )
+    )
+    admin.save_lookup_cache(
+        operation="search",
+        target="nvidia",
+        provider="massive",
+        payload={"results": [{"ticker": "NVDA"}]},
+        fetched_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        expires_at=datetime(2026, 6, 16, tzinfo=timezone.utc),
+    )
+
+    combined_sql = "\n".join(cursor.statements)
+    assert "INSERT INTO shared.t_watchlist_tickers" in combined_sql
+    assert "DELETE FROM shared.t_instrument_aliases" in combined_sql
+    assert "INSERT INTO shared.t_instrument_lookup_cache" in combined_sql
+    assert connection.committed is True
+
+
+def test_shared_instrument_admin_deactivates_watchlist_entry(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    admin = PostgresSharedInstrumentAdmin(
+        dsn="unused",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(admin, "_connect", lambda: connection)
+
+    admin.deactivate_watchlist_entry(ticker="NVDA", exchange_code="XNAS")
+
+    assert cursor.sql is not None
+    assert "UPDATE shared.t_watchlist_tickers" in cursor.sql
     assert connection.committed is True

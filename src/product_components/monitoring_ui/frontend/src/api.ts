@@ -34,6 +34,8 @@ export type ProviderStatus = {
 };
 
 export type ProvidersResponse = {
+  available: boolean;
+  message?: string | null;
   providers: ProviderStatus[];
   generated_at: string;
 };
@@ -47,6 +49,8 @@ export type ThroughputBucket = {
 };
 
 export type ThroughputResponse = {
+  available: boolean;
+  message?: string | null;
   window: string;
   granularity: "raw" | "hour" | "day";
   window_start_at: string;
@@ -98,6 +102,8 @@ export type ThesisBuilderMetricsResponse = {
 };
 
 export type BacklogResponse = {
+  available: boolean;
+  message?: string | null;
   pending_count: number;
   retrying_count: number;
   dead_letter_count: number;
@@ -115,6 +121,8 @@ export type DeadLetterItem = {
 };
 
 export type DeadLetterResponse = {
+  available: boolean;
+  message?: string | null;
   items: DeadLetterItem[];
   limit: number;
   offset: number;
@@ -155,10 +163,22 @@ export type FilterQualityRunSummary = {
 };
 
 export type FilterQualityStatusResponse = {
+  available: boolean;
+  message?: string | null;
   running_run?: FilterQualityRunSummary | null;
   last_run?: FilterQualityRunSummary | null;
   generated_at: string;
 };
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 export type FilterQualityIncorrectlyRejectedItem = {
   assessment_id: string;
@@ -252,6 +272,59 @@ export type FilterConfigSimulationStartResponse = {
   status: "running";
 };
 
+export type WatchlistItemPayload = {
+  ticker: string;
+  exchange_code: string;
+  display_name: string;
+  aliases: string[];
+  source?: string;
+};
+
+export type WatchlistItemResponse = {
+  ticker: string;
+  exchange_code: string;
+  display_name?: string | null;
+  aliases: string[];
+  is_active: boolean;
+  source: string;
+  has_missing_aliases: boolean;
+};
+
+export type WatchlistResponse = {
+  lookup_providers_configured: boolean;
+  lookup_message?: string | null;
+  items: WatchlistItemResponse[];
+  generated_at: string;
+};
+
+export type WatchlistLookupSuggestionResponse = {
+  ticker: string;
+  exchange_code: string;
+  display_name: string;
+  aliases: string[];
+  provider: string;
+};
+
+export type WatchlistLookupResponse = {
+  query: string;
+  lookup_providers_configured: boolean;
+  lookup_message?: string | null;
+  suggestions: WatchlistLookupSuggestionResponse[];
+  cached: boolean;
+  generated_at: string;
+};
+
+export type AliasDiscoveryResponse = {
+  ticker: string;
+  exchange_code: string;
+  display_name?: string | null;
+  aliases: string[];
+  provider?: string | null;
+  found: boolean;
+  cached: boolean;
+  generated_at: string;
+};
+
 const apiBaseUrl = import.meta.env.VITE_UI_API_BASE_URL ?? "";
 
 function apiUrl(path: string): string {
@@ -278,7 +351,7 @@ async function getJson<T>(path: string): Promise<T> {
     } catch {
       // Keep the HTTP status fallback when the server returns a non-JSON body.
     }
-    throw new Error(message);
+    throw new ApiError(message, response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -294,13 +367,16 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
     try {
       const body = await response.json();
       const detail = body.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        message = detail;
+      }
       if (detail?.message && detail?.run_id) {
         message = `${detail.message}: ${detail.run_id}`;
       }
     } catch {
       // Keep the HTTP status fallback when the server returns a non-JSON body.
     }
-    throw new Error(message);
+    throw new ApiError(message, response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -312,9 +388,36 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      const detail = body.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        message = detail;
+      }
+    } catch {
+      // Keep the HTTP status fallback when the server returns a non-JSON body.
+    }
+    throw new ApiError(message, response.status);
   }
   return response.json() as Promise<T>;
+}
+
+async function deleteJson(path: string): Promise<void> {
+  const response = await fetch(apiUrl(path), { method: "DELETE" });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      const detail = body.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        message = detail;
+      }
+    } catch {
+      // Keep the HTTP status fallback when the server returns a non-JSON body.
+    }
+    throw new ApiError(message, response.status);
+  }
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
@@ -395,4 +498,40 @@ export function runTestFilterSimulation(): Promise<FilterConfigSimulationStartRe
 
 export function promoteTestFilterConfig(): Promise<NewsFilterConfigPayload> {
   return postJson<NewsFilterConfigPayload>("/api/filter-configs/test/promote");
+}
+
+export function fetchWatchlist(): Promise<WatchlistResponse> {
+  return getJson<WatchlistResponse>("/api/watchlist");
+}
+
+export function lookupWatchlist(query: string): Promise<WatchlistLookupResponse> {
+  return getJson<WatchlistLookupResponse>(`/api/watchlist/lookups?query=${encodeURIComponent(query)}`);
+}
+
+export function addWatchlistItem(payload: WatchlistItemPayload): Promise<WatchlistItemResponse> {
+  return postJson<WatchlistItemResponse>("/api/watchlist", payload);
+}
+
+export function updateWatchlistItem(
+  ticker: string,
+  exchangeCode: string,
+  payload: WatchlistItemPayload
+): Promise<WatchlistItemResponse> {
+  return putJson<WatchlistItemResponse>(
+    `/api/watchlist/${encodeURIComponent(ticker)}/${encodeURIComponent(exchangeCode)}`,
+    payload
+  );
+}
+
+export function discoverWatchlistAliases(
+  ticker: string,
+  exchangeCode: string
+): Promise<AliasDiscoveryResponse> {
+  return postJson<AliasDiscoveryResponse>(
+    `/api/watchlist/${encodeURIComponent(ticker)}/${encodeURIComponent(exchangeCode)}/alias-discovery`
+  );
+}
+
+export function deactivateWatchlistItem(ticker: string, exchangeCode: string): Promise<void> {
+  return deleteJson(`/api/watchlist/${encodeURIComponent(ticker)}/${encodeURIComponent(exchangeCode)}`);
 }

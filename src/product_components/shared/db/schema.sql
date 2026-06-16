@@ -55,3 +55,15 @@ CREATE TABLE IF NOT EXISTS shared.t_instrument_aliases (
         REFERENCES shared.t_instruments (ticker, exchange_code)
         ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS shared.t_instrument_lookup_cache (
+    operation TEXT NOT NULL,
+    target TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (operation, target)
+);

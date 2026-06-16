@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+import psycopg
+import redis
 
 from src.product_components.monitoring_ui.backend.app import _local_dev_origin_regex, create_app
 from src.product_components.monitoring_ui.backend.models import (
@@ -141,6 +143,57 @@ class FakeFilterQualityRunner:
 
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
         return "unused"
+
+
+class FailingProvidersDataSource(FakeMonitoringDataSource):
+    def list_providers(self):
+        raise psycopg.OperationalError("db unavailable")
+
+
+class FailingThroughputDataSource(FakeMonitoringDataSource):
+    def get_throughput(
+        self,
+        *,
+        window: str,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> ThroughputResponse:
+        raise psycopg.OperationalError("db unavailable")
+
+
+class FailingBacklogDataSource(FakeMonitoringDataSource):
+    def get_backlog(self):
+        raise redis.ConnectionError("redis unavailable")
+
+
+class FailingDeadLetterDataSource(FakeMonitoringDataSource):
+    def list_dead_letters(self, *, limit: int, offset: int):
+        raise psycopg.OperationalError("db unavailable")
+
+
+class FailingFilterQualityDataSource(FakeMonitoringDataSource):
+    def get_filter_quality_status(self):
+        raise psycopg.OperationalError("db unavailable")
+
+
+class FailingWatchlistAdmin:
+    def list_watchlist(self):
+        return []
+
+    def lookup(self, query: str):
+        return ([], False)
+
+    def add_watchlist_entry(self, entry):
+        raise psycopg.OperationalError("db unavailable")
+
+    def update_watchlist_entry(self, entry):
+        raise psycopg.OperationalError("db unavailable")
+
+    def discover_aliases(self, *, ticker: str, exchange_code: str, display_name: str | None):
+        raise psycopg.OperationalError("db unavailable")
+
+    def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str) -> None:
+        raise psycopg.OperationalError("db unavailable")
 
 
 def test_throughput_endpoint_accepts_preset_window(monkeypatch) -> None:
@@ -338,6 +391,130 @@ def test_start_filter_quality_endpoint_accepts_accepted_audit_flag(monkeypatch) 
     assert runner.last_accepted_audit_enabled is True
 
 
+def test_providers_endpoint_returns_degraded_response_with_cors_headers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingProvidersDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/providers", headers={"Origin": "http://127.0.0.1:5174"})
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "Provider telemetry unavailable."
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
+
+
+def test_throughput_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingThroughputDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/metrics/throughput", params={"window": "1d"})
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "Throughput data unavailable."
+    assert response.json()["buckets"] == []
+
+
+def test_backlog_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingBacklogDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/backlog")
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "Backlog data unavailable."
+
+
+def test_dead_letter_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingDeadLetterDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/dead-letter", params={"limit": 25, "offset": 0})
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "Dead-letter data unavailable."
+    assert response.json()["items"] == []
+
+
+def test_filter_quality_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingFilterQualityDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/filter-quality")
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "Filter-quality data unavailable."
+    assert response.json()["last_run"] is None
+
+
+def test_watchlist_add_endpoint_returns_structured_503_when_storage_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FakeMonitoringDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.SharedInstrumentLookupAdminService",
+        lambda *args, **kwargs: FailingWatchlistAdmin(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.post(
+        "/api/watchlist",
+        json={
+            "ticker": "NVDA",
+            "exchange_code": "XNAS",
+            "display_name": "NVIDIA Corporation",
+            "aliases": ["NVIDIA"],
+            "source": "manual",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "watchlist storage unavailable"
+
+
 def _settings() -> MonitoringUiSettings:
     return MonitoringUiSettings(
         ui_port=8080,
@@ -352,8 +529,16 @@ def _settings() -> MonitoringUiSettings:
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",
         thesis_builder_db_schema="thesis_builder",
+        shared_db_schema="shared",
+        watchlist_table="t_watchlist_tickers",
         thesis_builder_evidence_collection_max_minutes=120,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
+        massive_api_key="",
+        massive_api_base_url="https://api.polygon.io",
+        alpha_vantage_api_key="",
+        instrument_lookup_cache_ttl_seconds=21600,
+        instrument_alias_cache_ttl_seconds=86400,
+        instrument_lookup_provider_debounce_ms=300,
     )

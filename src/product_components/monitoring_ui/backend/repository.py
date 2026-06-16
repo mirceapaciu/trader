@@ -106,6 +106,11 @@ class PostgresRedisMonitoringDataSource:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(schema_file.read_text(encoding="utf-8"))
 
+    def bootstrap_shared_schema(self, *, repo_root: Path) -> None:
+        schema_file = repo_root / "src" / "product_components" / "shared" / "db" / "schema.sql"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(schema_file.read_text(encoding="utf-8"))
+
     def bootstrap_thesis_builder_schema(self, *, repo_root: Path) -> None:
         schema_file = repo_root / "src" / "product_components" / "thesis_builder" / "db" / "schema.sql"
         with self._connect() as conn, conn.cursor() as cur:

@@ -136,6 +136,29 @@ Behavioral constraints:
 - Aliases are source-agnostic.
 - RSS provider-specific symbols remain in `news_fetcher.t_rss_symbol_rules`.
 
+### `t_instrument_lookup_cache`
+
+Purpose:
+- Non-canonical cache for external instrument search and alias-discovery responses used by operator/admin workflows.
+
+Contract ownership:
+- Owner: shared Instrument Registry contract.
+- Writers: shared-owned instrument-registry/admin lookup service.
+- Readers: shared-owned instrument-registry/admin lookup service.
+- Product components must not treat this table as a source of truth for watchlist membership or instrument metadata.
+
+Logical fields:
+- `operation`: cache operation such as `search` or `alias_discovery`.
+- `target`: normalized cache key target such as a search string or `ticker|exchange_code`.
+- `provider`: external lookup provider used to produce the cached payload.
+- `payload_json`: normalized provider result snapshot.
+- `fetched_at`: timestamp when the provider result was fetched.
+- `expires_at`: timestamp after which the cached payload must be considered stale.
+
+Behavioral constraints:
+- Canonical watchlist and alias state remain in `t_watchlist_tickers`, `t_instruments`, and `t_instrument_aliases`.
+- Stale cache rows may be refreshed or ignored; they must not silently override canonical data.
+
 ## Notes
 
 - Executable PostgreSQL DDL is maintained in `src/product_components/shared/db/schema.sql`.

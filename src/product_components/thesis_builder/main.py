@@ -46,8 +46,14 @@ def _configure_logging(settings: ThesisBuilderSettings, repo_root: Path) -> None
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     log_file = settings.log_file_path(repo_root)
     if log_file is not None:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        except OSError as exc:
+            print(
+                f"Unable to open thesis-builder log file {log_file}; falling back to stderr-only logging: {exc}",
+                file=sys.stderr,
+            )
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),

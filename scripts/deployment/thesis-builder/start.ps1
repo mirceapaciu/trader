@@ -22,7 +22,7 @@ if (-not (Test-Path -LiteralPath $pythonExe)) {
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 Out-File -LiteralPath $logFile -InputObject "[$timestamp] starting thesis-builder" -Append -Encoding utf8
 
-$command = "& { Set-Location -LiteralPath '$repoRoot'; & '$pythonExe' -m src.product_components.thesis_builder 2>&1 | Out-File -LiteralPath '$logFile' -Append -Encoding utf8 }"
+$command = "& { Set-Location -LiteralPath '$repoRoot'; & '$pythonExe' -m src.product_components.thesis_builder }"
 
 $process = Start-Process `
     -FilePath 'powershell.exe' `
