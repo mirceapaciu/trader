@@ -289,7 +289,7 @@ class FakeWatchlistAdmin:
     def list_watchlist(self) -> list[SharedWatchlistRecord]:
         return self.items
 
-    def lookup(self, query: str):
+    def lookup(self, query: str, *, expand: bool = False):
         self.lookup_query = query
         return (
             [

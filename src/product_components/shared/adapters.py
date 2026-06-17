@@ -255,6 +255,92 @@ class PostgresSharedInstrumentAdmin:
             )
             conn.commit()
 
+    def search_instruments_locally(self, query: str, *, limit: int = 50) -> list[SharedInstrumentSeed]:
+        normalized = query.strip().lower()
+        if not normalized:
+            return []
+        sql = f"""
+            SELECT i.display_name, i.aliases, i.identifiers, i.is_enabled, i.isin,
+                   el.ticker, el.exchange_code
+            FROM {self._shared_schema}.t_exchange_listings el
+            JOIN {self._shared_schema}.t_instruments i ON i.id = el.instrument_id
+            WHERE lower(el.ticker) LIKE %(prefix)s
+               OR lower(i.display_name) LIKE %(contains)s
+               OR %(exact)s = ANY(i.aliases)
+               OR EXISTS (SELECT 1 FROM unnest(i.aliases) a WHERE a LIKE %(prefix)s)
+            ORDER BY
+                CASE WHEN lower(el.ticker) LIKE %(prefix)s THEN 0 ELSE 1 END,
+                el.ticker
+            LIMIT %(limit)s
+        """
+        params = {
+            "prefix": normalized + "%",
+            "contains": "%" + normalized + "%",
+            "exact": normalized,
+            "limit": limit,
+        }
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [
+            SharedInstrumentSeed(
+                ticker=str(row["ticker"]).strip().upper(),
+                exchange_code=str(row["exchange_code"]).strip().upper(),
+                display_name=str(row["display_name"]).strip(),
+                aliases=tuple(
+                    str(a).strip().lower()
+                    for a in (row["aliases"] or [])
+                    if str(a).strip()
+                ),
+                identifiers=dict(row["identifiers"] or {}),
+                enabled=bool(row["is_enabled"]),
+                isin=str(row["isin"]).strip() if row["isin"] else None,
+            )
+            for row in rows
+        ]
+
+    def persist_lookup_results(self, seeds: tuple[SharedInstrumentSeed, ...]) -> None:
+        if not seeds:
+            return
+        with self._connect() as conn, conn.cursor() as cur:
+            for seed in seeds:
+                aliases = sorted({a.strip() for a in seed.aliases if a and a.strip()})
+                cur.execute(
+                    f"SELECT el.id, el.instrument_id "
+                    f"FROM {self._shared_schema}.t_exchange_listings el "
+                    f"WHERE UPPER(el.ticker) = UPPER(%s) AND UPPER(el.exchange_code) = UPPER(%s)",
+                    (seed.ticker, seed.exchange_code),
+                )
+                row = cur.fetchone()
+                if row is not None:
+                    _listing_id, instrument_id = row
+                    cur.execute(
+                        f"UPDATE {self._shared_schema}.t_instruments "
+                        f"SET display_name=%s, aliases=%s, updated_at=NOW() WHERE id=%s",
+                        (seed.display_name, aliases, instrument_id),
+                    )
+                else:
+                    cur.execute(
+                        f"INSERT INTO {self._shared_schema}.t_instruments "
+                        f"(isin, display_name, aliases, identifiers, is_enabled, created_at, updated_at) "
+                        f"VALUES (NULL, %s, %s, %s, %s, NOW(), NOW()) RETURNING id",
+                        (seed.display_name, aliases, Json({}), True),
+                    )
+                    instrument_id = cur.fetchone()[0]
+                    cur.execute(
+                        f"INSERT INTO {self._shared_schema}.t_exchange_listings "
+                        f"(instrument_id, ticker, exchange_code, is_enabled, created_at, updated_at) "
+                        f"VALUES (%s, %s, %s, %s, NOW(), NOW()) "
+                        f"ON CONFLICT (ticker, exchange_code) DO NOTHING",
+                        (
+                            instrument_id,
+                            seed.ticker.strip().upper(),
+                            seed.exchange_code.strip().upper(),
+                            True,
+                        ),
+                    )
+            conn.commit()
+
     def _upsert_instrument(self, cur, instrument: SharedInstrumentSeed) -> int:
         # Extract ISIN: prefer explicit field, fall back to identifiers dict.
         identifiers = dict(instrument.identifiers)

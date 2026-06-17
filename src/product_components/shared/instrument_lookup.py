@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 import re
 from typing import Any
 from typing import Protocol
@@ -12,9 +13,14 @@ import psycopg
 import requests
 
 from src.product_components.market_data.provider_symbols import normalize_exchange_code
+
+logger = logging.getLogger(__name__)
+
+_EMPTY_RESULT_CACHE_TTL_SECONDS = 60
 from src.product_components.shared.adapters import (
     PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
+    SharedInstrumentSeed,
     SharedLookupCacheEntry,
     SharedWatchlistEntryInput,
     SharedWatchlistRecord,
@@ -197,6 +203,7 @@ class _PendingLookup:
     event: threading.Event
     suggestions: list[InstrumentLookupSuggestion] | None = None
     provider_name: str = "none"
+    any_error: bool = False
 
 
 class SharedInstrumentLookupAdminService:
@@ -225,7 +232,7 @@ class SharedInstrumentLookupAdminService:
         except psycopg.Error:
             return []
 
-    def lookup(self, query: str) -> tuple[list[InstrumentLookupSuggestion], bool]:
+    def lookup(self, query: str, *, expand: bool = False) -> tuple[list[InstrumentLookupSuggestion], bool]:
         normalized_query = query.strip().lower()
         if not normalized_query:
             raise ValueError("lookup query must not be empty")
@@ -236,30 +243,72 @@ class SharedInstrumentLookupAdminService:
             cache_entry = None
         cached_suggestions = _suggestions_from_cache(cache_entry) if cache_entry is not None else []
         cached_suggestions = _filter_query_specific_suggestions(query, cached_suggestions)
-        if (
-            cache_entry is not None
-            and cache_entry.expires_at > _utc_now()
-            and cached_suggestions
-            and _cache_has_strong_match(query, cached_suggestions)
-        ):
-            return cached_suggestions, True
-        suggestions, provider_name, owns_lookup = self._run_search_with_coalescing(
+        if not expand:
+            if cache_entry is not None and cache_entry.expires_at > _utc_now():
+                if cached_suggestions and _cache_has_strong_match(query, cached_suggestions):
+                    return cached_suggestions, True
+                if not cached_suggestions and cache_entry.payload.get("provider_error"):
+                    return [], True
+            local_suggestions = self._search_local_db(query)
+            if local_suggestions and _cache_has_strong_match(query, local_suggestions):
+                return local_suggestions, True
+        suggestions, provider_name, owns_lookup, any_error = self._run_search_with_coalescing(
             cache_key=normalized_query,
             query=query,
         )
-        if suggestions and owns_lookup:
-            try:
-                self._admin.save_lookup_cache(
-                    operation="search",
-                    target=normalized_query,
-                    provider=provider_name,
-                    payload={"results": [item.to_payload() for item in suggestions]},
-                    fetched_at=_utc_now(),
-                    expires_at=_utc_now() + timedelta(seconds=self._lookup_cache_ttl_seconds),
-                )
-            except psycopg.Error:
-                pass
+        if owns_lookup:
+            if suggestions:
+                try:
+                    self._admin.persist_lookup_results(tuple(
+                        SharedInstrumentSeed(
+                            ticker=s.ticker,
+                            exchange_code=s.exchange_code,
+                            display_name=s.display_name,
+                            aliases=s.aliases,
+                            identifiers={},
+                            enabled=True,
+                        )
+                        for s in suggestions
+                    ))
+                except psycopg.Error:
+                    pass
+                try:
+                    self._admin.save_lookup_cache(
+                        operation="search",
+                        target=normalized_query,
+                        provider=provider_name,
+                        payload={"results": [item.to_payload() for item in suggestions]},
+                        fetched_at=_utc_now(),
+                        expires_at=_utc_now() + timedelta(seconds=self._lookup_cache_ttl_seconds),
+                    )
+                except psycopg.Error:
+                    pass
+            elif any_error:
+                try:
+                    self._admin.save_lookup_cache(
+                        operation="search",
+                        target=normalized_query,
+                        provider=provider_name,
+                        payload={"results": [], "provider_error": True},
+                        fetched_at=_utc_now(),
+                        expires_at=_utc_now() + timedelta(seconds=_EMPTY_RESULT_CACHE_TTL_SECONDS),
+                    )
+                except psycopg.Error:
+                    pass
         return suggestions, False
+
+    def _search_local_db(self, query: str) -> list[InstrumentLookupSuggestion]:
+        try:
+            seeds = self._admin.search_instruments_locally(query)
+        except psycopg.Error:
+            return []
+        if not seeds:
+            return []
+        suggestions = _suggestions_from_db_seeds(seeds)
+        suggestions = _filter_query_specific_suggestions(query, suggestions)
+        if not suggestions:
+            return []
+        return _rank_suggestions(query, suggestions)
 
     def discover_aliases(
         self,
@@ -346,19 +395,27 @@ class SharedInstrumentLookupAdminService:
     def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str) -> None:
         self._admin.deactivate_watchlist_entry(ticker=ticker, exchange_code=exchange_code)
 
-    def _run_search(self, query: str) -> tuple[list[InstrumentLookupSuggestion], str]:
+    def _run_search(self, query: str) -> tuple[list[InstrumentLookupSuggestion], str, bool]:
         variants = _search_variants(query)
         last_provider = "none"
         collected_suggestions: list[InstrumentLookupSuggestion] = []
         seen_keys: set[tuple[str, str]] = set()
+        any_error = False
         for provider in self._providers:
             last_provider = provider.provider_name
             provider_suggestions: list[InstrumentLookupSuggestion] = []
             for candidate_query in variants:
                 try:
                     suggestions = provider.search(candidate_query)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "provider %s search failed for query %r: %s",
+                        provider.provider_name,
+                        candidate_query,
+                        exc,
+                    )
                     suggestions = []
+                    any_error = True
                 if suggestions:
                     provider_suggestions = suggestions
                     break
@@ -371,20 +428,20 @@ class SharedInstrumentLookupAdminService:
                 seen_keys.add(dedupe_key)
                 collected_suggestions.append(suggestion)
         if not collected_suggestions:
-            return [], last_provider
+            return [], last_provider, any_error
         ranked = _rank_suggestions(query, collected_suggestions)
         ranked = _filter_query_specific_suggestions(query, ranked)
         if not ranked:
-            return [], last_provider
+            return [], last_provider, any_error
         top_provider = ranked[0].provider if ranked[0].provider else last_provider
-        return ranked, top_provider
+        return ranked, top_provider, any_error
 
     def _run_search_with_coalescing(
         self,
         *,
         cache_key: str,
         query: str,
-    ) -> tuple[list[InstrumentLookupSuggestion], str, bool]:
+    ) -> tuple[list[InstrumentLookupSuggestion], str, bool, bool]:
         with self._pending_lookup_lock:
             pending = self._pending_lookups.get(cache_key)
             if pending is None:
@@ -396,19 +453,33 @@ class SharedInstrumentLookupAdminService:
 
         if not owns_lookup:
             pending.event.wait()
-            return pending.suggestions or [], pending.provider_name, False
+            return pending.suggestions or [], pending.provider_name, False, pending.any_error
 
         try:
             if self._lookup_provider_debounce_seconds > 0:
                 time.sleep(self._lookup_provider_debounce_seconds)
-            suggestions, provider_name = self._run_search(query)
+            suggestions, provider_name, any_error = self._run_search(query)
             pending.suggestions = suggestions
             pending.provider_name = provider_name
-            return suggestions, provider_name, True
+            pending.any_error = any_error
+            return suggestions, provider_name, True, any_error
         finally:
             pending.event.set()
             with self._pending_lookup_lock:
                 self._pending_lookups.pop(cache_key, None)
+
+
+def _suggestions_from_db_seeds(seeds: list[SharedInstrumentSeed]) -> list[InstrumentLookupSuggestion]:
+    return _filter_supported_stock_suggestions([
+        InstrumentLookupSuggestion(
+            ticker=seed.ticker,
+            exchange_code=seed.exchange_code,
+            display_name=seed.display_name,
+            aliases=seed.aliases,
+            provider="local_db",
+        )
+        for seed in seeds
+    ])
 
 
 def _normalize_massive_results(results: object, *, provider: str) -> list[InstrumentLookupSuggestion]:

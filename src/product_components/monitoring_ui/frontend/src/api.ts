@@ -504,8 +504,10 @@ export function fetchWatchlist(): Promise<WatchlistResponse> {
   return getJson<WatchlistResponse>("/api/watchlist");
 }
 
-export function lookupWatchlist(query: string): Promise<WatchlistLookupResponse> {
-  return getJson<WatchlistLookupResponse>(`/api/watchlist/lookups?query=${encodeURIComponent(query)}`);
+export function lookupWatchlist(query: string, expand = false): Promise<WatchlistLookupResponse> {
+  const params = new URLSearchParams({ query });
+  if (expand) params.set("expand", "true");
+  return getJson<WatchlistLookupResponse>(`/api/watchlist/lookups?${params}`);
 }
 
 export function addWatchlistItem(payload: WatchlistItemPayload): Promise<WatchlistItemResponse> {

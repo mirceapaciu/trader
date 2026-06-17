@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import psycopg
 
 from src.product_components.shared.adapters import (
+    SharedInstrumentSeed,
     SharedLookupCacheEntry,
     SharedWatchlistRecord,
 )
@@ -45,6 +46,8 @@ class FakeAdmin:
         self.cache: dict[tuple[str, str], SharedLookupCacheEntry] = {}
         self.saved_provider: str | None = None
         self.deactivated: tuple[str, str] | None = None
+        self.persisted_seeds: list = []
+        self.local_db_seeds: list = []
 
     def load_lookup_cache(self, *, operation: str, target: str):
         return self.cache.get((operation, target))
@@ -65,6 +68,12 @@ class FakeAdmin:
 
     def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str):
         self.deactivated = (ticker, exchange_code)
+
+    def persist_lookup_results(self, seeds):
+        self.persisted_seeds.extend(seeds)
+
+    def search_instruments_locally(self, query: str, *, limit: int = 50):
+        return self.local_db_seeds
 
 
 class FakeProvider:
@@ -969,6 +978,180 @@ def test_lookup_cache_preserves_ranked_order() -> None:
     assert [item.ticker for item in first_results] == ["F", "HIG"]
     assert [item.ticker for item in second_results] == ["F", "HIG"]
     assert provider.search_calls == 1
+
+
+def test_lookup_returns_local_db_result_when_strong_match() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    admin.local_db_seeds = [
+        SharedInstrumentSeed(
+            ticker="NVDA",
+            exchange_code="XNAS",
+            display_name="NVIDIA Corporation",
+            aliases=("nvidia", "nvidia corporation"),
+            identifiers={},
+            enabled=True,
+        )
+    ]
+    provider = FakeProvider(name="massive", results=[])
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("NVDA")
+
+    assert cached is True
+    assert provider.search_calls == 0
+    assert results[0].ticker == "NVDA"
+    assert results[0].provider == "local_db"
+
+
+def test_lookup_falls_through_to_provider_on_weak_local_match() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    # Weak match: "founders bank" doesn't strongly match query "ford"
+    admin.local_db_seeds = [
+        SharedInstrumentSeed(
+            ticker="FND",
+            exchange_code="XNYS",
+            display_name="Founders Bank",
+            aliases=("founders bank",),
+            identifiers={},
+            enabled=True,
+        )
+    ]
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            )
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("Ford")
+
+    assert cached is False
+    assert provider.search_calls >= 1
+    assert results[0].ticker == "F"
+
+
+def test_lookup_persists_provider_results_to_local_db() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="F",
+                exchange_code="XNYS",
+                display_name="Ford Motor Company",
+                aliases=("ford", "ford motor company"),
+                provider="massive",
+            )
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    service.lookup("Ford")
+
+    assert len(admin.persisted_seeds) == 1
+    assert admin.persisted_seeds[0].ticker == "F"
+
+
+def test_lookup_local_db_error_falls_through_to_provider() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+
+    def broken_search(query: str, *, limit: int = 50):
+        raise psycopg.errors.ConnectionTimeout("timeout")
+
+    admin.search_instruments_locally = broken_search  # type: ignore[method-assign]
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="NVDA",
+                exchange_code="XNAS",
+                display_name="NVIDIA Corporation",
+                aliases=("nvidia",),
+                provider="massive",
+            )
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("nvidia")
+
+    assert cached is False
+    assert provider.search_calls >= 1
+    assert results[0].ticker == "NVDA"
+
+
+def test_lookup_expand_bypasses_local_db_strong_match() -> None:
+    registry = FakeRegistry()
+    admin = FakeAdmin()
+    admin.local_db_seeds = [
+        SharedInstrumentSeed(
+            ticker="NVDA",
+            exchange_code="XNAS",
+            display_name="NVIDIA Corporation",
+            aliases=("nvidia", "nvidia corporation"),
+            identifiers={},
+            enabled=True,
+        )
+    ]
+    provider = FakeProvider(
+        name="massive",
+        results=[
+            InstrumentLookupSuggestion(
+                ticker="NVDA",
+                exchange_code="XNAS",
+                display_name="NVIDIA Corporation",
+                aliases=("nvidia",),
+                provider="massive",
+            )
+        ],
+    )
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(provider,),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    results, cached = service.lookup("NVDA", expand=True)
+
+    assert cached is False
+    assert provider.search_calls >= 1
 
 
 def _now() -> datetime:

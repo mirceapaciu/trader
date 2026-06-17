@@ -180,7 +180,7 @@ class FailingWatchlistAdmin:
     def list_watchlist(self):
         return []
 
-    def lookup(self, query: str):
+    def lookup(self, query: str, *, expand: bool = False):
         return ([], False)
 
     def add_watchlist_entry(self, entry):

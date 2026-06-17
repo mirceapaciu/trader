@@ -30,6 +30,7 @@ export function WatchlistTab() {
   const [manualAliasesText, setManualAliasesText] = useState("");
   const [repairTarget, setRepairTarget] = useState<WatchlistItemResponse | null>(null);
   const [repairAliasesText, setRepairAliasesText] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const watchlist = useQuery({
     queryKey: ["watchlist"],
     queryFn: fetchWatchlist
@@ -41,6 +42,11 @@ export function WatchlistTab() {
     queryKey: ["watchlist", "lookup", deferredSearchText],
     queryFn: () => lookupWatchlist(deferredSearchText),
     enabled: lookupProvidersConfigured && deferredSearchText.length >= 1
+  });
+  const expandedLookup = useQuery({
+    queryKey: ["watchlist", "lookup", deferredSearchText, "expand"],
+    queryFn: () => lookupWatchlist(deferredSearchText, true),
+    enabled: lookupProvidersConfigured && deferredSearchText.length >= 1 && expanded
   });
 
   const addMutation = useMutation({
@@ -93,9 +99,21 @@ export function WatchlistTab() {
 
   useEffect(() => {
     setSelectedSuggestion(null);
+    setExpanded(false);
   }, [deferredSearchText]);
 
-  const suggestions = lookup.data?.suggestions ?? [];
+  useEffect(() => {
+    if (!lookupProvidersConfigured || deferredSearchText.length < 1) return;
+    if (expanded || !lookup.data?.cached) return;
+    const timer = setTimeout(() => setExpanded(true), 5000);
+    return () => clearTimeout(timer);
+  }, [deferredSearchText, expanded, lookup.data?.cached, lookupProvidersConfigured]);
+
+  const activeLookup =
+    expandedLookup.data && expandedLookup.data.suggestions.length > 0
+      ? expandedLookup.data
+      : lookup.data;
+  const suggestions = activeLookup?.suggestions ?? [];
   const lookupStatus = useMemo(() => {
     if (!lookupProvidersConfigured) {
       return watchlist.data?.lookup_message ?? "Ticker lookup providers are not configured. Manual add is still available.";
@@ -106,6 +124,9 @@ export function WatchlistTab() {
     if (deferredSearchText.length === 1) {
       return "Single-letter searches return exact ticker matches.";
     }
+    if (expandedLookup.isLoading) {
+      return "Expanding search with external providers\u2026";
+    }
     if (lookup.isLoading) {
       return "Looking up symbols...";
     }
@@ -115,9 +136,15 @@ export function WatchlistTab() {
     if (suggestions.length === 0) {
       return "No provider suggestions found. Manual add is available.";
     }
-    return lookup.data?.cached ? "Showing cached lookup suggestions." : "Showing provider suggestions.";
+    if (lookup.data?.cached && !expanded) {
+      return "Showing local suggestions \u2014 expanding search in 5 seconds\u2026";
+    }
+    return activeLookup?.cached ? "Showing cached lookup suggestions." : "Showing provider suggestions.";
   }, [
     deferredSearchText.length,
+    expanded,
+    expandedLookup.isLoading,
+    activeLookup?.cached,
     lookup.data?.cached,
     lookup.isError,
     lookup.isLoading,
@@ -224,6 +251,11 @@ export function WatchlistTab() {
                 </button>
               ))}
             </div>
+            {lookup.data?.cached && !expanded && suggestions.length > 0 && (
+              <button type="button" className="secondary-button" onClick={() => setExpanded(true)}>
+                Expand search
+              </button>
+            )}
             {selectedSuggestion ? (
               <div className="lookup-preview" data-testid="watchlist-preview">
                 <strong>Selected instrument</strong>

@@ -279,14 +279,17 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         )
 
     @app.get("/api/watchlist/lookups", response_model=WatchlistLookupResponse)
-    def lookup_watchlist_candidates(query: str = Query(min_length=1)) -> WatchlistLookupResponse:
+    def lookup_watchlist_candidates(
+        query: str = Query(min_length=1),
+        expand: bool = Query(default=False),
+    ) -> WatchlistLookupResponse:
         if not query.strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="lookup query must not be empty",
             )
         return _run_with_infrastructure_mapping(
-            lambda: service.lookup_watchlist_candidates(query=query),
+            lambda: service.lookup_watchlist_candidates(query=query, expand=expand),
             detail="watchlist lookup unavailable",
         )
 

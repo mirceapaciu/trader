@@ -360,12 +360,12 @@ class MonitoringService:
             generated_at=_utc_now(),
         )
 
-    def lookup_watchlist_candidates(self, *, query: str) -> WatchlistLookupResponse:
+    def lookup_watchlist_candidates(self, *, query: str, expand: bool = False) -> WatchlistLookupResponse:
         admin = self._require_watchlist_admin()
         lookup_providers_configured = bool(
             self._settings.massive_api_key.strip() or self._settings.alpha_vantage_api_key.strip()
         )
-        suggestions, cached = admin.lookup(query)
+        suggestions, cached = admin.lookup(query, expand=expand)
         return WatchlistLookupResponse(
             query=query,
             lookup_providers_configured=lookup_providers_configured,
