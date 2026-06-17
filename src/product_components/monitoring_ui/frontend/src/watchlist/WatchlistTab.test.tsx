@@ -143,6 +143,29 @@ describe("WatchlistTab", () => {
     expect(screen.getByText(/Single-letter searches return exact ticker matches./i)).toBeInTheDocument();
   });
 
+  it("calls deactivate API and refreshes watchlist when Deactivate is clicked", async () => {
+    const rhmItem = {
+      ticker: "RHM",
+      exchange_code: "XETR",
+      display_name: "Rheinmetall",
+      aliases: [],
+      is_active: true,
+      source: "manual",
+      has_missing_aliases: false,
+    };
+    // First fetch returns RHM; second fetch (after invalidation) returns empty list.
+    fetchWatchlist
+      .mockResolvedValueOnce({ lookup_providers_configured: true, lookup_message: null, items: [rhmItem], generated_at: "2026-06-15T00:00:00Z" })
+      .mockResolvedValueOnce({ lookup_providers_configured: true, lookup_message: null, items: [], generated_at: "2026-06-15T00:00:00Z" });
+
+    renderWithQueryClient(<WatchlistTab />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /deactivate/i }));
+
+    await waitFor(() => expect(deactivateWatchlistItem).toHaveBeenCalledWith("RHM", "XETR"));
+    await waitFor(() => expect(screen.queryByText("RHM:XETR")).not.toBeInTheDocument());
+  });
+
   it("shows a warning and skips lookup when providers are not configured", async () => {
     fetchWatchlist.mockResolvedValueOnce({
       lookup_providers_configured: false,

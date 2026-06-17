@@ -10,8 +10,10 @@ import pytest
 import redis
 
 from src.product_components.shared.adapters import (
+    PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
     PostgresSharedThesisCardReviewWriter,
+    SharedWatchlistEntryInput,
 )
 from src.product_components.thesis_builder.llm_client import ThesisAnalyzer
 from src.product_components.thesis_builder.models import ThesisStrategy, TradeDirection
@@ -222,14 +224,17 @@ def _cleanup(settings: ThesisBuilderSettings, redis_client: redis.Redis) -> None
 
 
 def _seed_watchlist(settings: ThesisBuilderSettings) -> None:
-    with psycopg.connect(**db_config()) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"INSERT INTO {settings.shared_db_schema}.t_watchlist_tickers "
-                f"(ticker, exchange_code, is_active, source, created_at, updated_at) "
-                f"VALUES ('AAPL', 'XNAS', TRUE, 'integration_test', NOW(), NOW())"
-            )
-        conn.commit()
+    PostgresSharedInstrumentAdmin(
+        dsn=settings.postgres_dsn,
+        shared_schema=settings.shared_db_schema,
+    ).upsert_watchlist_entry(
+        SharedWatchlistEntryInput(
+            ticker="AAPL",
+            exchange_code="XNAS",
+            display_name="Apple Inc.",
+            source="integration_test",
+        )
+    )
 
 
 def _publish_news(redis_client: redis.Redis, stream_name: str, article_ids: list[str]) -> None:

@@ -82,7 +82,7 @@ def test_shared_instrument_registry_reads_shared_contract(monkeypatch) -> None:
 
     assert cursor.sql is not None
     assert "FROM shared.t_watchlist_tickers w" in cursor.sql
-    assert "LEFT JOIN shared.t_exchange_listings el" in cursor.sql
+    assert "JOIN shared.t_exchange_listings el" in cursor.sql
     assert "LEFT JOIN shared.t_instruments i" in cursor.sql
     assert rows[0].ticker == "AAPL"
     assert rows[0].exchange_code == "XNAS"

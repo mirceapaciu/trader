@@ -428,7 +428,7 @@ def _normalize_massive_results(results: object, *, provider: str) -> list[Instru
                 ticker=ticker,
                 exchange_code=exchange_code,
                 display_name=display_name,
-                aliases=_normalize_aliases((ticker, display_name)),
+                aliases=_normalize_aliases((ticker, display_name, _base_company_name(display_name))),
                 provider=provider,
             )
         )
@@ -461,7 +461,7 @@ def _normalize_alpha_vantage_matches(matches: object, *, provider: str) -> list[
                 ticker=ticker,
                 exchange_code=exchange_code,
                 display_name=display_name,
-                aliases=_normalize_aliases((ticker, display_name)),
+                aliases=_normalize_aliases((ticker, display_name, _base_company_name(display_name))),
                 provider=provider,
             )
         )
@@ -489,6 +489,23 @@ def _pick_exact_candidate(
         if candidate.ticker == normalized_ticker and normalize_exchange_code(candidate.exchange_code) == normalized_exchange:
             return candidate
     return None
+
+
+# Strips share-class designations ("Class A/B/C …") and common corporate-form
+# suffixes ("Inc.", "Corp.", "Ltd.", etc.) from provider display names so that
+# the plain company name is always available as a news-matching alias.
+_CLASS_DESIGNATION = re.compile(r"\s+class\s+[a-z]\b.*$", re.IGNORECASE)
+_CORPORATE_SUFFIX = re.compile(
+    r"[\s,]+(?:inc|corp|ltd|plc|llc|s\.a|n\.v|a\/s|co|company|corporation|incorporated|limited)\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _base_company_name(display_name: str) -> str:
+    """Return the plain company name without class designations or corporate suffixes."""
+    name = _CLASS_DESIGNATION.sub("", display_name).strip()
+    name = _CORPORATE_SUFFIX.sub("", name).strip()
+    return name
 
 
 def _normalize_aliases(values: tuple[str, ...]) -> tuple[str, ...]:

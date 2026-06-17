@@ -51,14 +51,12 @@ CREATE INDEX IF NOT EXISTS ix_exchange_listings_instrument
     ON shared.t_exchange_listings (instrument_id);
 
 CREATE TABLE IF NOT EXISTS shared.t_watchlist_tickers (
-    ticker        TEXT NOT NULL,
-    exchange_code TEXT NOT NULL,
-    listing_id    BIGINT REFERENCES shared.t_exchange_listings(id) ON DELETE SET NULL,
+    listing_id    BIGINT NOT NULL REFERENCES shared.t_exchange_listings(id) ON DELETE CASCADE,
     is_active     BOOLEAN NOT NULL DEFAULT TRUE,
     source        TEXT NOT NULL DEFAULT 'manual',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (ticker, exchange_code)
+    PRIMARY KEY (listing_id)
 );
 
 CREATE TABLE IF NOT EXISTS shared.t_instrument_lookup_cache (

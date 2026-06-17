@@ -90,13 +90,13 @@ class PostgresSharedInstrumentRegistry:
     def list_watchlist_records(self, *, active_only: bool = True) -> list[SharedWatchlistRecord]:
         where_clause = "WHERE w.is_active = TRUE " if active_only else ""
         sql = (
-            f"SELECT w.ticker, w.exchange_code, w.is_active, w.source, "
+            f"SELECT el.ticker, el.exchange_code, w.is_active, w.source, "
             f"i.display_name, COALESCE(i.aliases, ARRAY[]::TEXT[]) AS aliases "
             f"FROM {self._shared_schema}.{self._watchlist_table} w "
-            f"LEFT JOIN {self._shared_schema}.t_exchange_listings el ON el.id = w.listing_id "
+            f"JOIN {self._shared_schema}.t_exchange_listings el ON el.id = w.listing_id "
             f"LEFT JOIN {self._shared_schema}.t_instruments i ON i.id = el.instrument_id "
             f"{where_clause}"
-            f"ORDER BY w.ticker, w.exchange_code"
+            f"ORDER BY el.ticker, el.exchange_code"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql)
@@ -119,12 +119,12 @@ class PostgresSharedInstrumentRegistry:
 
     def get_watchlist_record(self, *, ticker: str, exchange_code: str) -> SharedWatchlistRecord | None:
         sql = (
-            f"SELECT w.ticker, w.exchange_code, w.is_active, w.source, "
+            f"SELECT el.ticker, el.exchange_code, w.is_active, w.source, "
             f"i.display_name, COALESCE(i.aliases, ARRAY[]::TEXT[]) AS aliases "
             f"FROM {self._shared_schema}.{self._watchlist_table} w "
-            f"LEFT JOIN {self._shared_schema}.t_exchange_listings el ON el.id = w.listing_id "
+            f"JOIN {self._shared_schema}.t_exchange_listings el ON el.id = w.listing_id "
             f"LEFT JOIN {self._shared_schema}.t_instruments i ON i.id = el.instrument_id "
-            f"WHERE UPPER(w.ticker) = UPPER(%s) AND UPPER(w.exchange_code) = UPPER(%s)"
+            f"WHERE UPPER(el.ticker) = UPPER(%s) AND UPPER(el.exchange_code) = UPPER(%s)"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, (ticker.strip().upper(), exchange_code.strip().upper()))
@@ -180,16 +180,15 @@ class PostgresSharedInstrumentAdmin:
             cur.execute(
                 f"""
                 INSERT INTO {self._shared_schema}.t_watchlist_tickers
-                    (ticker, exchange_code, listing_id, is_active, source, created_at, updated_at)
-                VALUES (%s, %s, %s, TRUE, %s, NOW(), NOW())
-                ON CONFLICT (ticker, exchange_code)
+                    (listing_id, is_active, source, created_at, updated_at)
+                VALUES (%s, TRUE, %s, NOW(), NOW())
+                ON CONFLICT (listing_id)
                 DO UPDATE SET
                     is_active = TRUE,
-                    listing_id = EXCLUDED.listing_id,
                     source = EXCLUDED.source,
                     updated_at = NOW()
                 """,
-                (normalized.ticker, normalized.exchange_code, listing_id, entry.source.strip() or "manual"),
+                (listing_id, entry.source.strip() or "manual"),
             )
             conn.commit()
 
@@ -199,7 +198,10 @@ class PostgresSharedInstrumentAdmin:
                 f"""
                 UPDATE {self._shared_schema}.t_watchlist_tickers
                 SET is_active = FALSE, updated_at = NOW()
-                WHERE UPPER(ticker) = UPPER(%s) AND UPPER(exchange_code) = UPPER(%s)
+                WHERE listing_id = (
+                    SELECT id FROM {self._shared_schema}.t_exchange_listings
+                    WHERE UPPER(ticker) = UPPER(%s) AND UPPER(exchange_code) = UPPER(%s)
+                )
                 """,
                 (ticker.strip().upper(), exchange_code.strip().upper()),
             )
