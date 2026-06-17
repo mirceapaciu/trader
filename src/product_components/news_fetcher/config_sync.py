@@ -214,6 +214,7 @@ def _sync_instruments(
                 aliases=(*instrument.names, *instrument.aliases),
                 identifiers=instrument.identifiers,
                 enabled=instrument.enabled,
+                isin=instrument.identifiers.get("isin") or None,
             )
             for instrument in instruments
         )

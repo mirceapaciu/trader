@@ -27,6 +27,7 @@ class SharedInstrumentSeed:
     aliases: tuple[str, ...]
     identifiers: dict[str, Any]
     enabled: bool
+    isin: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,15 +90,12 @@ class PostgresSharedInstrumentRegistry:
     def list_watchlist_records(self, *, active_only: bool = True) -> list[SharedWatchlistRecord]:
         where_clause = "WHERE w.is_active = TRUE " if active_only else ""
         sql = (
-            f"SELECT w.ticker, w.exchange_code, w.is_active, w.source, i.display_name, "
-            f"COALESCE(jsonb_agg(DISTINCT a.alias) FILTER (WHERE a.alias IS NOT NULL), '[]'::jsonb) AS aliases "
+            f"SELECT w.ticker, w.exchange_code, w.is_active, w.source, "
+            f"i.display_name, COALESCE(i.aliases, ARRAY[]::TEXT[]) AS aliases "
             f"FROM {self._shared_schema}.{self._watchlist_table} w "
-            f"LEFT JOIN {self._shared_schema}.t_instruments i "
-            f"ON UPPER(i.ticker) = UPPER(w.ticker) AND UPPER(i.exchange_code) = UPPER(w.exchange_code) "
-            f"LEFT JOIN {self._shared_schema}.t_instrument_aliases a "
-            f"ON UPPER(a.ticker) = UPPER(w.ticker) AND UPPER(a.exchange_code) = UPPER(w.exchange_code) "
+            f"LEFT JOIN {self._shared_schema}.t_exchange_listings el ON el.id = w.listing_id "
+            f"LEFT JOIN {self._shared_schema}.t_instruments i ON i.id = el.instrument_id "
             f"{where_clause}"
-            f"GROUP BY w.ticker, w.exchange_code, w.is_active, w.source, i.display_name "
             f"ORDER BY w.ticker, w.exchange_code"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -121,15 +119,12 @@ class PostgresSharedInstrumentRegistry:
 
     def get_watchlist_record(self, *, ticker: str, exchange_code: str) -> SharedWatchlistRecord | None:
         sql = (
-            f"SELECT w.ticker, w.exchange_code, w.is_active, w.source, i.display_name, "
-            f"COALESCE(jsonb_agg(DISTINCT a.alias) FILTER (WHERE a.alias IS NOT NULL), '[]'::jsonb) AS aliases "
+            f"SELECT w.ticker, w.exchange_code, w.is_active, w.source, "
+            f"i.display_name, COALESCE(i.aliases, ARRAY[]::TEXT[]) AS aliases "
             f"FROM {self._shared_schema}.{self._watchlist_table} w "
-            f"LEFT JOIN {self._shared_schema}.t_instruments i "
-            f"ON UPPER(i.ticker) = UPPER(w.ticker) AND UPPER(i.exchange_code) = UPPER(w.exchange_code) "
-            f"LEFT JOIN {self._shared_schema}.t_instrument_aliases a "
-            f"ON UPPER(a.ticker) = UPPER(w.ticker) AND UPPER(a.exchange_code) = UPPER(w.exchange_code) "
-            f"WHERE UPPER(w.ticker) = UPPER(%s) AND UPPER(w.exchange_code) = UPPER(%s) "
-            f"GROUP BY w.ticker, w.exchange_code, w.is_active, w.source, i.display_name"
+            f"LEFT JOIN {self._shared_schema}.t_exchange_listings el ON el.id = w.listing_id "
+            f"LEFT JOIN {self._shared_schema}.t_instruments i ON i.id = el.instrument_id "
+            f"WHERE UPPER(w.ticker) = UPPER(%s) AND UPPER(w.exchange_code) = UPPER(%s)"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, (ticker.strip().upper(), exchange_code.strip().upper()))
@@ -171,7 +166,7 @@ class PostgresSharedInstrumentAdmin:
                 self._upsert_instrument(cur, instrument)
             conn.commit()
 
-    def upsert_watchlist_entry(self, entry: SharedWatchlistEntryInput, *, replace_aliases: bool = True) -> None:
+    def upsert_watchlist_entry(self, entry: SharedWatchlistEntryInput, *, replace_aliases: bool = True) -> None:  # noqa: ARG002
         normalized = SharedInstrumentSeed(
             ticker=entry.ticker.strip().upper(),
             exchange_code=entry.exchange_code.strip().upper(),
@@ -181,30 +176,20 @@ class PostgresSharedInstrumentAdmin:
             enabled=entry.enabled,
         )
         with self._connect() as conn, conn.cursor() as cur:
-            self._upsert_instrument(cur, normalized)
-            if replace_aliases:
-                cur.execute(
-                    f"""
-                    DELETE FROM {self._shared_schema}.t_instrument_aliases
-                    WHERE UPPER(ticker) = UPPER(%s)
-                      AND UPPER(exchange_code) = UPPER(%s)
-                      AND alias_type <> 'identifier'
-                    """,
-                    (normalized.ticker, normalized.exchange_code),
-                )
-                self._insert_aliases(cur, normalized)
+            listing_id = self._upsert_instrument(cur, normalized)
             cur.execute(
                 f"""
                 INSERT INTO {self._shared_schema}.t_watchlist_tickers
-                    (ticker, exchange_code, is_active, source, created_at, updated_at)
-                VALUES (%s, %s, TRUE, %s, NOW(), NOW())
+                    (ticker, exchange_code, listing_id, is_active, source, created_at, updated_at)
+                VALUES (%s, %s, %s, TRUE, %s, NOW(), NOW())
                 ON CONFLICT (ticker, exchange_code)
                 DO UPDATE SET
                     is_active = TRUE,
+                    listing_id = EXCLUDED.listing_id,
                     source = EXCLUDED.source,
                     updated_at = NOW()
                 """,
-                (normalized.ticker, normalized.exchange_code, entry.source.strip() or "manual"),
+                (normalized.ticker, normalized.exchange_code, listing_id, entry.source.strip() or "manual"),
             )
             conn.commit()
 
@@ -268,53 +253,59 @@ class PostgresSharedInstrumentAdmin:
             )
             conn.commit()
 
-    def _upsert_instrument(self, cur, instrument: SharedInstrumentSeed) -> None:
-        cur.execute(
-            f"""
-            INSERT INTO {self._shared_schema}.t_instruments
-                (ticker, exchange_code, display_name, identifiers, is_enabled, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
-            ON CONFLICT (ticker, exchange_code)
-            DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                identifiers = EXCLUDED.identifiers,
-                is_enabled = EXCLUDED.is_enabled,
-                updated_at = NOW()
-            """,
-            (
-                instrument.ticker,
-                instrument.exchange_code,
-                instrument.display_name,
-                Json(instrument.identifiers),
-                instrument.enabled,
-            ),
-        )
-        self._insert_aliases(cur, instrument)
+    def _upsert_instrument(self, cur, instrument: SharedInstrumentSeed) -> int:
+        # Extract ISIN: prefer explicit field, fall back to identifiers dict.
+        identifiers = dict(instrument.identifiers)
+        isin = instrument.isin or identifiers.pop("isin", None) or None
 
-    def _insert_aliases(self, cur, instrument: SharedInstrumentSeed) -> None:
-        identifier_values = {str(value) for value in instrument.identifiers.values()}
-        aliases = {
-            instrument.ticker,
-            instrument.display_name,
-            *instrument.aliases,
-            *identifier_values,
-        }
-        for alias in sorted({alias.strip() for alias in aliases if alias and alias.strip()}):
+        aliases = sorted({a.strip() for a in instrument.aliases if a and a.strip()})
+
+        # Step 1: upsert into t_instruments (security-level dedup by ISIN when available).
+        if isin:
             cur.execute(
                 f"""
-                INSERT INTO {self._shared_schema}.t_instrument_aliases
-                    (ticker, exchange_code, alias, alias_type, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, NOW(), NOW())
-                ON CONFLICT (ticker, exchange_code, alias)
-                DO UPDATE SET alias_type = EXCLUDED.alias_type, updated_at = NOW()
+                INSERT INTO {self._shared_schema}.t_instruments
+                    (isin, display_name, aliases, identifiers, is_enabled, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (isin) DO UPDATE SET
+                    display_name = EXCLUDED.display_name,
+                    aliases = EXCLUDED.aliases,
+                    identifiers = EXCLUDED.identifiers,
+                    is_enabled = EXCLUDED.is_enabled,
+                    updated_at = NOW()
+                RETURNING id
                 """,
-                (
-                    instrument.ticker,
-                    instrument.exchange_code,
-                    alias,
-                    "identifier" if alias in identifier_values else "alias",
-                ),
+                (isin, instrument.display_name, aliases, Json(identifiers), instrument.enabled),
             )
+        else:
+            cur.execute(
+                f"""
+                INSERT INTO {self._shared_schema}.t_instruments
+                    (isin, display_name, aliases, identifiers, is_enabled, created_at, updated_at)
+                VALUES (NULL, %s, %s, %s, %s, NOW(), NOW())
+                RETURNING id
+                """,
+                (instrument.display_name, aliases, Json(identifiers), instrument.enabled),
+            )
+        instrument_id: int = cur.fetchone()[0]
+
+        # Step 2: upsert into t_exchange_listings (one row per ticker+exchange pair).
+        cur.execute(
+            f"""
+            INSERT INTO {self._shared_schema}.t_exchange_listings
+                (instrument_id, ticker, exchange_code, is_enabled, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (ticker, exchange_code) DO UPDATE SET
+                instrument_id = EXCLUDED.instrument_id,
+                is_enabled = EXCLUDED.is_enabled,
+                updated_at = NOW()
+            RETURNING id
+            """,
+            (instrument_id, instrument.ticker, instrument.exchange_code, instrument.enabled),
+        )
+        listing_id: int = cur.fetchone()[0]
+
+        return listing_id
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)

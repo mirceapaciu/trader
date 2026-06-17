@@ -37,8 +37,9 @@ class _FakeCursor:
     def fetchall(self) -> list[dict[str, Any]]:
         return list(self._rows)
 
-    def fetchone(self) -> dict[str, Any] | None:
-        return self._rows[0] if self._rows else None
+    def fetchone(self) -> Any:
+        # Return first configured row when available; fall back to a fake RETURNING id row.
+        return self._rows[0] if self._rows else (1,)
 
 
 class _FakeConnection:
@@ -81,7 +82,8 @@ def test_shared_instrument_registry_reads_shared_contract(monkeypatch) -> None:
 
     assert cursor.sql is not None
     assert "FROM shared.t_watchlist_tickers w" in cursor.sql
-    assert "LEFT JOIN shared.t_instrument_aliases a" in cursor.sql
+    assert "LEFT JOIN shared.t_exchange_listings el" in cursor.sql
+    assert "LEFT JOIN shared.t_instruments i" in cursor.sql
     assert rows[0].ticker == "AAPL"
     assert rows[0].exchange_code == "XNAS"
     assert rows[0].aliases == ("apple", "apple inc")
@@ -155,9 +157,10 @@ def test_shared_instrument_admin_upserts_instruments_and_aliases(monkeypatch) ->
 
     combined_sql = "\n".join(cursor.statements)
     assert "INSERT INTO shared.t_instruments" in combined_sql
-    assert "INSERT INTO shared.t_instrument_aliases" in combined_sql
-    assert any(params and params[0] == "RHM" and params[2] == "Rheinmetall" for params in cursor.params_history)
-    assert any(params and params[2] == "DE0007030009" and params[3] == "identifier" for params in cursor.params_history)
+    assert "INSERT INTO shared.t_exchange_listings" in combined_sql
+    # ISIN is param[0], display_name param[1], aliases list param[2]
+    assert any(params and params[0] == "DE0007030009" and params[1] == "Rheinmetall" for params in cursor.params_history)
+    assert any(params and isinstance(params[2], list) and "Rheinmetall AG" in params[2] for params in cursor.params_history)
     assert connection.committed is True
 
 
@@ -217,7 +220,7 @@ def test_shared_instrument_admin_upserts_watchlist_entry_and_cache(monkeypatch) 
 
     combined_sql = "\n".join(cursor.statements)
     assert "INSERT INTO shared.t_watchlist_tickers" in combined_sql
-    assert "DELETE FROM shared.t_instrument_aliases" in combined_sql
+    assert "INSERT INTO shared.t_exchange_listings" in combined_sql
     assert "INSERT INTO shared.t_instrument_lookup_cache" in combined_sql
     assert connection.committed is True
 

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(find /d/src/trader/src -type f \\\\\\( -name \"*seed*\" -o -name \"*migration*\" -o -name \"*database*\" -o -name \"*db*\" \\\\\\) 2>/dev/null | grep -v node_modules | grep -v __pycache__)",
+      "Bash(uv run:*)"
+    ]
+  }
+}
