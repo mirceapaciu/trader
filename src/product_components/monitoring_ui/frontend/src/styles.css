@@ -280,6 +280,11 @@ h2 {
   gap: 12px;
 }
 
+.watchlist-suggestions {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 .watchlist-card {
   border: 1px solid #d0dbd4;
   border-radius: 10px;
