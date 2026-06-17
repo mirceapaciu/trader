@@ -374,6 +374,8 @@ class SharedInstrumentLookupAdminService:
             return [], last_provider
         ranked = _rank_suggestions(query, collected_suggestions)
         ranked = _filter_query_specific_suggestions(query, ranked)
+        if not ranked:
+            return [], last_provider
         top_provider = ranked[0].provider if ranked[0].provider else last_provider
         return ranked, top_provider
 
