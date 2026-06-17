@@ -525,7 +525,8 @@ def _normalize_alpha_vantage_matches(matches: object, *, provider: str) -> list[
             continue
         raw_symbol = str(item.get("1. symbol") or "").strip().upper()
         display_name = str(item.get("2. name") or raw_symbol).strip()
-        exchange_code = _alpha_vantage_exchange_code(raw_symbol)
+        region = str(item.get("4. region") or "").strip()
+        exchange_code = _alpha_vantage_exchange_code(raw_symbol, region)
         ticker = raw_symbol.split(".", 1)[0]
         if not ticker or not exchange_code or not display_name:
             continue
@@ -541,12 +542,14 @@ def _normalize_alpha_vantage_matches(matches: object, *, provider: str) -> list[
     return _filter_supported_stock_suggestions(suggestions)
 
 
-def _alpha_vantage_exchange_code(raw_symbol: str) -> str:
+def _alpha_vantage_exchange_code(raw_symbol: str, region: str = "") -> str:
     normalized = raw_symbol.strip().upper()
     if normalized.endswith(".DEX"):
         return "XETR"
     if normalized.endswith(".PAR"):
         return "XPAR"
+    if "." not in normalized and region.strip().lower() == "united states":
+        return "XNYS"
     return ""
 
 

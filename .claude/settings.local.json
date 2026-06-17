@@ -4,7 +4,8 @@
       "Bash(git add:*)",
       "Bash(find /d/src/trader/src -type f \\\\\\( -name \"*seed*\" -o -name \"*migration*\" -o -name \"*database*\" -o -name \"*db*\" \\\\\\) 2>/dev/null | grep -v node_modules | grep -v __pycache__)",
       "Bash(uv run:*)",
-      "Bash(cd D:/src/trader/src/product_components/monitoring_ui/frontend && npm test 2>&1)"
+      "Bash(cd D:/src/trader/src/product_components/monitoring_ui/frontend && npm test 2>&1)",
+      "Bash(find . -type d -name __pycache__ | xargs rm -rf && uv run pytest -m \"not integration\" -q 2>&1)"
     ]
   }
 }

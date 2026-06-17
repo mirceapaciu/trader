@@ -12,6 +12,7 @@ from src.product_components.shared.adapters import (
     SharedWatchlistRecord,
 )
 from src.product_components.shared.instrument_lookup import (
+    AlphaVantageInstrumentLookupProvider,
     InstrumentLookupSuggestion,
     MassiveInstrumentLookupProvider,
     SharedInstrumentLookupAdminService,
@@ -238,6 +239,60 @@ def test_massive_provider_single_letter_lookup_falls_back_when_exact_fetch_fails
         results = provider.search("F")
 
     assert [item.ticker for item in results] == ["ACDC"]
+
+
+def test_alpha_vantage_provider_returns_us_stock() -> None:
+    provider = AlphaVantageInstrumentLookupProvider(api_key="test-key")
+    response = Mock()
+    response.json.return_value = {
+        "bestMatches": [
+            {
+                "1. symbol": "NVO",
+                "2. name": "Novo-Nordisk A/S",
+                "3. type": "Equity",
+                "4. region": "United States",
+                "8. currency": "USD",
+            }
+        ]
+    }
+    response.raise_for_status.return_value = None
+
+    with patch("src.product_components.shared.instrument_lookup.requests.get", return_value=response):
+        results = provider.search("Novo Nordisk")
+
+    assert len(results) == 1
+    assert results[0].ticker == "NVO"
+    assert results[0].exchange_code == "XNYS"
+    assert results[0].display_name == "Novo-Nordisk A/S"
+
+
+def test_alpha_vantage_provider_filters_unsupported_exchange() -> None:
+    provider = AlphaVantageInstrumentLookupProvider(api_key="test-key")
+    response = Mock()
+    response.json.return_value = {
+        "bestMatches": [
+            {
+                "1. symbol": "NOVO-B.CO",
+                "2. name": "Novo-Nordisk A/S",
+                "3. type": "Equity",
+                "4. region": "Denmark",
+                "8. currency": "DKK",
+            },
+            {
+                "1. symbol": "NVO",
+                "2. name": "Novo-Nordisk A/S",
+                "3. type": "Equity",
+                "4. region": "United States",
+                "8. currency": "USD",
+            },
+        ]
+    }
+    response.raise_for_status.return_value = None
+
+    with patch("src.product_components.shared.instrument_lookup.requests.get", return_value=response):
+        results = provider.search("Novo Nordisk")
+
+    assert [item.ticker for item in results] == ["NVO"]
 
 
 def test_lookup_cache_filters_non_stock_cached_results() -> None:
