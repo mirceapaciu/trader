@@ -99,6 +99,7 @@ class MassiveInstrumentLookupProvider:
             try:
                 exact_candidates = self._fetch_exact_ticker_candidates(query)
             except Exception:
+                logger.warning("exact ticker fetch failed for query %r", query)
                 exact_candidates = []
         response = requests.get(
             f"{self._base_url}/v3/reference/tickers",
@@ -338,6 +339,7 @@ class SharedInstrumentLookupAdminService:
         try:
             return self._registry.list_watchlist_records(active_only=True)
         except psycopg.Error:
+            logger.warning("failed to load watchlist from database")
             return []
 
     def lookup(self, query: str, *, expand: bool = False) -> tuple[list[InstrumentLookupSuggestion], bool, list[str]]:
@@ -348,6 +350,7 @@ class SharedInstrumentLookupAdminService:
         try:
             cache_entry = self._admin.load_lookup_cache(operation="search", target=normalized_query)
         except psycopg.Error:
+            logger.warning("failed to load lookup cache for query %r", normalized_query)
             cache_entry = None
         cached_suggestions = _suggestions_from_cache(cache_entry) if cache_entry is not None else []
         cached_suggestions = _filter_query_specific_suggestions(query, cached_suggestions)
@@ -384,7 +387,7 @@ class SharedInstrumentLookupAdminService:
                         for s in suggestions
                     ))
                 except psycopg.Error:
-                    pass
+                    logger.warning("failed to persist lookup results for query %r", normalized_query)
                 try:
                     self._admin.save_lookup_cache(
                         operation="search",
@@ -395,7 +398,7 @@ class SharedInstrumentLookupAdminService:
                         expires_at=_utc_now() + timedelta(seconds=self._lookup_cache_ttl_seconds),
                     )
                 except psycopg.Error:
-                    pass
+                    logger.warning("failed to save lookup cache for query %r", normalized_query)
             elif any_error:
                 try:
                     self._admin.save_lookup_cache(
@@ -407,7 +410,7 @@ class SharedInstrumentLookupAdminService:
                         expires_at=_utc_now() + timedelta(seconds=_EMPTY_RESULT_CACHE_TTL_SECONDS),
                     )
                 except psycopg.Error:
-                    pass
+                    logger.warning("failed to save error cache for query %r", normalized_query)
         if not suggestions:
             local_suggestions = self._search_local_db(query)
             if local_suggestions:
@@ -418,6 +421,7 @@ class SharedInstrumentLookupAdminService:
         try:
             seeds = self._admin.search_instruments_locally(query)
         except psycopg.Error:
+            logger.warning("local DB search failed for query %r", query)
             return []
         if not seeds:
             return []
@@ -441,6 +445,7 @@ class SharedInstrumentLookupAdminService:
         try:
             cache_entry = self._admin.load_lookup_cache(operation="alias_discovery", target=cache_key)
         except psycopg.Error:
+            logger.warning("failed to load alias cache for %s:%s", normalized_ticker, normalized_exchange)
             cache_entry = None
         if cache_entry is not None and cache_entry.expires_at > _utc_now():
             results = _suggestions_from_cache(cache_entry)
@@ -455,6 +460,7 @@ class SharedInstrumentLookupAdminService:
                     display_name=display_name,
                 )
             except Exception:
+                logger.warning("provider %s alias discovery failed for %s:%s", provider.provider_name, normalized_ticker, normalized_exchange)
                 suggestion = None
             if suggestion is not None:
                 provider_name = provider.provider_name
@@ -470,7 +476,7 @@ class SharedInstrumentLookupAdminService:
                 expires_at=_utc_now() + timedelta(seconds=self._alias_cache_ttl_seconds),
             )
         except psycopg.Error:
-            pass
+            logger.warning("failed to save alias cache for %s:%s", normalized_ticker, normalized_exchange)
         return suggestion, False
 
     def add_watchlist_entry(self, entry: SharedWatchlistEntryInput) -> SharedWatchlistRecord:

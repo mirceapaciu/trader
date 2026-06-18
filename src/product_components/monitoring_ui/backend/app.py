@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -47,6 +48,8 @@ from src.product_components.shared.instrument_lookup import (
     SharedInstrumentLookupAdminService,
 )
 
+logger = logging.getLogger(__name__)
+
 _INFRASTRUCTURE_ERRORS = (psycopg.Error, redis.RedisError, TimeoutError)
 _T = TypeVar("_T")
 
@@ -63,6 +66,7 @@ def _run_with_infrastructure_mapping(operation: Callable[[], _T], *, detail: str
     try:
         return operation()
     except _INFRASTRUCTURE_ERRORS as exc:
+        logger.warning("infrastructure error mapped to 503: %s — %s", detail, exc)
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
 
 
@@ -82,8 +86,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         data_source.bootstrap_news_schema(repo_root=_repo_root())
         data_source.bootstrap_thesis_builder_schema(repo_root=_repo_root())
     except Exception:
-        # The API still starts in degraded mode; dependency health reports database issues separately.
-        pass
+        logger.exception("schema bootstrap failed — starting in degraded mode")
     watchlist_admin = SharedInstrumentLookupAdminService(
         registry=PostgresSharedInstrumentRegistry(
             dsn=resolved_settings.postgres_dsn,
@@ -304,6 +307,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         except DuplicateActiveWatchlistEntry as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except _INFRASTRUCTURE_ERRORS as exc:
+            logger.warning("watchlist storage unavailable: %s", exc)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="watchlist storage unavailable") from exc
 
     @app.put("/api/watchlist/{ticker}/{exchange_code}", response_model=WatchlistItemResponse)
@@ -319,6 +323,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
                 payload=payload,
             )
         except _INFRASTRUCTURE_ERRORS as exc:
+            logger.warning("watchlist storage unavailable: %s", exc)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="watchlist storage unavailable") from exc
 
     @app.post(
@@ -336,6 +341,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         try:
             service.deactivate_watchlist_entry(ticker=ticker, exchange_code=exchange_code)
         except _INFRASTRUCTURE_ERRORS as exc:
+            logger.warning("watchlist storage unavailable: %s", exc)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="watchlist storage unavailable") from exc
 
     return app
