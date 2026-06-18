@@ -158,6 +158,8 @@ class EventIngestionEngine:
                 "occurred_at": canonical_event.occurred_at.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "ingested_at": canonical_event.ingested_at.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "payload_version": canonical_event.payload_version,
+                "entities": canonical_event.entities,
+                "attributes": canonical_event.attributes,
             },
         }
         return PublicationObligation(

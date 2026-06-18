@@ -190,12 +190,13 @@ def _message(*, article_id: str) -> NewsStreamMessage:
         payload={
             "id": article_id,
             "source": article.source,
-            "headline": article.headline,
+            "title": article.headline,
             "summary": article.summary,
-            "url": article.url,
-            "tickers": article.tickers,
-            "published_at": article.published_at.isoformat(),
-            "fetched_at": article.fetched_at.isoformat(),
+            "canonical_locator": article.url,
+            "entities": article.tickers,
+            "occurred_at": article.published_at.isoformat(),
+            "ingested_at": article.fetched_at.isoformat(),
+            "attributes": {},
         },
         raw_fields={},
     )

@@ -32,11 +32,22 @@ class NewsStreamMessage:
     def as_article(self) -> NewsArticle | None:
         payload_id = self.payload.get("id") or self.payload.get("article_id")
         source = self.payload.get("source")
-        headline = self.payload.get("headline")
-        url = self.payload.get("url")
-        published_at = _parse_datetime(self.payload.get("published_at"))
-        fetched_at = _parse_datetime(self.payload.get("fetched_at"))
-        tickers = self.payload.get("tickers")
+        headline = self.payload.get("headline") or self.payload.get("title")
+        url = self.payload.get("url") or self.payload.get("canonical_locator")
+        published_at = _parse_datetime(
+            self.payload.get("published_at") or self.payload.get("occurred_at")
+        )
+        attributes = self.payload.get("attributes") or {}
+        fetched_at = _parse_datetime(
+            self.payload.get("fetched_at")
+            or self.payload.get("ingested_at")
+            or attributes.get("fetched_at")
+        )
+        tickers = (
+            self.payload.get("tickers")
+            or self.payload.get("entities")
+            or attributes.get("tickers")
+        )
         if not (
             isinstance(payload_id, str)
             and isinstance(source, str)
@@ -47,6 +58,7 @@ class NewsStreamMessage:
             and fetched_at is not None
         ):
             return None
+        sentiment_source = self.payload.get("sentiment_source") or attributes.get("sentiment_source")
         return NewsArticle(
             id=payload_id,
             source=source,
@@ -56,7 +68,7 @@ class NewsStreamMessage:
             tickers=[str(item).strip().upper() for item in tickers if str(item).strip()],
             published_at=published_at,
             fetched_at=fetched_at,
-            sentiment_source=_parse_float(self.payload.get("sentiment_source")),
+            sentiment_source=_parse_float(sentiment_source),
         )
 
 
