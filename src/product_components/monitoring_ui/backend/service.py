@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
@@ -37,6 +38,8 @@ from .models import (
     WatchlistResponse,
 )
 from .settings import MonitoringUiSettings
+
+logger = logging.getLogger(__name__)
 
 _INFRASTRUCTURE_ERRORS = (psycopg.Error, redis.RedisError, TimeoutError)
 
@@ -128,6 +131,7 @@ class MonitoringService:
         try:
             providers = self._data_source.list_providers()
         except Exception:
+            logger.warning("failed to fetch provider list for health check")
             providers = ProvidersResponse(providers=[], generated_at=now)
 
         postgres_ok = _dependency_healthy(dependencies, "postgres")
@@ -156,6 +160,7 @@ class MonitoringService:
         try:
             return self._data_source.list_providers()
         except _INFRASTRUCTURE_ERRORS:
+            logger.warning("provider telemetry unavailable due to infrastructure error")
             return ProvidersResponse(
                 available=False,
                 message="Provider telemetry unavailable.",
@@ -189,6 +194,7 @@ class MonitoringService:
                     end_at=normalized_end,
                 )
             except _INFRASTRUCTURE_ERRORS:
+                logger.warning("throughput data unavailable for custom range")
                 return _unavailable_throughput_response(
                     window="custom",
                     selected_window=selected_window,
@@ -201,6 +207,7 @@ class MonitoringService:
         try:
             return self._data_source.get_throughput(window=selected_window)
         except _INFRASTRUCTURE_ERRORS:
+            logger.warning("throughput data unavailable for window %s", selected_window)
             now = _utc_now()
             return _unavailable_throughput_response(
                 window=selected_window,
@@ -220,6 +227,7 @@ class MonitoringService:
                 evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
             )
         except _INFRASTRUCTURE_ERRORS:
+            logger.warning("thesis builder metrics unavailable for window %s", selected_window)
             now = _utc_now()
             return ThesisBuilderMetricsResponse(
                 available=False,
@@ -243,6 +251,7 @@ class MonitoringService:
         try:
             return self._data_source.get_backlog()
         except _INFRASTRUCTURE_ERRORS:
+            logger.warning("backlog data unavailable due to infrastructure error")
             return BacklogResponse(
                 available=False,
                 message="Backlog data unavailable.",
@@ -258,6 +267,7 @@ class MonitoringService:
         try:
             return self._data_source.list_dead_letters(limit=bounded_limit, offset=bounded_offset)
         except _INFRASTRUCTURE_ERRORS:
+            logger.warning("dead-letter data unavailable due to infrastructure error")
             return DeadLetterResponse(
                 available=False,
                 message="Dead-letter data unavailable.",
@@ -274,6 +284,7 @@ class MonitoringService:
             )
             return self._data_source.get_filter_quality_status()
         except _INFRASTRUCTURE_ERRORS:
+            logger.warning("filter-quality data unavailable due to infrastructure error")
             return FilterQualityStatusResponse(
                 available=False,
                 message="Filter-quality data unavailable.",
