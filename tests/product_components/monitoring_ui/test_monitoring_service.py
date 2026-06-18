@@ -302,6 +302,7 @@ class FakeWatchlistAdmin:
                 )
             ],
             self.lookup_cached,
+            [],
         )
 
     def discover_aliases(self, *, ticker: str, exchange_code: str, display_name: str | None):
@@ -372,8 +373,7 @@ def test_watchlist_lookup_and_alias_discovery_are_delegated_to_shared_admin() ->
 
     assert watchlist_admin.lookup_query == "nvidia"
     assert lookup.suggestions[0].ticker == "NVDA"
-    assert lookup.lookup_providers_configured is False
-    assert lookup.lookup_message is not None
+    assert lookup.lookup_providers_configured is True
     assert aliases.found is True
     assert aliases.aliases == ["nvidia", "nvidia corporation"]
 
@@ -388,8 +388,7 @@ def test_watchlist_list_reports_lookup_provider_configuration_state() -> None:
 
     response = service.list_watchlist()
 
-    assert response.lookup_providers_configured is False
-    assert response.lookup_message is not None
+    assert response.lookup_providers_configured is True
 
 
 def test_watchlist_add_update_and_deactivate_work() -> None:
@@ -997,6 +996,7 @@ def _settings() -> MonitoringUiSettings:
         massive_api_key="",
         massive_api_base_url="https://api.polygon.io",
         alpha_vantage_api_key="",
+        openfigi_api_key="",
         instrument_lookup_cache_ttl_seconds=21600,
         instrument_alias_cache_ttl_seconds=86400,
         instrument_lookup_provider_debounce_ms=300,

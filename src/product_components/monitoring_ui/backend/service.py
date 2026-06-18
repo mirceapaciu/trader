@@ -346,16 +346,8 @@ class MonitoringService:
             )
             for row in admin.list_watchlist()
         ]
-        lookup_providers_configured = bool(
-            self._settings.massive_api_key.strip() or self._settings.alpha_vantage_api_key.strip()
-        )
         return WatchlistResponse(
-            lookup_providers_configured=lookup_providers_configured,
-            lookup_message=(
-                None
-                if lookup_providers_configured
-                else "Ticker lookup providers are not configured. Add MASSIVE_API_KEY or ALPHA_VANTAGE_API_KEY to enable suggestions."
-            ),
+            lookup_providers_configured=True,
             items=items,
             generated_at=_utc_now(),
         )
@@ -364,18 +356,14 @@ class MonitoringService:
         admin = self._require_watchlist_admin()
         lookup_providers_configured = bool(
             self._settings.massive_api_key.strip() or self._settings.alpha_vantage_api_key.strip()
-        )
-        suggestions, cached = admin.lookup(query, expand=expand)
+        ) or True  # OpenFIGI works without a key
+        suggestions, cached, provider_warnings = admin.lookup(query, expand=expand)
         return WatchlistLookupResponse(
             query=query,
             lookup_providers_configured=lookup_providers_configured,
-            lookup_message=(
-                None
-                if lookup_providers_configured
-                else "Ticker lookup providers are not configured. Add MASSIVE_API_KEY or ALPHA_VANTAGE_API_KEY to enable suggestions."
-            ),
             suggestions=[_lookup_suggestion_response(item) for item in suggestions],
             cached=cached,
+            provider_warnings=provider_warnings,
             generated_at=_utc_now(),
         )
 

@@ -30,6 +30,7 @@ class MonitoringUiSettings:
     massive_api_key: str
     massive_api_base_url: str
     alpha_vantage_api_key: str
+    openfigi_api_key: str
     instrument_lookup_cache_ttl_seconds: int
     instrument_alias_cache_ttl_seconds: int
     instrument_lookup_provider_debounce_ms: int
@@ -74,6 +75,7 @@ class MonitoringUiSettings:
             massive_api_key=os.getenv("MASSIVE_API_KEY", ""),
             massive_api_base_url=os.getenv("MASSIVE_API_BASE_URL", "https://api.polygon.io"),
             alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
+            openfigi_api_key=os.getenv("OPENFIGI_API_KEY", ""),
             instrument_lookup_cache_ttl_seconds=_int_env("INSTRUMENT_LOOKUP_CACHE_TTL_SECONDS", 604800),
             instrument_alias_cache_ttl_seconds=_int_env("INSTRUMENT_ALIAS_CACHE_TTL_SECONDS", 86400),
             instrument_lookup_provider_debounce_ms=_int_env("INSTRUMENT_LOOKUP_PROVIDER_DEBOUNCE_MS", 300),

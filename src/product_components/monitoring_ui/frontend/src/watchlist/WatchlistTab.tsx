@@ -238,6 +238,9 @@ export function WatchlistTab() {
               <p className="helper-text">Searching for: <strong>{normalizedSearchText}</strong></p>
             ) : null}
             <p className="helper-text">{lookupStatus}</p>
+            {(activeLookup?.provider_warnings ?? []).map((warning, index) => (
+              <p key={index} className="helper-text warning-text">{warning}</p>
+            ))}
             <div className="watchlist-suggestions">
               {suggestions.map((suggestion) => (
                 <button

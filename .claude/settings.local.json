@@ -5,7 +5,14 @@
       "Bash(find /d/src/trader/src -type f \\\\\\( -name \"*seed*\" -o -name \"*migration*\" -o -name \"*database*\" -o -name \"*db*\" \\\\\\) 2>/dev/null | grep -v node_modules | grep -v __pycache__)",
       "Bash(uv run:*)",
       "Bash(cd D:/src/trader/src/product_components/monitoring_ui/frontend && npm test 2>&1)",
-      "Bash(find . -type d -name __pycache__ | xargs rm -rf && uv run pytest -m \"not integration\" -q 2>&1)"
+      "Bash(find . -type d -name __pycache__ | xargs rm -rf && uv run pytest -m \"not integration\" -q 2>&1)",
+      "Bash(grep -n \"ALPHA_VANTAGE\" /d/src/trader/.env* 2>/dev/null)",
+      "Bash(grep -r \"ALPHA_VANTAGE\" /d/src/trader/.env* 2>/dev/null | cat)",
+      "Bash(find /D/src/trader -type f -name \"*.tsx\" 2>/dev/null | head -20)",
+      "Bash(grep -r \"toast\\\\|notification\\\\|alert\" /D/src/trader/src/product_components/monitoring_ui/frontend/src --include=\"*.tsx\" --include=\"*.ts\" 2>/dev/null | head -30)",
+      "Bash(cd src/product_components/monitoring_ui/frontend && npm test -- --run 2>&1 | tail -20)",
+      "Bash(cd src/product_components/monitoring_ui/frontend && npm run build 2>&1 | tail -20)",
+      "Bash(cd D:/src/trader/src/product_components/monitoring_ui/frontend && npm run build 2>&1 | tail -20)"
     ]
   }
 }

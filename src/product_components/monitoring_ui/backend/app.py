@@ -43,6 +43,7 @@ from src.product_components.shared.instrument_lookup import (
     AlphaVantageInstrumentLookupProvider,
     DuplicateActiveWatchlistEntry,
     MassiveInstrumentLookupProvider,
+    OpenFigiInstrumentLookupProvider,
     SharedInstrumentLookupAdminService,
 )
 
@@ -97,6 +98,9 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
             MassiveInstrumentLookupProvider(
                 api_key=resolved_settings.massive_api_key,
                 base_url=resolved_settings.massive_api_base_url,
+            ),
+            OpenFigiInstrumentLookupProvider(
+                api_key=resolved_settings.openfigi_api_key,
             ),
             AlphaVantageInstrumentLookupProvider(
                 api_key=resolved_settings.alpha_vantage_api_key,

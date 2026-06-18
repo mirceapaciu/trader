@@ -358,6 +358,7 @@ class WatchlistLookupResponse(BaseModel):
     lookup_message: str | None = None
     suggestions: list[WatchlistLookupSuggestionResponse]
     cached: bool = False
+    provider_warnings: list[str] = Field(default_factory=list)
     generated_at: datetime
 
 

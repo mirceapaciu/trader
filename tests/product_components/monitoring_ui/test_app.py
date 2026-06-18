@@ -538,6 +538,7 @@ def _settings() -> MonitoringUiSettings:
         massive_api_key="",
         massive_api_base_url="https://api.polygon.io",
         alpha_vantage_api_key="",
+        openfigi_api_key="",
         instrument_lookup_cache_ttl_seconds=21600,
         instrument_alias_cache_ttl_seconds=86400,
         instrument_lookup_provider_debounce_ms=300,

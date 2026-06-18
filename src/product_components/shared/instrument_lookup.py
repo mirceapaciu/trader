@@ -104,7 +104,6 @@ class MassiveInstrumentLookupProvider:
             f"{self._base_url}/v3/reference/tickers",
             params={
                 "search": query.strip(),
-                "market": "stocks",
                 "active": "true",
                 "limit": self._search_limit,
                 "apiKey": self._api_key,
@@ -138,7 +137,6 @@ class MassiveInstrumentLookupProvider:
         response = requests.get(
             f"{self._base_url}/v3/reference/tickers/{query.strip().upper()}",
             params={
-                "market": "stocks",
                 "active": "true",
                 "apiKey": self._api_key,
             },
@@ -150,6 +148,111 @@ class MassiveInstrumentLookupProvider:
         if isinstance(result, dict):
             return _normalize_massive_results([result], provider=self.provider_name)
         return []
+
+
+_OPENFIGI_EXCHANGE_MAP: dict[str, str] = {
+    "UN": "XNYS",   # NYSE
+    "UW": "XNAS",   # NASDAQ
+    "UQ": "XNAS",   # NASDAQ (alt)
+    "US": "XNYS",   # NYSE (alt)
+    "UA": "XASE",   # NYSE American (AMEX)
+    "GY": "XETR",   # Germany (Xetra)
+    "GR": "XETR",   # Germany (Frankfurt) → treat as XETR
+    "FP": "XPAR",   # France (Paris)
+    "LN": "XLON",   # London
+    "NA": "XAMS",   # Amsterdam
+    "SM": "XMAD",   # Madrid
+    "IM": "XMIL",   # Milan
+}
+
+
+_OPENFIGI_ALLOWED_SECURITY_TYPES = frozenset({
+    "COMMON STOCK",
+    "DUTCH CERT",
+    "DEPOSITARY RECEIPT",
+    "CANADIAN DR",
+    "REIT",
+})
+
+
+def _openfigi_exchange_code(exch_code: str) -> str:
+    return _OPENFIGI_EXCHANGE_MAP.get(exch_code.strip().upper(), "")
+
+
+def _normalize_openfigi_results(data: object, *, provider: str) -> list[InstrumentLookupSuggestion]:
+    if not isinstance(data, list):
+        return []
+    suggestions: list[InstrumentLookupSuggestion] = []
+    seen: set[tuple[str, str]] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        ticker = str(item.get("ticker") or "").strip().upper()
+        exch_code = str(item.get("exchCode") or "").strip().upper()
+        display_name = str(item.get("name") or ticker).strip()
+        security_type = str(item.get("securityType") or "").strip().upper()
+        if security_type and security_type not in _OPENFIGI_ALLOWED_SECURITY_TYPES:
+            continue
+        exchange_code = _openfigi_exchange_code(exch_code)
+        if not ticker or not exchange_code or not display_name:
+            continue
+        dedupe_key = (ticker, exchange_code)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        suggestions.append(
+            InstrumentLookupSuggestion(
+                ticker=ticker,
+                exchange_code=exchange_code,
+                display_name=display_name,
+                aliases=_normalize_aliases((ticker, display_name, _base_company_name(display_name))),
+                provider=provider,
+            )
+        )
+    return _filter_supported_stock_suggestions(suggestions)
+
+
+class OpenFigiInstrumentLookupProvider:
+    provider_name = "openfigi"
+    max_search_queries = 1
+
+    def __init__(self, *, api_key: str = "", timeout_seconds: int = 10) -> None:
+        self._api_key = api_key.strip()
+        self._timeout_seconds = timeout_seconds
+
+    def search(self, query: str) -> list[InstrumentLookupSuggestion]:
+        if not query.strip():
+            return []
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["X-OPENFIGI-APIKEY"] = self._api_key
+        response = requests.post(
+            "https://api.openfigi.com/v3/search",
+            json={"query": query.strip()},
+            headers=headers,
+            timeout=self._timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return _normalize_openfigi_results(payload.get("data"), provider=self.provider_name)
+
+    def discover_aliases(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        display_name: str | None,
+    ) -> InstrumentLookupSuggestion | None:
+        candidates = self.search(ticker)
+        exact = _pick_exact_candidate(candidates, ticker=ticker, exchange_code=exchange_code)
+        if exact is not None:
+            return exact
+        if display_name:
+            candidates = self.search(display_name)
+            exact = _pick_exact_candidate(candidates, ticker=ticker, exchange_code=exchange_code)
+            if exact is not None:
+                return exact
+        return None
 
 
 class AlphaVantageInstrumentLookupProvider:
@@ -173,6 +276,10 @@ class AlphaVantageInstrumentLookupProvider:
         )
         response.raise_for_status()
         payload = response.json()
+        if "bestMatches" not in payload:
+            if "Information" in payload:
+                raise RuntimeError("rate limit exceeded")
+            raise RuntimeError(f"unexpected response: {list(payload.keys())}")
         return _normalize_alpha_vantage_matches(payload.get("bestMatches"), provider=self.provider_name)
 
     def discover_aliases(
@@ -204,6 +311,7 @@ class _PendingLookup:
     suggestions: list[InstrumentLookupSuggestion] | None = None
     provider_name: str = "none"
     any_error: bool = False
+    provider_warnings: list[str] | None = None
 
 
 class SharedInstrumentLookupAdminService:
@@ -232,7 +340,7 @@ class SharedInstrumentLookupAdminService:
         except psycopg.Error:
             return []
 
-    def lookup(self, query: str, *, expand: bool = False) -> tuple[list[InstrumentLookupSuggestion], bool]:
+    def lookup(self, query: str, *, expand: bool = False) -> tuple[list[InstrumentLookupSuggestion], bool, list[str]]:
         normalized_query = query.strip().lower()
         if not normalized_query:
             raise ValueError("lookup query must not be empty")
@@ -246,13 +354,18 @@ class SharedInstrumentLookupAdminService:
         if not expand:
             if cache_entry is not None and cache_entry.expires_at > _utc_now():
                 if cached_suggestions and _cache_has_strong_match(query, cached_suggestions):
-                    return cached_suggestions, True
-                if not cached_suggestions and cache_entry.payload.get("provider_error"):
-                    return [], True
+                    return cached_suggestions, True, []
             local_suggestions = self._search_local_db(query)
             if local_suggestions and _cache_has_strong_match(query, local_suggestions):
-                return local_suggestions, True
-        suggestions, provider_name, owns_lookup, any_error = self._run_search_with_coalescing(
+                cached_warnings = []
+                if cache_entry is not None and cache_entry.expires_at > _utc_now() and cache_entry.payload.get("provider_error"):
+                    cached_warnings = cache_entry.payload.get("provider_warnings") or []
+                return local_suggestions, True, cached_warnings
+            if cache_entry is not None and cache_entry.expires_at > _utc_now():
+                if not cached_suggestions and cache_entry.payload.get("provider_error"):
+                    cached_warnings = cache_entry.payload.get("provider_warnings") or []
+                    return [], True, cached_warnings
+        suggestions, provider_name, owns_lookup, any_error, provider_warnings = self._run_search_with_coalescing(
             cache_key=normalized_query,
             query=query,
         )
@@ -289,13 +402,17 @@ class SharedInstrumentLookupAdminService:
                         operation="search",
                         target=normalized_query,
                         provider=provider_name,
-                        payload={"results": [], "provider_error": True},
+                        payload={"results": [], "provider_error": True, "provider_warnings": provider_warnings},
                         fetched_at=_utc_now(),
                         expires_at=_utc_now() + timedelta(seconds=_EMPTY_RESULT_CACHE_TTL_SECONDS),
                     )
                 except psycopg.Error:
                     pass
-        return suggestions, False
+        if not suggestions:
+            local_suggestions = self._search_local_db(query)
+            if local_suggestions:
+                return local_suggestions, False, provider_warnings
+        return suggestions, False, provider_warnings
 
     def _search_local_db(self, query: str) -> list[InstrumentLookupSuggestion]:
         try:
@@ -395,16 +512,27 @@ class SharedInstrumentLookupAdminService:
     def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str) -> None:
         self._admin.deactivate_watchlist_entry(ticker=ticker, exchange_code=exchange_code)
 
-    def _run_search(self, query: str) -> tuple[list[InstrumentLookupSuggestion], str, bool]:
+    def _run_search(self, query: str) -> tuple[list[InstrumentLookupSuggestion], str, bool, list[str]]:
         variants = _search_variants(query)
         last_provider = "none"
         collected_suggestions: list[InstrumentLookupSuggestion] = []
         seen_keys: set[tuple[str, str]] = set()
         any_error = False
+        provider_warnings: list[str] = []
+        _seen_warnings: set[str] = set()
+        empty_providers: list[InstrumentLookupProvider] = []
         for provider in self._providers:
             last_provider = provider.provider_name
             provider_suggestions: list[InstrumentLookupSuggestion] = []
-            for candidate_query in variants:
+            if _provider_missing_api_key(provider):
+                _warn = f"{provider.provider_name}: API key not configured"
+                if _warn not in _seen_warnings:
+                    _seen_warnings.add(_warn)
+                    provider_warnings.append(_warn)
+                empty_providers.append(provider)
+                continue
+            max_queries = getattr(provider, "max_search_queries", 0) or len(variants)
+            for candidate_query in variants[:max_queries]:
                 try:
                     suggestions = provider.search(candidate_query)
                 except Exception as exc:
@@ -416,10 +544,17 @@ class SharedInstrumentLookupAdminService:
                     )
                     suggestions = []
                     any_error = True
+                    _reason = _short_error_reason(exc)
+                    _warn = f"{provider.provider_name}: {_reason}"
+                    if _warn not in _seen_warnings:
+                        _seen_warnings.add(_warn)
+                        provider_warnings.append(_warn)
+                    break
                 if suggestions:
                     provider_suggestions = suggestions
                     break
             if not provider_suggestions:
+                empty_providers.append(provider)
                 continue
             for suggestion in provider_suggestions:
                 dedupe_key = (suggestion.ticker, normalize_exchange_code(suggestion.exchange_code))
@@ -427,21 +562,47 @@ class SharedInstrumentLookupAdminService:
                     continue
                 seen_keys.add(dedupe_key)
                 collected_suggestions.append(suggestion)
+        # Enrichment pass: providers that returned nothing on the original query
+        # get a second try using the full company names of any OTC/ADR results
+        # already collected (e.g. Polygon found RNMBY:OTC "Rheinmetall AG", now
+        # Alpha Vantage tries "Rheinmetall AG" to find RHM:XETR).
+        if empty_providers and collected_suggestions:
+            for enrichment_query in _otc_enrichment_queries(collected_suggestions):
+                for provider in empty_providers:
+                    if _provider_missing_api_key(provider):
+                        continue
+                    try:
+                        suggestions = provider.search(enrichment_query)
+                    except Exception as exc:
+                        logger.warning(
+                            "provider %s enrichment search failed for query %r: %s",
+                            provider.provider_name,
+                            enrichment_query,
+                            exc,
+                        )
+                        suggestions = []
+                        any_error = True
+                    for suggestion in suggestions:
+                        dedupe_key = (suggestion.ticker, normalize_exchange_code(suggestion.exchange_code))
+                        if dedupe_key in seen_keys:
+                            continue
+                        seen_keys.add(dedupe_key)
+                        collected_suggestions.append(suggestion)
         if not collected_suggestions:
-            return [], last_provider, any_error
+            return [], last_provider, any_error, provider_warnings
         ranked = _rank_suggestions(query, collected_suggestions)
         ranked = _filter_query_specific_suggestions(query, ranked)
         if not ranked:
-            return [], last_provider, any_error
+            return [], last_provider, any_error, provider_warnings
         top_provider = ranked[0].provider if ranked[0].provider else last_provider
-        return ranked, top_provider, any_error
+        return ranked, top_provider, any_error, provider_warnings
 
     def _run_search_with_coalescing(
         self,
         *,
         cache_key: str,
         query: str,
-    ) -> tuple[list[InstrumentLookupSuggestion], str, bool, bool]:
+    ) -> tuple[list[InstrumentLookupSuggestion], str, bool, bool, list[str]]:
         with self._pending_lookup_lock:
             pending = self._pending_lookups.get(cache_key)
             if pending is None:
@@ -453,16 +614,17 @@ class SharedInstrumentLookupAdminService:
 
         if not owns_lookup:
             pending.event.wait()
-            return pending.suggestions or [], pending.provider_name, False, pending.any_error
+            return pending.suggestions or [], pending.provider_name, False, pending.any_error, pending.provider_warnings or []
 
         try:
             if self._lookup_provider_debounce_seconds > 0:
                 time.sleep(self._lookup_provider_debounce_seconds)
-            suggestions, provider_name, any_error = self._run_search(query)
+            suggestions, provider_name, any_error, provider_warnings = self._run_search(query)
             pending.suggestions = suggestions
             pending.provider_name = provider_name
             pending.any_error = any_error
-            return suggestions, provider_name, True, any_error
+            pending.provider_warnings = provider_warnings
+            return suggestions, provider_name, True, any_error, provider_warnings
         finally:
             pending.event.set()
             with self._pending_lookup_lock:
@@ -544,7 +706,7 @@ def _normalize_alpha_vantage_matches(matches: object, *, provider: str) -> list[
 
 def _alpha_vantage_exchange_code(raw_symbol: str, region: str = "") -> str:
     normalized = raw_symbol.strip().upper()
-    if normalized.endswith(".DEX"):
+    if normalized.endswith(".DEX") or normalized.endswith(".FRK"):
         return "XETR"
     if normalized.endswith(".PAR"):
         return "XPAR"
@@ -809,8 +971,6 @@ def _is_supported_stock_suggestion(suggestion: InstrumentLookupSuggestion) -> bo
         " note due",
         " preferred stock",
         " preferred shares",
-        " depositary shares",
-        " depositary share",
         " term preferred stock",
         " cumulative redeemable preferred stock",
         " non cumulative preferred stock",
@@ -822,8 +982,57 @@ def _is_supported_stock_suggestion(suggestion: InstrumentLookupSuggestion) -> bo
     return True
 
 
+_OTC_EXCHANGE_CODES = frozenset({"OTC", "OTCQB", "OTCQX", "OTCBB", "PINK"})
+
+
+def _otc_enrichment_queries(suggestions: list[InstrumentLookupSuggestion]) -> list[str]:
+    """Return unique display names from OTC/ADR suggestions to use as enrichment queries.
+
+    When Polygon finds an OTC-listed ADR (e.g. RNMBY "Rheinmetall AG") but Alpha
+    Vantage found nothing for the original keyword, retrying Alpha Vantage with the
+    full company name ("Rheinmetall AG") often surfaces the primary-exchange listing
+    (RHM.DEX → RHM:XETR) that the shorter keyword missed.  Limited to two queries
+    to avoid excessive API calls.
+    """
+    seen: set[str] = set()
+    queries: list[str] = []
+    for suggestion in suggestions:
+        if suggestion.exchange_code.upper() not in _OTC_EXCHANGE_CODES:
+            continue
+        name = suggestion.display_name.strip()
+        if name and name not in seen:
+            seen.add(name)
+            queries.append(name)
+            if len(queries) >= 2:
+                break
+    return queries
+
+
 def _cache_has_strong_match(query: str, suggestions: list[InstrumentLookupSuggestion]) -> bool:
     return any(_suggestion_rank_key(query, suggestion, index)[0] <= 2 for index, suggestion in enumerate(suggestions))
+
+
+def _short_error_reason(exc: Exception) -> str:
+    msg = str(exc).lower()
+    if "rate limit" in msg:
+        return "rate limit exceeded"
+    if "429" in msg or "too many requests" in msg:
+        return "rate limit exceeded"
+    if "timeout" in msg or "timed out" in msg:
+        return "request timed out"
+    return "request failed"
+
+
+_PROVIDERS_REQUIRING_API_KEY = frozenset({"massive", "alpha_vantage"})
+
+
+def _provider_missing_api_key(provider: InstrumentLookupProvider) -> bool:
+    if provider.provider_name not in _PROVIDERS_REQUIRING_API_KEY:
+        return False
+    api_key = getattr(provider, "_api_key", None)
+    if api_key is None:
+        return False
+    return not api_key.strip()
 
 
 def _utc_now() -> datetime:

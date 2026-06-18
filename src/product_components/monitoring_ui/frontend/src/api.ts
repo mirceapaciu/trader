@@ -311,6 +311,7 @@ export type WatchlistLookupResponse = {
   lookup_message?: string | null;
   suggestions: WatchlistLookupSuggestionResponse[];
   cached: boolean;
+  provider_warnings?: string[];
   generated_at: string;
 };
 
