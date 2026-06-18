@@ -44,6 +44,7 @@ WATCHLIST_TABLE=t_watchlist_tickers
 ## Shared Dependencies
 
 Monitoring UI also depends on shared PostgreSQL connection, queue settings, and operational settings defined in `docs/design/shared/configuration.md`.
+This includes `QUEUE_URL`, `NEWS_RAW_QUEUE`, and `FAILED_MESSAGES_DLQ` for ThesisBuilder dead-letter telemetry shown in the ThesisBuilder tab.
 
 At startup, the backend loads `.env.shared`, `.env.prod`, `.env.monitoring-ui`, `.env.news-fetcher`, optional `.env.filter-quality-evaluator`, optional `.env.thesis-builder`, and `.env.secrets`. UI-triggered filter quality runs use `FilterQualityEvaluatorSettings.from_env()` and run inside the Monitoring UI backend process.
 

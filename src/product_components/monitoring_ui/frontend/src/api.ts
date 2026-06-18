@@ -77,6 +77,13 @@ export type ThesisBuilderPendingWindow = {
   expires_in_seconds: number;
 };
 
+export type ThesisBuilderDeadLetterItem = {
+  source_message_id: string;
+  article_id: string;
+  error_code?: string | null;
+  failed_at: string;
+};
+
 export type ThesisBuilderMetricsResponse = {
   available: boolean;
   message?: string | null;
@@ -97,6 +104,8 @@ export type ThesisBuilderMetricsResponse = {
   stale_evidence_exceeded_avg_seconds?: number | null;
   stale_evidence_exceeded_p95_seconds?: number | null;
   stale_evidence_exceeded_max_seconds?: number | null;
+  dead_letter_count: number;
+  recent_dead_letters: ThesisBuilderDeadLetterItem[];
   pending_windows: ThesisBuilderPendingWindow[];
   generated_at: string;
 };

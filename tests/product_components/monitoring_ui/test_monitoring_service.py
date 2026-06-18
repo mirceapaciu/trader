@@ -20,6 +20,7 @@ from src.product_components.monitoring_ui.backend.models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThesisBuilderPendingWindow,
     ThroughputResponse,
@@ -229,6 +230,16 @@ class FailingThroughputDataSource(FakeDataSource):
         end_at: datetime | None = None,
     ) -> ThroughputResponse:
         raise psycopg.OperationalError("database unavailable")
+
+
+class FailingThesisBuilderMetricsDataSource(FakeDataSource):
+    def get_thesis_builder_metrics(
+        self,
+        *,
+        window: str,
+        evidence_collection_max_minutes: int,
+    ) -> ThesisBuilderMetricsResponse:
+        raise redis.ConnectionError("redis unavailable")
 
 
 class FailingBacklogDataSource(FakeDataSource):
@@ -683,6 +694,18 @@ def test_get_thesis_builder_metrics_rejects_invalid_window() -> None:
         raise AssertionError("expected InvalidThroughputWindow")
 
 
+def test_get_thesis_builder_metrics_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingThesisBuilderMetricsDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_builder_metrics(window="1d")
+
+    assert response.available is False
+    assert response.message == "ThesisBuilder telemetry unavailable."
+    assert response.dead_letter_count == 0
+    assert response.recent_dead_letters == []
+
+
 def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
     repository = PostgresRedisMonitoringDataSource(
         dsn="",
@@ -691,6 +714,7 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
         thesis_builder_schema="thesis_builder",
         queue_url="redis://localhost:6379/0",
         news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
         query_timeout_seconds=1,
     )
     fetches = [
@@ -716,6 +740,21 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
 
     monkeypatch.setattr(repository, "_fetch_one", lambda *_args, **_kwargs: fetches.pop(0))
     monkeypatch.setattr(repository, "_scalar_count", lambda *_args, **_kwargs: 4)
+    monkeypatch.setattr(
+        repository,
+        "_fetch_thesis_builder_dead_letters",
+        lambda **_kwargs: (
+            2,
+            [
+                ThesisBuilderDeadLetterItem(
+                    source_message_id="1781810262488-0",
+                    article_id="article-1",
+                    error_code="missing_article_payload",
+                    failed_at=_now(),
+                )
+            ],
+        ),
+    )
     monkeypatch.setattr(
         repository,
         "_fetch_pending_thesis_windows",
@@ -746,7 +785,63 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
     assert response.oldest_pending_age_seconds == 720.0
     assert response.missed_stale_thesis_cards_count == 1
     assert response.stale_evidence_exceeded_p95_seconds == 540.0
+    assert response.dead_letter_count == 2
+    assert response.recent_dead_letters[0].error_code == "missing_article_payload"
     assert response.pending_windows[0].ticker == "AAPL"
+
+
+def test_repository_reads_thesis_builder_dead_letters_from_redis() -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+    repository._redis = _FakeRedisDlqClient(
+        [
+            (
+                "1781810262489-0",
+                {
+                    "source_stream": "news_raw_queue",
+                    "source_message_id": "1781810262488-0",
+                    "dedupe_key": "cev_1",
+                    "error_code": "missing_article_payload",
+                    "payload_json": '{"id":"article-1"}',
+                },
+            ),
+            (
+                "1781810262440-0",
+                {
+                    "source_stream": "signal_queue",
+                    "source_message_id": "1781810262439-0",
+                    "dedupe_key": "ignored",
+                    "error_code": "other_failure",
+                    "payload_json": '{"id":"ignored"}',
+                },
+            ),
+            (
+                "1781810262388-0",
+                {
+                    "source_stream": "news_raw_queue",
+                    "source_message_id": "1781810262387-0",
+                    "dedupe_key": "cev_2",
+                    "error_code": "invalid_payload",
+                    "payload_json": "{}",
+                },
+            ),
+        ]
+    )
+
+    count, items = repository._fetch_thesis_builder_dead_letters(recent_limit=10)
+
+    assert count == 2
+    assert [item.article_id for item in items] == ["article-1", "cev_2"]
+    assert items[0].source_message_id == "1781810262488-0"
+    assert items[1].error_code == "invalid_payload"
 
 
 def test_filter_quality_status_returns_running_and_last_terminal_run() -> None:
@@ -993,6 +1088,7 @@ def _settings() -> MonitoringUiSettings:
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
         massive_api_key="",
         massive_api_base_url="https://api.polygon.io",
         alpha_vantage_api_key="",
@@ -1001,6 +1097,24 @@ def _settings() -> MonitoringUiSettings:
         instrument_alias_cache_ttl_seconds=86400,
         instrument_lookup_provider_debounce_ms=300,
     )
+
+
+class _FakeRedisDlqClient:
+    def __init__(self, rows: list[tuple[str, dict[str, str]]]) -> None:
+        self._rows = rows
+
+    def xrevrange(self, stream_name: str, *, max: str, min: str, count: int):  # noqa: A002
+        assert stream_name == "failed_messages_dlq"
+        assert min == "-"
+        rows = self._rows
+        if max != "+" and max.startswith("("):
+            cutoff = max[1:]
+            try:
+                index = next(i for i, row in enumerate(rows) if row[0] == cutoff)
+            except StopIteration:
+                return []
+            rows = rows[index + 1 :]
+        return rows[:count]
 
 
 def _now() -> datetime:
@@ -1074,6 +1188,15 @@ def _thesis_builder_metrics(window: str = "1d") -> ThesisBuilderMetricsResponse:
         stale_evidence_exceeded_avg_seconds=300.0,
         stale_evidence_exceeded_p95_seconds=540.0,
         stale_evidence_exceeded_max_seconds=600.0,
+        dead_letter_count=1,
+        recent_dead_letters=[
+            ThesisBuilderDeadLetterItem(
+                source_message_id="1781810262488-0",
+                article_id="article-1",
+                error_code="missing_article_payload",
+                failed_at=_now(),
+            )
+        ],
         pending_windows=[
             ThesisBuilderPendingWindow(
                 window_id=1,

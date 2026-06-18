@@ -79,6 +79,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         thesis_builder_schema=resolved_settings.thesis_builder_db_schema,
         queue_url=resolved_settings.queue_url,
         news_raw_queue=resolved_settings.news_raw_queue,
+        failed_messages_dlq=resolved_settings.failed_messages_dlq,
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
     )
     try:

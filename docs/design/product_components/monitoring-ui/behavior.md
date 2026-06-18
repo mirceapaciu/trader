@@ -145,6 +145,7 @@ The ThesisBuilder tab displays KPI tiles for:
 - Number of articles too old to be included into valid cards.
 - Number of created thesis cards.
 - Number of currently pending thesis cards.
+- Number of ThesisBuilder dead-lettered consumer failures.
 - Oldest and average pending thesis-card age.
 - Minimum and average time remaining before pending evidence windows expire.
 - Estimated missed thesis cards caused by stale evidence.
@@ -154,6 +155,10 @@ Time windows:
 - 15 minutes, 1 hour, 1 day, 7 days, and 30 days.
 
 Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
+
+The ThesisBuilder tab also shows a recent dead-letter panel sourced from `failed_messages_dlq` entries written by ThesisBuilder when message consumption fails after validation or payload checks. These items are separate from the NewsFetcher outbox dead-letter views:
+- NewsFetcher dead letters represent publication-obligation failures from `news_fetcher.t_publication_obligations`.
+- ThesisBuilder dead letters represent downstream consumer failures while processing `news_raw_queue` messages.
 
 If ThesisBuilder tables or required columns are not available, the tab renders a degraded empty state without failing the NewsFetcher monitoring tab.
 

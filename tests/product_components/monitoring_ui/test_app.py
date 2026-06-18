@@ -12,6 +12,7 @@ from src.product_components.monitoring_ui.backend.models import (
     FilterQualityIncorrectlyAcceptedResponse,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThroughputResponse,
 )
@@ -95,6 +96,15 @@ class FakeMonitoringDataSource:
             created_thesis_cards_count=2,
             pending_thesis_cards_count=1,
             missed_stale_thesis_cards_count=1,
+            dead_letter_count=1,
+            recent_dead_letters=[
+                ThesisBuilderDeadLetterItem(
+                    source_message_id="1781810262488-0",
+                    article_id="article-1",
+                    error_code="missing_article_payload",
+                    failed_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+                )
+            ],
             generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
         )
 
@@ -163,6 +173,16 @@ class FailingThroughputDataSource(FakeMonitoringDataSource):
 
 class FailingBacklogDataSource(FakeMonitoringDataSource):
     def get_backlog(self):
+        raise redis.ConnectionError("redis unavailable")
+
+
+class FailingThesisBuilderMetricsDataSource(FakeMonitoringDataSource):
+    def get_thesis_builder_metrics(
+        self,
+        *,
+        window: str,
+        evidence_collection_max_minutes: int,
+    ) -> ThesisBuilderMetricsResponse:
         raise redis.ConnectionError("redis unavailable")
 
 
@@ -295,6 +315,8 @@ def test_thesis_builder_metrics_endpoint_returns_metrics(monkeypatch) -> None:
     assert payload["window"] == "1h"
     assert payload["articles_processed_count"] == 5
     assert payload["missed_stale_thesis_cards_count"] == 1
+    assert payload["dead_letter_count"] == 1
+    assert payload["recent_dead_letters"][0]["error_code"] == "missing_article_payload"
     assert data_source.window == "1h"
 
 
@@ -466,6 +488,26 @@ def test_dead_letter_endpoint_returns_degraded_response_when_dependency_is_unava
     assert response.json()["items"] == []
 
 
+def test_thesis_builder_metrics_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingThesisBuilderMetricsDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/metrics", params={"window": "1d"})
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "ThesisBuilder telemetry unavailable."
+    assert response.json()["dead_letter_count"] == 0
+    assert response.json()["recent_dead_letters"] == []
+
+
 def test_filter_quality_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(
         "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
@@ -535,6 +577,7 @@ def _settings() -> MonitoringUiSettings:
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
         massive_api_key="",
         massive_api_base_url="https://api.polygon.io",
         alpha_vantage_api_key="",

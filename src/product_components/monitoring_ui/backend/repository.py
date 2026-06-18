@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,12 +36,15 @@ from .models import (
     ProvidersResponse,
     ProviderStatus,
     ThesisBuilderMetricsResponse,
+    ThesisBuilderDeadLetterItem,
     ThesisBuilderPendingWindow,
     ThroughputBucket,
     ThroughputResponse,
 )
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_THESIS_BUILDER_RECENT_DEAD_LETTER_LIMIT = 10
+_DLQ_SCAN_BATCH_SIZE = 500
 
 
 class PostgresRedisMonitoringDataSource:
@@ -53,6 +57,7 @@ class PostgresRedisMonitoringDataSource:
         thesis_builder_schema: str,
         queue_url: str,
         news_raw_queue: str,
+        failed_messages_dlq: str,
         query_timeout_seconds: int,
     ) -> None:
         self._dsn = dsn
@@ -61,7 +66,14 @@ class PostgresRedisMonitoringDataSource:
         self._thesis_builder_schema = _safe_identifier(thesis_builder_schema)
         self._queue_url = queue_url
         self._news_raw_queue = news_raw_queue
+        self._failed_messages_dlq = failed_messages_dlq
         self._query_timeout_seconds = query_timeout_seconds
+        self._redis = redis.from_url(
+            self._queue_url,
+            decode_responses=True,
+            socket_connect_timeout=self._query_timeout_seconds,
+            socket_timeout=self._query_timeout_seconds,
+        )
 
     def check_dependencies(self) -> list[DependencyHealth]:
         checked_at = _utc_now()
@@ -227,6 +239,8 @@ class PostgresRedisMonitoringDataSource:
             created_thesis_cards_count=0,
             pending_thesis_cards_count=0,
             missed_stale_thesis_cards_count=0,
+            dead_letter_count=0,
+            recent_dead_letters=[],
             generated_at=generated_at,
         )
         try:
@@ -312,6 +326,9 @@ class PostgresRedisMonitoringDataSource:
             pending_windows = self._fetch_pending_thesis_windows(
                 evidence_collection_max_minutes=evidence_collection_max_minutes,
             )
+            dead_letter_count, recent_dead_letters = self._fetch_thesis_builder_dead_letters(
+                recent_limit=_THESIS_BUILDER_RECENT_DEAD_LETTER_LIMIT,
+            )
         except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
             return empty_response
 
@@ -345,6 +362,8 @@ class PostgresRedisMonitoringDataSource:
             stale_evidence_exceeded_max_seconds=_optional_float(
                 card_counts.get("stale_evidence_exceeded_max_seconds")
             ),
+            dead_letter_count=dead_letter_count,
+            recent_dead_letters=recent_dead_letters,
             pending_windows=pending_windows,
             generated_at=generated_at,
         )
@@ -646,6 +665,44 @@ class PostgresRedisMonitoringDataSource:
             for row in rows
         ]
 
+    def _fetch_thesis_builder_dead_letters(
+        self,
+        *,
+        recent_limit: int,
+    ) -> tuple[int, list[ThesisBuilderDeadLetterItem]]:
+        current_max = "+"
+        dead_letter_count = 0
+        recent_items: list[ThesisBuilderDeadLetterItem] = []
+        while True:
+            rows = self._redis.xrevrange(
+                self._failed_messages_dlq,
+                max=current_max,
+                min="-",
+                count=_DLQ_SCAN_BATCH_SIZE,
+            )
+            if not rows:
+                break
+            for message_id, fields in rows:
+                if fields.get("source_stream") != self._news_raw_queue:
+                    continue
+                dead_letter_count += 1
+                if len(recent_items) >= recent_limit:
+                    continue
+                payload = _json_object(fields.get("payload_json"))
+                article_id = str(payload.get("id") or fields.get("dedupe_key") or "").strip()
+                if not article_id:
+                    article_id = str(fields.get("source_message_id") or message_id)
+                recent_items.append(
+                    ThesisBuilderDeadLetterItem(
+                        source_message_id=str(fields.get("source_message_id") or message_id),
+                        article_id=article_id,
+                        error_code=str(fields.get("error_code")).strip() if fields.get("error_code") else None,
+                        failed_at=_stream_message_id_to_utc(message_id),
+                    )
+                )
+            current_max = f"({rows[-1][0]}"
+        return dead_letter_count, recent_items
+
     def _fetch_filter_quality_run(
         self,
         sql: str,
@@ -796,6 +853,25 @@ def _utc_now() -> datetime:
 
 def _optional_float(value: Any) -> float | None:
     return None if value is None else float(value)
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _stream_message_id_to_utc(message_id: str) -> datetime:
+    millis_text = message_id.split("-", 1)[0]
+    try:
+        millis = int(millis_text)
+    except ValueError:
+        return _utc_now()
+    return datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
 
 
 def _filter_quality_run_columns(schema: str, news_schema: str) -> str:

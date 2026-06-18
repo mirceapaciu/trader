@@ -234,6 +234,8 @@ class MonitoringService:
                 created_thesis_cards_count=0,
                 pending_thesis_cards_count=0,
                 missed_stale_thesis_cards_count=0,
+                dead_letter_count=0,
+                recent_dead_letters=[],
                 generated_at=now,
             )
 

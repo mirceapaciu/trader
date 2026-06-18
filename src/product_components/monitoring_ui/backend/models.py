@@ -95,6 +95,15 @@ class ThesisBuilderPendingWindow(BaseModel):
     expires_in_seconds: float
 
 
+class ThesisBuilderDeadLetterItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_message_id: str
+    article_id: str
+    error_code: str | None = None
+    failed_at: datetime
+
+
 class ThesisBuilderMetricsResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -117,6 +126,8 @@ class ThesisBuilderMetricsResponse(BaseModel):
     stale_evidence_exceeded_avg_seconds: float | None = None
     stale_evidence_exceeded_p95_seconds: float | None = None
     stale_evidence_exceeded_max_seconds: float | None = None
+    dead_letter_count: int = 0
+    recent_dead_letters: list[ThesisBuilderDeadLetterItem] = Field(default_factory=list)
     pending_windows: list[ThesisBuilderPendingWindow] = Field(default_factory=list)
     generated_at: datetime
 

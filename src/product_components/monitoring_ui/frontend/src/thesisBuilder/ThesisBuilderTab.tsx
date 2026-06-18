@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import {
   fetchThesisBuilderMetrics,
+  type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderPendingWindow,
   type ThroughputPresetWindow
@@ -69,6 +70,7 @@ export function ThesisBuilderTab() {
         <MetricTile label="Too old" value={formatInteger(data?.stale_articles_count)} />
         <MetricTile label="Created cards" value={formatInteger(data?.created_thesis_cards_count)} />
         <MetricTile label="Pending cards" value={formatInteger(data?.pending_thesis_cards_count)} />
+        <MetricTile label="Dead letters" value={formatInteger(data?.dead_letter_count)} />
         <MetricTile label="Oldest pending age" value={formatDuration(data?.oldest_pending_age_seconds)} />
         <MetricTile label="Avg pending age" value={formatDuration(data?.average_pending_age_seconds)} />
         <MetricTile label="Min time to expiry" value={formatDuration(data?.minimum_pending_expires_in_seconds)} />
@@ -78,6 +80,7 @@ export function ThesisBuilderTab() {
       <section className="layout thesis-layout">
         <PendingWindowsPanel windows={data?.pending_windows ?? []} />
         <StaleEvidencePanel data={data} />
+        <DeadLetterPanel data={data} />
       </section>
     </main>
   );
@@ -148,6 +151,40 @@ function StaleEvidencePanel({ data }: { data?: ThesisBuilderMetricsResponse }) {
   );
 }
 
+function DeadLetterPanel({ data }: { data?: ThesisBuilderMetricsResponse }) {
+  const items = data?.recent_dead_letters ?? [];
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Dead Letters</h2>
+          <span>Recent ThesisBuilder consumer failures</span>
+        </div>
+      </div>
+      <div className="dead-letter-list">
+        {items.map((item) => (
+          <DeadLetterRow key={item.source_message_id} item={item} />
+        ))}
+        {items.length === 0 ? (
+          <EmptyState
+            text={!data?.available ? "ThesisBuilder dead-letter data unavailable" : "No ThesisBuilder dead letters"}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function DeadLetterRow({ item }: { item: ThesisBuilderDeadLetterItem }) {
+  return (
+    <div className="dead-letter">
+      <strong>{item.article_id}</strong>
+      <span>{item.error_code ?? "unknown_error"}</span>
+      <small>{formatDate(item.failed_at)}</small>
+    </div>
+  );
+}
+
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -164,6 +201,10 @@ function QualityValue({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return <div className="empty">{text}</div>;
 }
 
 function formatInteger(value?: number | null) {

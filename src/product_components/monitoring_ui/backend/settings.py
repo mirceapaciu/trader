@@ -27,6 +27,7 @@ class MonitoringUiSettings:
     filter_quality_run_timeout_seconds: int
     queue_url: str
     news_raw_queue: str
+    failed_messages_dlq: str
     massive_api_key: str
     massive_api_base_url: str
     alpha_vantage_api_key: str
@@ -72,6 +73,7 @@ class MonitoringUiSettings:
             filter_quality_run_timeout_seconds=_int_env("FILTER_QUALITY_RUN_TIMEOUT_SECONDS", 1800),
             queue_url=_queue_url_from_env(),
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
+            failed_messages_dlq=os.getenv("FAILED_MESSAGES_DLQ", "failed_messages_dlq"),
             massive_api_key=os.getenv("MASSIVE_API_KEY", ""),
             massive_api_base_url=os.getenv("MASSIVE_API_BASE_URL", "https://api.polygon.io"),
             alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
