@@ -5,7 +5,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import psycopg
 from psycopg.rows import dict_row
@@ -93,6 +93,8 @@ class PostgresThesisBuilderRepository:
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
+        clock: Callable[[], datetime] | None = None,
+        reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
         rejection = _analysis_rejection(result, min_confidence=min_confidence)
         status = ValidationStatus.REJECTED if rejection else ValidationStatus.VALID
@@ -119,6 +121,8 @@ class PostgresThesisBuilderRepository:
                     default_time_horizon=default_time_horizon,
                     evidence_collection_max_minutes=evidence_collection_max_minutes,
                     max_evidence_age_minutes=max_evidence_age_minutes,
+                    clock=clock,
+                    reprocess_run_id=reprocess_run_id,
                 )
             conn.commit()
         return AnalysisPersistenceResult(analysis_id=analysis_id, signal=signal)
@@ -199,9 +203,12 @@ class PostgresThesisBuilderRepository:
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
+        clock: Callable[[], datetime] | None = None,
+        reprocess_run_id: str | None = None,
     ) -> ThesisCardSignal | None:
-        now = datetime.now(timezone.utc)
-        window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now)
+        now = clock() if clock is not None else datetime.now(timezone.utc)
+        real_now = datetime.now(timezone.utc)
+        window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, reprocess_run_id=reprocess_run_id)
         article_ids = list(dict.fromkeys([*window["article_ids"], article.id]))
         analysis_ids = list(dict.fromkeys([*window["analysis_ids"], analysis_id]))
         status = "collecting"
@@ -240,10 +247,11 @@ class PostgresThesisBuilderRepository:
             strategy=result.candidate_strategy.value,
             direction=result.direction.value,
             article_ids=selected_article_ids,
+            reprocess_run_id=reprocess_run_id,
         )
         card_id = str(uuid.uuid5(uuid.NAMESPACE_URL, idempotency_key))
         created_at = now
-        expires_at = now + timedelta(hours=6)
+        expires_at = real_now + timedelta(hours=6)
         risk_box = {
             "max_loss_usd": risk_max_loss_usd,
             "stop_condition": _stop_condition(result),
@@ -284,26 +292,28 @@ class PostgresThesisBuilderRepository:
         article: NewsArticle,
         analysis_id: int,
         now: datetime,
+        reprocess_run_id: str | None = None,
     ) -> dict[str, Any]:
         select_sql = (
             f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at "
             f"FROM {self._thesis_schema}.t_evidence_windows "
             f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s "
             f"AND COALESCE(direction, '') = COALESCE(%s, '') AND status = 'collecting' "
+            f"AND COALESCE(reprocess_run_id, '') = COALESCE(%s, '') "
             f"LIMIT 1"
         )
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 select_sql,
-                (result.ticker, result.exchange_code, result.candidate_strategy.value, result.direction.value),
+                (result.ticker, result.exchange_code, result.candidate_strategy.value, result.direction.value, reprocess_run_id),
             )
             row = cur.fetchone()
             if row is not None:
                 return _window(row)
             insert_sql = (
                 f"INSERT INTO {self._thesis_schema}.t_evidence_windows "
-                f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting') RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at"
+                f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at"
             )
             cur.execute(
                 insert_sql,
@@ -316,6 +326,7 @@ class PostgresThesisBuilderRepository:
                     Json([analysis_id]),
                     _to_utc(article.published_at),
                     _to_utc(article.published_at),
+                    reprocess_run_id,
                 ),
             )
             return _window(cur.fetchone())
@@ -456,9 +467,11 @@ def _evidence(*, selected: list[PersistedAnalysis]) -> list[dict[str, Any]]:
     return evidence
 
 
-def _card_idempotency_key(*, ticker: str, exchange_code: str, strategy: str, direction: str, article_ids: list[str]) -> str:
-    payload = "|".join([ticker, exchange_code, strategy, direction, *sorted(article_ids)])
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _card_idempotency_key(*, ticker: str, exchange_code: str, strategy: str, direction: str, article_ids: list[str], reprocess_run_id: str | None = None) -> str:
+    parts = [ticker, exchange_code, strategy, direction, *sorted(article_ids)]
+    if reprocess_run_id is not None:
+        parts.append(reprocess_run_id)
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 def _stop_condition(result: LlmAnalysisResult) -> str:

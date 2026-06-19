@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   fetchThesisBuilderMetrics,
+  reprocessThesisBuilder,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderPendingWindow,
+  type ThesisReprocessResponse,
   type ThroughputPresetWindow
 } from "../api";
 
@@ -19,10 +21,14 @@ const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> =
 
 export function ThesisBuilderTab() {
   const [window, setWindow] = useState<ThroughputPresetWindow>("1d");
+  const [daysBack, setDaysBack] = useState(7);
   const metrics = useQuery({
     queryKey: ["thesis-builder", "metrics", window],
     queryFn: () => fetchThesisBuilderMetrics(window),
     refetchInterval: 15000
+  });
+  const reprocess = useMutation({
+    mutationFn: () => reprocessThesisBuilder({ days_back: daysBack })
   });
   const data = metrics.data;
 
@@ -82,6 +88,15 @@ export function ThesisBuilderTab() {
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
       </section>
+
+      <ReprocessPanel
+        daysBack={daysBack}
+        onDaysBackChange={setDaysBack}
+        onReprocess={() => reprocess.mutate()}
+        isPending={reprocess.isPending}
+        result={reprocess.data}
+        error={reprocess.error}
+      />
     </main>
   );
 }
@@ -182,6 +197,61 @@ function DeadLetterRow({ item }: { item: ThesisBuilderDeadLetterItem }) {
       <span>{item.error_code ?? "unknown_error"}</span>
       <small>{formatDate(item.failed_at)}</small>
     </div>
+  );
+}
+
+function ReprocessPanel({
+  daysBack,
+  onDaysBackChange,
+  onReprocess,
+  isPending,
+  result,
+  error,
+}: {
+  daysBack: number;
+  onDaysBackChange: (v: number) => void;
+  onReprocess: () => void;
+  isPending: boolean;
+  result?: ThesisReprocessResponse;
+  error: Error | null;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Reprocess Historical Articles</h2>
+          <span>Testing only — will not overwrite existing thesis cards</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.75rem 0" }}>
+        <label htmlFor="reprocess-days" style={{ whiteSpace: "nowrap" }}>
+          Days back
+        </label>
+        <input
+          id="reprocess-days"
+          type="number"
+          min={1}
+          max={30}
+          value={daysBack}
+          onChange={(e) => onDaysBackChange(Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 1)))}
+          style={{ width: "5rem" }}
+          disabled={isPending}
+        />
+        <button type="button" onClick={onReprocess} disabled={isPending}>
+          {isPending ? "Reprocessing…" : "Reprocess"}
+        </button>
+        {isPending && <span style={{ color: "var(--color-muted, #888)", fontSize: "0.85em" }}>This may take several minutes</span>}
+      </div>
+      {error && <div className="inline-error">{error.message}</div>}
+      {result && (
+        <div className="quality-grid thesis-stale-grid" style={{ marginTop: "0.5rem" }}>
+          <QualityValue label="Run ID" value={result.run_id.slice(0, 8) + "…"} />
+          <QualityValue label="Articles found" value={String(result.articles_found)} />
+          <QualityValue label="Analyses created" value={String(result.analyses_created)} />
+          <QualityValue label="Cards created" value={String(result.cards_created)} />
+        </div>
+      )}
+    </section>
   );
 }
 

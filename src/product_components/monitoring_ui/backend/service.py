@@ -7,12 +7,15 @@ from typing import Protocol
 import psycopg
 import redis
 
-from src.product_components.shared.adapters import SharedWatchlistEntryInput
+from src.product_components.shared.adapters import PostgresSharedInstrumentRegistry, SharedWatchlistEntryInput
 from src.product_components.shared.instrument_lookup import (
     DuplicateActiveWatchlistEntry,
     InstrumentLookupSuggestion,
     SharedInstrumentLookupAdminService,
 )
+from src.product_components.thesis_builder.llm_client import OpenAIThesisClient, ThesisAnalyzer
+from src.product_components.thesis_builder.repository import PostgresThesisBuilderRepository
+from src.product_components.thesis_builder.reprocessor import ThesisBuilderReprocessor
 
 from .models import (
     AliasDiscoveryResponse,
@@ -29,6 +32,8 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
+    ThesisReprocessRequest,
+    ThesisReprocessResponse,
     ThroughputGranularity,
     ThroughputResponse,
     WatchlistItemPayload,
@@ -464,6 +469,45 @@ class MonitoringService:
     def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str) -> None:
         admin = self._require_watchlist_admin()
         admin.deactivate_watchlist_entry(ticker=ticker, exchange_code=exchange_code)
+
+    def reprocess_thesis(self, payload: ThesisReprocessRequest) -> ThesisReprocessResponse:
+        dsn = self._settings.postgres_dsn
+        repository = PostgresThesisBuilderRepository(
+            dsn=dsn,
+            thesis_schema=self._settings.thesis_builder_db_schema,
+        )
+        analyzer = ThesisAnalyzer(
+            client=OpenAIThesisClient(api_key=self._settings.openai_api_key),
+            model=self._settings.llm_model,
+            max_tokens_per_run=75_000,
+            max_tokens_per_item=1200,
+        )
+        instrument_registry = PostgresSharedInstrumentRegistry(
+            dsn=dsn,
+            shared_schema=self._settings.shared_db_schema,
+            watchlist_table=self._settings.watchlist_table,
+        )
+        reprocessor = ThesisBuilderReprocessor(
+            dsn=dsn,
+            news_fetcher_schema=self._settings.newsfetcher_db_schema,
+            thesis_schema=self._settings.thesis_builder_db_schema,
+            repository=repository,
+            analyzer=analyzer,
+            instrument_registry=instrument_registry,
+            required_evidence_count=2,
+            min_confidence=0.6,
+            risk_max_loss_usd=120.0,
+            default_time_horizon="swing_1d_5d",
+            evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
+            max_evidence_age_minutes=180,
+        )
+        result = reprocessor.reprocess(days_back=payload.days_back, max_articles=200)
+        return ThesisReprocessResponse(
+            run_id=result.run_id,
+            articles_found=result.articles_found,
+            analyses_created=result.analyses_created,
+            cards_created=result.cards_created,
+        )
 
     def _require_watchlist_admin(self) -> SharedInstrumentLookupAdminService:
         if self._watchlist_admin is None:

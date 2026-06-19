@@ -27,6 +27,8 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
+    ThesisReprocessRequest,
+    ThesisReprocessResponse,
     ThroughputResponse,
     WatchlistItemPayload,
     WatchlistItemResponse,
@@ -270,6 +272,13 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
             ) from exc
+
+    @app.post("/api/thesis-builder/reprocess", response_model=ThesisReprocessResponse)
+    def reprocess_thesis(payload: ThesisReprocessRequest) -> ThesisReprocessResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.reprocess_thesis(payload),
+            detail="thesis reprocessing unavailable",
+        )
 
     @app.post("/api/actions/refresh")
     def refresh() -> dict[str, str]:

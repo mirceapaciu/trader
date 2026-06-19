@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import uvicorn
 
 from src.product_components.news_fetcher.env_loader import load_env_files
@@ -28,6 +30,13 @@ def main() -> None:
         override_existing=False,
     )
     settings = MonitoringUiSettings.from_env()
+    _root = logging.getLogger()
+    _root.setLevel(logging.INFO)
+    if not _root.handlers:
+        import sys
+        _handler = logging.StreamHandler(sys.stdout)
+        _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        _root.addHandler(_handler)
     uvicorn.run(
         "src.product_components.monitoring_ui.backend.app:app",
         host="127.0.0.1",

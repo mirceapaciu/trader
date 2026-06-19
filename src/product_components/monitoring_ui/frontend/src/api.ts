@@ -84,6 +84,17 @@ export type ThesisBuilderDeadLetterItem = {
   failed_at: string;
 };
 
+export type ThesisReprocessRequest = {
+  days_back: number;
+};
+
+export type ThesisReprocessResponse = {
+  run_id: string;
+  articles_found: number;
+  analyses_created: number;
+  cards_created: number;
+};
+
 export type ThesisBuilderMetricsResponse = {
   available: boolean;
   message?: string | null;
@@ -454,6 +465,10 @@ export function fetchThesisBuilderMetrics(window: ThroughputPresetWindow): Promi
   return getJson<ThesisBuilderMetricsResponse>(
     `/api/thesis-builder/metrics?window=${encodeURIComponent(window)}`
   );
+}
+
+export function reprocessThesisBuilder(payload: ThesisReprocessRequest): Promise<ThesisReprocessResponse> {
+  return postJson<ThesisReprocessResponse>("/api/thesis-builder/reprocess", payload);
 }
 
 export function fetchBacklog(): Promise<BacklogResponse> {

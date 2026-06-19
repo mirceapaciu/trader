@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import logging
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+
+from .llm_client import ThesisAnalyzer, TokenBudgetExhausted
+from .models import NewsArticle
+from .repository import PostgresThesisBuilderRepository
+from .service import InstrumentRegistry, _resolve_instruments
+
+LOGGER = logging.getLogger("thesis_builder.reprocessor")
+
+
+@dataclass(frozen=True)
+class ReprocessResult:
+    run_id: str
+    articles_found: int
+    analyses_created: int
+    cards_created: int
+
+
+class ThesisBuilderReprocessor:
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        news_fetcher_schema: str,
+        thesis_schema: str,
+        repository: PostgresThesisBuilderRepository,
+        analyzer: ThesisAnalyzer,
+        instrument_registry: InstrumentRegistry,
+        required_evidence_count: int,
+        min_confidence: float,
+        risk_max_loss_usd: float,
+        default_time_horizon: str,
+        evidence_collection_max_minutes: int,
+        max_evidence_age_minutes: int,
+    ) -> None:
+        self._dsn = dsn
+        self._news_fetcher_schema = news_fetcher_schema
+        self._thesis_schema = thesis_schema
+        self._repository = repository
+        self._analyzer = analyzer
+        self._instrument_registry = instrument_registry
+        self._required_evidence_count = required_evidence_count
+        self._min_confidence = min_confidence
+        self._risk_max_loss_usd = risk_max_loss_usd
+        self._default_time_horizon = default_time_horizon
+        self._evidence_collection_max_minutes = evidence_collection_max_minutes
+        self._max_evidence_age_minutes = max_evidence_age_minutes
+
+    def reprocess(self, *, days_back: int, max_articles: int = 200) -> ReprocessResult:
+        run_id = str(uuid.uuid4())
+        articles = self._fetch_articles(days_back=days_back)
+        articles = sorted(articles, key=lambda a: a.published_at)
+        articles_found = len(articles)
+        if len(articles) > max_articles:
+            articles = articles[:max_articles]
+        LOGGER.info(
+            "Reprocessing started run_id=%s articles_found=%d processing=%d days_back=%d token_budget=%d",
+            run_id, articles_found, len(articles), days_back, self._analyzer.max_tokens_per_run,
+        )
+
+        active_instruments = self._instrument_registry.list_active_instruments()
+        analyses_created = 0
+        cards_created = 0
+        budget_exhausted = False
+
+        for article_idx, article in enumerate(articles):
+            if budget_exhausted:
+                break
+
+            published_at = article.published_at
+            clock = lambda published_at=published_at: published_at + timedelta(minutes=5)
+
+            instruments = _resolve_instruments(article=article, active_instruments=active_instruments)
+            if not instruments:
+                continue
+
+            LOGGER.debug(
+                "Reprocessing article run_id=%s idx=%d/%d article_id=%s instruments=%s",
+                run_id, article_idx + 1, len(articles), article.id,
+                [i.ticker for i in instruments],
+            )
+
+            for instrument in instruments:
+                try:
+                    analysis = self._analyzer.analyze_article(
+                        article=article,
+                        ticker=instrument.ticker,
+                        exchange_code=instrument.exchange_code,
+                        market_context_snapshot=None,
+                    )
+                except TokenBudgetExhausted:
+                    LOGGER.info(
+                        "Reprocessing token budget exhausted run_id=%s after %d analyses — stopping early",
+                        run_id, analyses_created,
+                    )
+                    budget_exhausted = True
+                    break
+                except ValueError as exc:
+                    self._repository.persist_rejected_analysis(
+                        article=article,
+                        instrument=instrument,
+                        rejection_reason_code=str(exc) or "invalid_llm_response",
+                        llm_model=self._analyzer.model,
+                        validation_errors=[str(exc) or "invalid_llm_response"],
+                    )
+                    analyses_created += 1
+                    continue
+                except Exception:
+                    LOGGER.exception(
+                        "Reprocess LLM error run_id=%s article_id=%s ticker=%s",
+                        run_id, article.id, instrument.ticker,
+                    )
+                    continue
+
+                LOGGER.info(
+                    "Analysis run_id=%s ticker=%s strategy=%s direction=%s confidence=%.2f",
+                    run_id, instrument.ticker,
+                    analysis.candidate_strategy.value, analysis.direction.value, analysis.confidence,
+                )
+                result = self._repository.persist_analysis_and_update_evidence(
+                    article=article,
+                    result=analysis,
+                    market_context_snapshot=None,
+                    required_evidence_count=self._required_evidence_count,
+                    min_confidence=self._min_confidence,
+                    risk_max_loss_usd=self._risk_max_loss_usd,
+                    default_time_horizon=self._default_time_horizon,
+                    evidence_collection_max_minutes=self._evidence_collection_max_minutes,
+                    max_evidence_age_minutes=self._max_evidence_age_minutes,
+                    clock=clock,
+                    reprocess_run_id=run_id,
+                )
+                analyses_created += 1
+                if result.signal is not None:
+                    LOGGER.info(
+                        "Reprocessing card created run_id=%s ticker=%s article_id=%s",
+                        run_id, instrument.ticker, article.id,
+                    )
+                    cards_created += 1
+
+        LOGGER.info(
+            "Reprocessing done run_id=%s articles_found=%d processed=%d analyses_created=%d cards_created=%d budget_exhausted=%s",
+            run_id, articles_found, len(articles), analyses_created, cards_created, budget_exhausted,
+        )
+        return ReprocessResult(
+            run_id=run_id,
+            articles_found=articles_found,
+            analyses_created=analyses_created,
+            cards_created=cards_created,
+        )
+
+    def _fetch_articles(self, *, days_back: int) -> list[NewsArticle]:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+        sql = (
+            f"SELECT id, source, headline, summary, url, tickers, published_at, fetched_at, sentiment_source "
+            f"FROM {self._news_fetcher_schema}.t_news_articles "
+            f"WHERE published_at >= %s "
+            f"ORDER BY published_at"
+        )
+        with psycopg.connect(self._dsn) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (cutoff,))
+                rows = cur.fetchall()
+        return [_row_to_article(row) for row in rows]
+
+
+def _row_to_article(row: dict[str, Any]) -> NewsArticle:
+    published_at = row["published_at"]
+    fetched_at = row["fetched_at"]
+    if not isinstance(published_at, datetime):
+        published_at = datetime.fromisoformat(str(published_at).replace("Z", "+00:00"))
+    if not isinstance(fetched_at, datetime):
+        fetched_at = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=timezone.utc)
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    tickers = row.get("tickers") or []
+    return NewsArticle(
+        id=str(row["id"]),
+        source=str(row["source"]),
+        headline=str(row["headline"]),
+        summary=row.get("summary"),
+        url=str(row["url"]),
+        tickers=[str(t).strip().upper() for t in tickers if str(t).strip()],
+        published_at=published_at,
+        fetched_at=fetched_at,
+        sentiment_source=row.get("sentiment_source"),
+    )

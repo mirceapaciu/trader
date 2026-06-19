@@ -134,11 +134,15 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_evidence_windows (
         CHECK (status IN ('collecting', 'satisfied', 'expired', 'rejected'))
 );
 
+ALTER TABLE thesis_builder.t_evidence_windows
+    ADD COLUMN IF NOT EXISTS reprocess_run_id TEXT NULL;
+
 CREATE INDEX IF NOT EXISTS ix_evidence_windows_instrument_status
     ON thesis_builder.t_evidence_windows (ticker, exchange_code, status, updated_at DESC);
 
+DROP INDEX IF EXISTS thesis_builder.uq_evidence_windows_collecting;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_evidence_windows_collecting
-    ON thesis_builder.t_evidence_windows (ticker, exchange_code, strategy, COALESCE(direction, ''))
+    ON thesis_builder.t_evidence_windows (ticker, exchange_code, strategy, COALESCE(direction, ''), COALESCE(reprocess_run_id, ''))
     WHERE status = 'collecting';
 
 CREATE INDEX IF NOT EXISTS ix_evidence_windows_expiry_scan

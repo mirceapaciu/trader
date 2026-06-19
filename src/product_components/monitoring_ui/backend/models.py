@@ -384,3 +384,18 @@ class AliasDiscoveryResponse(BaseModel):
     found: bool = False
     cached: bool = False
     generated_at: datetime
+
+
+class ThesisReprocessRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    days_back: int = Field(ge=1, le=30)
+
+
+class ThesisReprocessResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    articles_found: int
+    analyses_created: int
+    cards_created: int

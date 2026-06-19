@@ -36,7 +36,15 @@ class OpenAIThesisClient:
             temperature=0,
             store=False,
         )
-        return _load_json_object(getattr(response, "output_text", ""))
+        result = _load_json_object(getattr(response, "output_text", ""))
+        # Override LLM's self-reported token count with actual API usage so the
+        # budget enforcement in ThesisAnalyzer works correctly.
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            actual = getattr(usage, "total_tokens", None) or getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)
+            if actual:
+                result["estimated_tokens"] = int(actual)
+        return result
 
 
 @dataclass
