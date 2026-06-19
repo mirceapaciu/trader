@@ -5,6 +5,8 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
+LOGGER = logging.getLogger("thesis_builder.main")
+
 import psycopg
 
 from src.product_components.market_data.service import MarketDataService
@@ -63,24 +65,40 @@ def _configure_logging(settings: ThesisBuilderSettings, repo_root: Path) -> None
     )
 
 
+def _verify_configuration(settings: ThesisBuilderSettings) -> None:
+    mandatory = {"OPENAI_API_KEY": settings.openai_api_key}
+    missing = [name for name, value in mandatory.items() if not value]
+
+    for name, value in mandatory.items():
+        if value:
+            LOGGER.info("config %s: set", name)
+        else:
+            LOGGER.error("config %s: missing", name)
+
+    if missing:
+        LOGGER.error("Cannot start: missing mandatory configuration: %s", ", ".join(missing))
+        sys.exit(1)
+
+
+def _log_env_files(repo_root: Path, requested: tuple[str, ...], loaded: list[Path]) -> None:
+    loaded_names = {p.name for p in loaded}
+    for name in requested:
+        if name in loaded_names:
+            LOGGER.info("env file loaded: %s", repo_root / name)
+        else:
+            LOGGER.warning("env file not found: %s", repo_root / name)
+
+
 def main() -> None:
     repo_root = _repo_root()
-    load_env_files(
-        repo_root,
-        filenames=(
-            ".env.shared",
-            ".env.prod",
-            ".env.news-fetcher",
-            ".env.market-data",
-            ".env.thesis-builder",
-            ".env.secrets",
-        ),
-        override_existing=False,
-    )
+    env_filenames = (".env.shared", ".env.prod", ".env.thesis-builder", ".env.secrets")
+    loaded_env_files = load_env_files(repo_root, filenames=env_filenames, override_existing=True)
 
     settings = ThesisBuilderSettings.from_env()
     market_data_settings = MarketDataSettings.from_env()
     _configure_logging(settings, repo_root)
+    _log_env_files(repo_root, env_filenames, loaded_env_files)
+    _verify_configuration(settings)
     _bootstrap_database_schema(settings)
     instrument_registry = PostgresSharedInstrumentRegistry(
         dsn=settings.postgres_dsn,

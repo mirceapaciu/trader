@@ -21,10 +21,12 @@ class ThesisLlmClient(Protocol):
 class OpenAIThesisClient:
     """Thin OpenAI Responses API adapter for ThesisBuilder."""
 
+    api_key: str
+
     def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
         from openai import OpenAI
 
-        client = OpenAI()
+        client = OpenAI(api_key=self.api_key)
         response = client.responses.create(
             model=model,
             input=prompt,

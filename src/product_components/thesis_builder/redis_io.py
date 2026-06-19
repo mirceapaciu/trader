@@ -47,6 +47,7 @@ class NewsStreamMessage:
             self.payload.get("tickers")
             or self.payload.get("entities")
             or attributes.get("tickers")
+            or []
         )
         if not (
             isinstance(payload_id, str)

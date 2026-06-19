@@ -80,7 +80,7 @@ class ThesisBuilderRunner:
             consumer_name=settings.consumer_name,
         )
         self._analyzer = analyzer or ThesisAnalyzer(
-            client=OpenAIThesisClient(),
+            client=OpenAIThesisClient(api_key=settings.openai_api_key),
             model=settings.llm_model,
             max_tokens_per_run=settings.llm_daily_token_budget,
             max_tokens_per_item=settings.llm_max_output_tokens,
