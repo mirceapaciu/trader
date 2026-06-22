@@ -35,6 +35,7 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderActionableCard,
     ThesisBuilderMetricsResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderPendingWindow,
@@ -329,6 +330,10 @@ class PostgresRedisMonitoringDataSource:
             pending_windows = self._fetch_pending_thesis_windows(
                 evidence_collection_max_minutes=evidence_collection_max_minutes,
             )
+            actionable_cards = self._fetch_actionable_thesis_cards(
+                window_start_at=resolved_start_at,
+                window_end_at=resolved_end_at,
+            )
             dead_letter_count, recent_dead_letters = self._fetch_thesis_builder_dead_letters(
                 recent_limit=_THESIS_BUILDER_RECENT_DEAD_LETTER_LIMIT,
             )
@@ -368,6 +373,7 @@ class PostgresRedisMonitoringDataSource:
             dead_letter_count=dead_letter_count,
             recent_dead_letters=recent_dead_letters,
             pending_windows=pending_windows,
+            actionable_cards=actionable_cards,
             generated_at=generated_at,
         )
 
@@ -402,6 +408,41 @@ class PostgresRedisMonitoringDataSource:
         return WindowArticlesResponse(
             available=True,
             window_id=window_id,
+            articles=articles,
+            generated_at=generated_at,
+        )
+
+    def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse:
+        schema = self._thesis_builder_schema
+        generated_at = _utc_now()
+        sql = (
+            f"SELECT DISTINCT ON (article_id) "
+            f"article_id, article_snapshot, confidence, is_market_moving, "
+            f"validation_status, rejection_reason_code, analyzed_at "
+            f"FROM {schema}.t_news_analyses "
+            f"WHERE id IN ("
+            f"SELECT jsonb_array_elements_text(source_analysis_ids)::bigint "
+            f"FROM {schema}.t_thesis_cards WHERE id = %s"
+            f") "
+            f"ORDER BY article_id, analyzed_at DESC"
+        )
+        try:
+            with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (card_id,))
+                rows = cur.fetchall()
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return WindowArticlesResponse(
+                available=False,
+                message="ThesisBuilder telemetry is unavailable.",
+                card_id=card_id,
+                articles=[],
+                generated_at=generated_at,
+            )
+
+        articles = [_window_article(row) for row in rows]
+        return WindowArticlesResponse(
+            available=True,
+            card_id=card_id,
             articles=articles,
             generated_at=generated_at,
         )
@@ -704,6 +745,46 @@ class PostgresRedisMonitoringDataSource:
                 expires_in_seconds=float(row["expires_in_seconds"] or 0),
                 evidence_count=int(row["evidence_count"] or 0),
                 required_evidence_count=int(row["required_evidence_count"]),
+            )
+            for row in rows
+        ]
+
+    def _fetch_actionable_thesis_cards(
+        self,
+        *,
+        window_start_at: datetime,
+        window_end_at: datetime,
+    ) -> list[ThesisBuilderActionableCard]:
+        sql = (
+            f"SELECT id, ticker, exchange_code, strategy, direction, time_horizon, confidence, "
+            f"created_at, expires_at, "
+            f"EXTRACT(EPOCH FROM (expires_at - NOW())) AS expires_in_seconds, "
+            f"jsonb_array_length(evidence) AS evidence_count, "
+            f"(signal_published_at IS NOT NULL) AS signal_published "
+            f"FROM {self._thesis_builder_schema}.t_thesis_cards "
+            f"WHERE validation_status = 'valid' "
+            f"AND direction IN ('buy', 'sell') "
+            f"AND expires_at > NOW() "
+            f"AND created_at >= %s AND created_at < %s "
+            f"ORDER BY created_at DESC LIMIT 25"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (window_start_at, window_end_at))
+            rows = cur.fetchall()
+        return [
+            ThesisBuilderActionableCard(
+                card_id=str(row["id"]),
+                ticker=str(row["ticker"]),
+                exchange_code=str(row["exchange_code"]),
+                strategy=str(row["strategy"]),
+                direction=str(row["direction"]),
+                time_horizon=str(row["time_horizon"]),
+                confidence=float(row["confidence"] or 0),
+                created_at=_to_utc(row["created_at"]),
+                expires_at=_to_utc(row["expires_at"]),
+                expires_in_seconds=float(row["expires_in_seconds"] or 0),
+                evidence_count=int(row["evidence_count"] or 0),
+                signal_published=bool(row["signal_published"]),
             )
             for row in rows
         ]

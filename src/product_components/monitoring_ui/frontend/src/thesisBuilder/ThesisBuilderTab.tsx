@@ -3,14 +3,17 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   fetchThesisBuilderMetrics,
+  fetchThesisCardArticles,
   fetchWindowArticles,
   reprocessThesisBuilder,
+  type ThesisBuilderActionableCard,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderPendingWindow,
   type ThesisReprocessResponse,
   type ThroughputPresetWindow,
-  type WindowArticle
+  type WindowArticle,
+  type WindowArticlesResponse
 } from "../api";
 
 const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> = [
@@ -77,6 +80,7 @@ export function ThesisBuilderTab() {
         <MetricTile label="Included in cards" value={formatInteger(data?.articles_included_in_cards_count)} />
         <MetricTile label="Too old" value={formatInteger(data?.stale_articles_count)} />
         <MetricTile label="Created cards" value={formatInteger(data?.created_thesis_cards_count)} />
+        <MetricTile label="Actionable cards" value={formatInteger(data?.actionable_cards?.length)} />
         <MetricTile label="Pending cards" value={formatInteger(data?.pending_thesis_cards_count)} />
         <MetricTile label="Dead letters" value={formatInteger(data?.dead_letter_count)} />
         <MetricTile label="Oldest pending age" value={formatDuration(data?.oldest_pending_age_seconds)} />
@@ -86,6 +90,7 @@ export function ThesisBuilderTab() {
       </section>
 
       <PendingWindowsPanel windows={data?.pending_windows ?? []} />
+      <ActionableCardsPanel cards={data?.actionable_cards ?? []} />
       <section className="layout thesis-layout">
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
@@ -211,22 +216,31 @@ function WindowDetail({ window: w }: { window: ThesisBuilderPendingWindow }) {
         View {w.evidence_count} evidence article{w.evidence_count === 1 ? "" : "s"} →
       </button>
       {articlesOpen && (
-        <EvidenceArticlesModal window={w} onClose={() => setArticlesOpen(false)} />
+        <EvidenceArticlesModal
+          title={`Evidence articles · ${w.ticker} ${w.exchange_code}`}
+          queryKey={["thesis-window-articles", w.window_id]}
+          queryFn={() => fetchWindowArticles(w.window_id)}
+          onClose={() => setArticlesOpen(false)}
+        />
       )}
     </div>
   );
 }
 
 function EvidenceArticlesModal({
-  window: w,
+  title,
+  queryKey,
+  queryFn,
   onClose,
 }: {
-  window: ThesisBuilderPendingWindow;
+  title: string;
+  queryKey: (string | number)[];
+  queryFn: () => Promise<WindowArticlesResponse>;
   onClose: () => void;
 }) {
   const articles = useQuery({
-    queryKey: ["thesis-window-articles", w.window_id],
-    queryFn: () => fetchWindowArticles(w.window_id)
+    queryKey,
+    queryFn
   });
 
   useEffect(() => {
@@ -251,9 +265,7 @@ function EvidenceArticlesModal({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">
-          <h3>
-            Evidence articles · {w.ticker} {w.exchange_code}
-          </h3>
+          <h3>{title}</h3>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             ×
           </button>
@@ -305,6 +317,135 @@ function EvidenceArticle({ article }: { article: WindowArticle }) {
         )}
       </div>
       {article.summary && <p className="evidence-article-summary">{article.summary}</p>}
+    </div>
+  );
+}
+
+function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedCard = cards.find((c) => c.card_id === selectedId) ?? null;
+
+  return (
+    <section className="panel panel-large">
+      <div className="panel-heading">
+        <div>
+          <h2>Actionable Thesis Cards</h2>
+          <span>Valid buy/sell cards ready for trading</span>
+        </div>
+      </div>
+      {cards.length === 0 ? (
+        <div className="empty">No actionable thesis cards.</div>
+      ) : (
+        <div className="pending-windows-layout">
+          <div className="pending-list-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Instrument</th>
+                  <th>Strategy</th>
+                  <th>Direction</th>
+                  <th>Confidence</th>
+                  <th>Expires in</th>
+                  <th>Created</th>
+                  <th>Signal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cards.map((c) => (
+                  <tr
+                    key={c.card_id}
+                    data-selectable
+                    className={c.card_id === selectedId ? "selected" : undefined}
+                    onClick={() => setSelectedId(c.card_id)}
+                  >
+                    <td>
+                      <strong>{c.ticker}</strong>
+                      <span className="table-subtext">{c.exchange_code}</span>
+                    </td>
+                    <td>{formatToken(c.strategy)}</td>
+                    <td>{formatToken(c.direction)}</td>
+                    <td>{c.confidence.toFixed(2)}</td>
+                    <td>{formatDuration(c.expires_in_seconds)}</td>
+                    <td>{formatDate(c.created_at)}</td>
+                    <td>
+                      <span className={c.signal_published ? "chip" : "chip warning"}>
+                        {c.signal_published ? "published" : "pending"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="pending-detail">
+            {selectedCard ? (
+              <ActionableCardDetail card={selectedCard} />
+            ) : (
+              <div className="empty">Select a card to see details.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ActionableCardDetail({ card: c }: { card: ThesisBuilderActionableCard }) {
+  const [articlesOpen, setArticlesOpen] = useState(false);
+  return (
+    <div className="pending-detail-grid">
+      <div className="pending-detail-row">
+        <span>Instrument</span>
+        <strong>{c.ticker} <small style={{ fontWeight: 400, color: "#64726c" }}>{c.exchange_code}</small></strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Strategy</span>
+        <strong>{formatToken(c.strategy)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Direction</span>
+        <strong>{formatToken(c.direction)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Time horizon</span>
+        <strong>{formatToken(c.time_horizon)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Confidence</span>
+        <strong>{c.confidence.toFixed(2)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Created</span>
+        <strong>{formatDate(c.created_at)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Expires in</span>
+        <strong>{formatDuration(c.expires_in_seconds)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Evidence</span>
+        <strong>{c.evidence_count} article{c.evidence_count === 1 ? "" : "s"}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Signal</span>
+        <strong>{c.signal_published ? "published" : "pending"}</strong>
+      </div>
+      <button
+        type="button"
+        className="quality-link"
+        onClick={() => setArticlesOpen(true)}
+        disabled={c.evidence_count === 0}
+      >
+        View {c.evidence_count} evidence article{c.evidence_count === 1 ? "" : "s"} →
+      </button>
+      {articlesOpen && (
+        <EvidenceArticlesModal
+          title={`Evidence articles · ${c.ticker} ${c.exchange_code}`}
+          queryKey={["thesis-card-articles", c.card_id]}
+          queryFn={() => fetchThesisCardArticles(c.card_id)}
+          onClose={() => setArticlesOpen(false)}
+        />
+      )}
     </div>
   );
 }

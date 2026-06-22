@@ -20,10 +20,12 @@ from src.product_components.monitoring_ui.backend.models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderActionableCard,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThesisBuilderPendingWindow,
     ThroughputResponse,
+    WindowArticlesResponse,
     WatchlistItemPayload,
     WatchlistResponse,
 )
@@ -106,6 +108,10 @@ class FakeDataSource:
         self.thesis_builder_window = window
         self.thesis_builder_evidence_collection_max_minutes = evidence_collection_max_minutes
         return _thesis_builder_metrics(window=window)
+
+    def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse:
+        self.thesis_card_articles_id = card_id
+        return WindowArticlesResponse(card_id=card_id, articles=[], generated_at=_now())
 
     def get_backlog(self) -> BacklogResponse:
         return BacklogResponse(pending_count=0, retrying_count=0, dead_letter_count=0, generated_at=_now())
@@ -680,6 +686,19 @@ def test_get_thesis_builder_metrics_forwards_supported_window() -> None:
     assert data_source.thesis_builder_evidence_collection_max_minutes == 120
     assert response.window == "7d"
     assert response.created_thesis_cards_count == 2
+    assert len(response.actionable_cards) == 1
+    assert response.actionable_cards[0].card_id == "card-1"
+    assert response.actionable_cards[0].direction == "buy"
+
+
+def test_get_thesis_card_articles_forwards_card_id() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_card_articles(card_id="card-1")
+
+    assert data_source.thesis_card_articles_id == "card-1"
+    assert response.card_id == "card-1"
 
 
 def test_get_thesis_builder_metrics_rejects_invalid_window() -> None:
@@ -774,6 +793,26 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
             )
         ],
     )
+    monkeypatch.setattr(
+        repository,
+        "_fetch_actionable_thesis_cards",
+        lambda **_kwargs: [
+            ThesisBuilderActionableCard(
+                card_id="card-9",
+                ticker="AAPL",
+                exchange_code="XNAS",
+                strategy="event_driven",
+                direction="buy",
+                time_horizon="swing_1d_5d",
+                confidence=0.82,
+                created_at=_now(),
+                expires_at=_now(),
+                expires_in_seconds=86400.0,
+                evidence_count=3,
+                signal_published=False,
+            )
+        ],
+    )
 
     response = repository.get_thesis_builder_metrics(window="1d", evidence_collection_max_minutes=120)
 
@@ -788,6 +827,8 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
     assert response.missed_stale_thesis_cards_count == 1
     assert response.stale_evidence_exceeded_p95_seconds == 540.0
     assert response.dead_letter_count == 2
+    assert len(response.actionable_cards) == 1
+    assert response.actionable_cards[0].card_id == "card-9"
     assert response.recent_dead_letters[0].error_code == "missing_article_payload"
     assert response.pending_windows[0].ticker == "AAPL"
 
@@ -1098,6 +1139,8 @@ def _settings() -> MonitoringUiSettings:
         instrument_lookup_cache_ttl_seconds=21600,
         instrument_alias_cache_ttl_seconds=86400,
         instrument_lookup_provider_debounce_ms=300,
+        openai_api_key="",
+        llm_model="gpt-4o-mini",
     )
 
 
@@ -1212,6 +1255,22 @@ def _thesis_builder_metrics(window: str = "1d") -> ThesisBuilderMetricsResponse:
                 expires_in_seconds=1200.0,
                 evidence_count=2,
                 required_evidence_count=3,
+            )
+        ],
+        actionable_cards=[
+            ThesisBuilderActionableCard(
+                card_id="card-1",
+                ticker="AAPL",
+                exchange_code="XNAS",
+                strategy="event_driven",
+                direction="buy",
+                time_horizon="swing_1d_5d",
+                confidence=0.82,
+                created_at=_now(),
+                expires_at=_now(),
+                expires_in_seconds=86400.0,
+                evidence_count=3,
+                signal_published=False,
             )
         ],
         generated_at=_now(),

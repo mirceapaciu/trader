@@ -97,6 +97,23 @@ class ThesisBuilderPendingWindow(BaseModel):
     required_evidence_count: int
 
 
+class ThesisBuilderActionableCard(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    card_id: str
+    ticker: str
+    exchange_code: str
+    strategy: str
+    direction: str
+    time_horizon: str
+    confidence: float
+    created_at: datetime
+    expires_at: datetime
+    expires_in_seconds: float
+    evidence_count: int
+    signal_published: bool
+
+
 class WindowArticle(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -117,7 +134,8 @@ class WindowArticlesResponse(BaseModel):
 
     available: bool = True
     message: str | None = None
-    window_id: int
+    window_id: int | None = None
+    card_id: str | None = None
     articles: list[WindowArticle] = Field(default_factory=list)
     generated_at: datetime
 
@@ -156,6 +174,7 @@ class ThesisBuilderMetricsResponse(BaseModel):
     dead_letter_count: int = 0
     recent_dead_letters: list[ThesisBuilderDeadLetterItem] = Field(default_factory=list)
     pending_windows: list[ThesisBuilderPendingWindow] = Field(default_factory=list)
+    actionable_cards: list[ThesisBuilderActionableCard] = Field(default_factory=list)
     generated_at: datetime
 
 

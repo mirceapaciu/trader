@@ -24,7 +24,10 @@
       "PowerShell(Stop-Process *)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('backend:', d.get\\('readiness'\\)\\)\")",
       "Bash(python3 -c \"import sys,json; print\\('health:', json.load\\(sys.stdin\\)['readiness']\\)\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('readiness:', d['readiness'], '| dependencies:', [\\(dep['kind'], dep['state']\\) for dep in d['dependencies']]\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('readiness:', d['readiness'], '| dependencies:', [\\(dep['kind'], dep['state']\\) for dep in d['dependencies']]\\)\")",
+      "Bash(git stash *)",
+      "Bash(npm test *)",
+      "Bash(npm run *)"
     ]
   }
 }

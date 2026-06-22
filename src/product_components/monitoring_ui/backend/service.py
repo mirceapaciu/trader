@@ -72,6 +72,8 @@ class MonitoringDataSource(Protocol):
 
     def get_window_articles(self, *, window_id: int) -> WindowArticlesResponse: ...
 
+    def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse: ...
+
     def get_backlog(self) -> BacklogResponse: ...
 
     def list_dead_letters(self, *, limit: int, offset: int) -> DeadLetterResponse: ...
@@ -264,6 +266,19 @@ class MonitoringService:
                 available=False,
                 message="Window articles unavailable.",
                 window_id=window_id,
+                articles=[],
+                generated_at=_utc_now(),
+            )
+
+    def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse:
+        try:
+            return self._data_source.get_thesis_card_articles(card_id=card_id)
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("thesis card articles unavailable for card_id %s", card_id)
+            return WindowArticlesResponse(
+                available=False,
+                message="Thesis card articles unavailable.",
+                card_id=card_id,
                 articles=[],
                 generated_at=_utc_now(),
             )

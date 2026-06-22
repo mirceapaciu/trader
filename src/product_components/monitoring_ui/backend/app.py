@@ -178,6 +178,16 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
             detail="window articles unavailable",
         )
 
+    @app.get(
+        "/api/thesis-builder/cards/{card_id}/articles",
+        response_model=WindowArticlesResponse,
+    )
+    def get_thesis_card_articles(card_id: str) -> WindowArticlesResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.get_thesis_card_articles(card_id=card_id),
+            detail="thesis card articles unavailable",
+        )
+
     @app.get("/api/backlog", response_model=BacklogResponse)
     def get_backlog() -> BacklogResponse:
         return _run_with_infrastructure_mapping(

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { ThesisBuilderTab } from "./ThesisBuilderTab";
 
@@ -51,6 +51,22 @@ describe("ThesisBuilderTab", () => {
           },
         ],
         pending_windows: [],
+        actionable_cards: [
+          {
+            card_id: "card-1",
+            ticker: "AAPL",
+            exchange_code: "NASDAQ",
+            strategy: "event_driven",
+            direction: "buy",
+            time_horizon: "swing_1d_5d",
+            confidence: 0.82,
+            created_at: "2026-06-16T09:30:00Z",
+            expires_at: "2026-06-17T09:30:00Z",
+            expires_in_seconds: 86400,
+            evidence_count: 3,
+            signal_published: false,
+          },
+        ],
         generated_at: "2026-06-16T10:00:00Z",
       },
       isError: false,
@@ -64,6 +80,18 @@ describe("ThesisBuilderTab", () => {
     expect(screen.getByText("Dead letters")).toBeInTheDocument();
     expect(screen.getByText("article-1")).toBeInTheDocument();
     expect(screen.getByText("missing_article_payload")).toBeInTheDocument();
+  });
+
+  it("renders the actionable thesis cards section and detail on selection", () => {
+    render(<ThesisBuilderTab />);
+
+    expect(screen.getByText("Actionable Thesis Cards")).toBeInTheDocument();
+    expect(screen.getByText("Select a card to see details.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("AAPL"));
+
+    expect(screen.getByText("Time horizon")).toBeInTheDocument();
+    expect(screen.getByText("swing 1d 5d")).toBeInTheDocument();
   });
 
   it("shows a thesis-specific unavailable empty state for dead letters", () => {
@@ -84,6 +112,7 @@ describe("ThesisBuilderTab", () => {
         dead_letter_count: 0,
         recent_dead_letters: [],
         pending_windows: [],
+        actionable_cards: [],
         generated_at: "2026-06-16T10:00:00Z",
       },
       isError: false,

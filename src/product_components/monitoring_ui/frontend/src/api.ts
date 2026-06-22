@@ -79,6 +79,21 @@ export type ThesisBuilderPendingWindow = {
   required_evidence_count: number;
 };
 
+export type ThesisBuilderActionableCard = {
+  card_id: string;
+  ticker: string;
+  exchange_code: string;
+  strategy: string;
+  direction: string;
+  time_horizon: string;
+  confidence: number;
+  created_at: string;
+  expires_at: string;
+  expires_in_seconds: number;
+  evidence_count: number;
+  signal_published: boolean;
+};
+
 export type ThesisBuilderDeadLetterItem = {
   source_message_id: string;
   article_id: string;
@@ -102,7 +117,8 @@ export type WindowArticle = {
 export type WindowArticlesResponse = {
   available: boolean;
   message?: string | null;
-  window_id: number;
+  window_id?: number | null;
+  card_id?: string | null;
   articles: WindowArticle[];
   generated_at: string;
 };
@@ -141,6 +157,7 @@ export type ThesisBuilderMetricsResponse = {
   dead_letter_count: number;
   recent_dead_letters: ThesisBuilderDeadLetterItem[];
   pending_windows: ThesisBuilderPendingWindow[];
+  actionable_cards: ThesisBuilderActionableCard[];
   generated_at: string;
 };
 
@@ -493,6 +510,12 @@ export function fetchThesisBuilderMetrics(window: ThroughputPresetWindow): Promi
 export function fetchWindowArticles(windowId: number): Promise<WindowArticlesResponse> {
   return getJson<WindowArticlesResponse>(
     `/api/thesis-builder/windows/${encodeURIComponent(windowId)}/articles`
+  );
+}
+
+export function fetchThesisCardArticles(cardId: string): Promise<WindowArticlesResponse> {
+  return getJson<WindowArticlesResponse>(
+    `/api/thesis-builder/cards/${encodeURIComponent(cardId)}/articles`
   );
 }
 
