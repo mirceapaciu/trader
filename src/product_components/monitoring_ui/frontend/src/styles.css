@@ -583,6 +583,65 @@ h2 {
   overflow-x: auto;
 }
 
+.pending-windows-layout {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  min-height: 0;
+}
+
+.pending-list-wrap {
+  flex: 0 0 55%;
+  max-height: 350px;
+  overflow-y: auto;
+  border: 1px solid #dbe3dc;
+  border-radius: 6px;
+}
+
+.pending-list-wrap tr[data-selectable] {
+  cursor: pointer;
+}
+
+.pending-list-wrap tr[data-selectable]:hover {
+  background: #f5f8f6;
+}
+
+.pending-list-wrap tr.selected {
+  background: #eef8f4;
+}
+
+.pending-detail {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dbe3dc;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.pending-detail-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.pending-detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pending-detail-row span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64726c;
+}
+
+.pending-detail-row strong {
+  font-size: 0.95rem;
+  color: #18221f;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

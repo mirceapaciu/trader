@@ -102,6 +102,9 @@ export function ThesisBuilderTab() {
 }
 
 function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[] }) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selectedWindow = windows.find((w) => w.window_id === selectedId) ?? null;
+
   return (
     <section className="panel panel-large">
       <div className="panel-heading">
@@ -113,37 +116,86 @@ function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[
       {windows.length === 0 ? (
         <div className="empty">No pending thesis-card windows.</div>
       ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Instrument</th>
-                <th>Strategy</th>
-                <th>Direction</th>
-                <th>Age</th>
-                <th>Expires in</th>
-                <th>Last evidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {windows.map((window) => (
-                <tr key={window.window_id}>
-                  <td>
-                    <strong>{window.ticker}</strong>
-                    <span className="table-subtext">{window.exchange_code}</span>
-                  </td>
-                  <td>{formatToken(window.strategy)}</td>
-                  <td>{window.direction ? formatToken(window.direction) : "n/a"}</td>
-                  <td>{formatDuration(window.pending_age_seconds)}</td>
-                  <td>{formatDuration(window.expires_in_seconds)}</td>
-                  <td>{formatDate(window.last_evidence_at)}</td>
+        <div className="pending-windows-layout">
+          <div className="pending-list-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Instrument</th>
+                  <th>Strategy</th>
+                  <th>Direction</th>
+                  <th>Age</th>
+                  <th>Expires in</th>
+                  <th>Last evidence</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {windows.map((w) => (
+                  <tr
+                    key={w.window_id}
+                    data-selectable
+                    className={w.window_id === selectedId ? "selected" : undefined}
+                    onClick={() => setSelectedId(w.window_id)}
+                  >
+                    <td>
+                      <strong>{w.ticker}</strong>
+                      <span className="table-subtext">{w.exchange_code}</span>
+                    </td>
+                    <td>{formatToken(w.strategy)}</td>
+                    <td>{w.direction ? formatToken(w.direction) : "n/a"}</td>
+                    <td>{formatDuration(w.pending_age_seconds)}</td>
+                    <td>{formatDuration(w.expires_in_seconds)}</td>
+                    <td>{formatDate(w.last_evidence_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="pending-detail">
+            {selectedWindow ? (
+              <WindowDetail window={selectedWindow} />
+            ) : (
+              <div className="empty">Select a card to see details.</div>
+            )}
+          </div>
         </div>
       )}
     </section>
+  );
+}
+
+function WindowDetail({ window: w }: { window: ThesisBuilderPendingWindow }) {
+  return (
+    <div className="pending-detail-grid">
+      <div className="pending-detail-row">
+        <span>Instrument</span>
+        <strong>{w.ticker} <small style={{ fontWeight: 400, color: "#64726c" }}>{w.exchange_code}</small></strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Strategy</span>
+        <strong>{formatToken(w.strategy)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Direction</span>
+        <strong>{w.direction ? formatToken(w.direction) : "n/a"}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Window started</span>
+        <strong>{formatDate(w.window_started_at)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Age</span>
+        <strong>{formatDuration(w.pending_age_seconds)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Expires in</span>
+        <strong>{formatDuration(w.expires_in_seconds)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Last evidence</span>
+        <strong>{formatDate(w.last_evidence_at)}</strong>
+      </div>
+    </div>
   );
 }
 
