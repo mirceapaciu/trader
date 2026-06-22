@@ -319,9 +319,10 @@ class PostgresRedisMonitoringDataSource:
                     f"window_started_at + (%s * INTERVAL '1 minute') - NOW()"
                     f"))) AS average_pending_expires_in_seconds "
                     f"FROM {schema}.t_evidence_windows "
-                    f"WHERE status = 'collecting'"
+                    f"WHERE status = 'collecting' "
+                    f"AND window_started_at + (%s * INTERVAL '1 minute') > NOW()"
                 ),
-                (evidence_collection_max_minutes, evidence_collection_max_minutes),
+                (evidence_collection_max_minutes, evidence_collection_max_minutes, evidence_collection_max_minutes),
             )
             pending_windows = self._fetch_pending_thesis_windows(
                 evidence_collection_max_minutes=evidence_collection_max_minutes,
@@ -645,10 +646,11 @@ class PostgresRedisMonitoringDataSource:
             f"AS expires_in_seconds "
             f"FROM {self._thesis_builder_schema}.t_evidence_windows "
             f"WHERE status = 'collecting' "
+            f"AND window_started_at + (%s * INTERVAL '1 minute') > NOW() "
             f"ORDER BY window_started_at ASC LIMIT 25"
         )
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, (evidence_collection_max_minutes,))
+            cur.execute(sql, (evidence_collection_max_minutes, evidence_collection_max_minutes))
             rows = cur.fetchall()
         return [
             ThesisBuilderPendingWindow(
