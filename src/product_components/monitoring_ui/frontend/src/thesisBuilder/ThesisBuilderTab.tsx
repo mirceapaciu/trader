@@ -83,8 +83,8 @@ export function ThesisBuilderTab() {
         <MetricTile label="Avg time to expiry" value={formatDuration(data?.average_pending_expires_in_seconds)} />
       </section>
 
+      <PendingWindowsPanel windows={data?.pending_windows ?? []} />
       <section className="layout thesis-layout">
-        <PendingWindowsPanel windows={data?.pending_windows ?? []} />
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
       </section>
