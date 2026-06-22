@@ -7,6 +7,7 @@ const useQuery = vi.fn();
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (...args: unknown[]) => useQuery(...args),
+  useMutation: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
 }));
 
 vi.mock("../api", async () => {

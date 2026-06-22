@@ -34,6 +34,7 @@ from .models import (
     WatchlistItemResponse,
     WatchlistLookupResponse,
     WatchlistResponse,
+    WindowArticlesResponse,
 )
 from .repository import PostgresRedisMonitoringDataSource
 from .service import FilterQualityRunAlreadyActive, InvalidThroughputWindow, MonitoringService
@@ -166,6 +167,16 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
             )
         except InvalidThroughputWindow as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/thesis-builder/windows/{window_id}/articles",
+        response_model=WindowArticlesResponse,
+    )
+    def get_window_articles(window_id: int) -> WindowArticlesResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.get_window_articles(window_id=window_id),
+            detail="window articles unavailable",
+        )
 
     @app.get("/api/backlog", response_model=BacklogResponse)
     def get_backlog() -> BacklogResponse:

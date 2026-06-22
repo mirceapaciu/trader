@@ -84,7 +84,51 @@ def test_thesis_builder_creates_preapproved_card_and_signal() -> None:
     assert redis_client.xlen(settings.signal_queue) == 1
 
 
-def _runner(settings: ThesisBuilderSettings) -> ThesisBuilderRunner:
+def test_short_alias_substring_does_not_tag_instrument() -> None:
+    # Layer 1: the "mu" alias must not match inside "multi-trillion-dollar".
+    # The article never names Micron, so no analysis should be produced for MU.
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+    _seed_micron_watchlist(settings)
+    _publish_untagged_listicle(redis_client, settings.news_raw_queue, "listicle-1")
+
+    runner = _runner(settings)
+    runner.bootstrap()
+    runner.run_once()
+
+    assert _count(settings, "t_news_analyses") == 0
+    assert _count(settings, "t_evidence_windows") == 0
+    assert redis_client.xlen(settings.signal_queue) == 0
+
+
+def test_off_topic_analysis_is_rejected_by_relevance_gate() -> None:
+    # Layer 2: an article that legitimately matches but that the LLM judges is not
+    # about the instrument must be persisted as rejected, with no card or signal.
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+    _seed_watchlist(settings)
+    _publish_news(redis_client, settings.news_raw_queue, ["article-1"])
+
+    runner = _runner(
+        settings,
+        llm_client=_FakeLlmClient(overrides={"instrument_is_subject": False}),
+    )
+    runner.bootstrap()
+    runner.run_once()
+
+    assert _count(settings, "t_news_analyses") == 1
+    assert _rejection_reason_codes(settings) == ["instrument_not_subject"]
+    assert _count(settings, "t_thesis_cards") == 0
+    assert redis_client.xlen(settings.signal_queue) == 0
+
+
+def _runner(
+    settings: ThesisBuilderSettings, *, llm_client: "_FakeLlmClient | None" = None
+) -> ThesisBuilderRunner:
     return ThesisBuilderRunner(
         settings=settings,
         repository=PostgresThesisBuilderRepository(
@@ -109,7 +153,7 @@ def _runner(settings: ThesisBuilderSettings) -> ThesisBuilderRunner:
             consumer_name=settings.consumer_name,
         ),
         analyzer=ThesisAnalyzer(
-            client=_FakeLlmClient(),
+            client=llm_client or _FakeLlmClient(),
             model="test-model",
             max_tokens_per_run=100000,
             max_tokens_per_item=500,
@@ -118,9 +162,18 @@ def _runner(settings: ThesisBuilderSettings) -> ThesisBuilderRunner:
 
 
 class _FakeLlmClient:
+    """Deterministic stand-in for the OpenAI client.
+
+    ``overrides`` lets a test force specific fields (e.g. ``instrument_is_subject``
+    or ``relevance``) to exercise the relevance/grounding gate.
+    """
+
+    def __init__(self, overrides: dict | None = None) -> None:
+        self._overrides = overrides or {}
+
     def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
         payload = json.loads(prompt)
-        return {
+        result = {
             "ticker": payload["instrument"]["ticker"],
             "exchange_code": payload["instrument"]["exchange_code"],
             "sentiment": 0.8,
@@ -132,11 +185,14 @@ class _FakeLlmClient:
             "confidence": 0.75,
             "reasoning": f"{payload['article']['headline']} supports a bullish event-driven thesis.",
             "is_market_moving": True,
+            "instrument_is_subject": True,
             "event_type": "guidance",
             "price_impact_magnitude": "medium",
             "evidence_bullet_candidates": [payload["article"]["headline"]],
             "estimated_tokens": 100,
         }
+        result.update(self._overrides)
+        return result
 
 
 def _settings() -> ThesisBuilderSettings:
@@ -159,6 +215,7 @@ def _settings() -> ThesisBuilderSettings:
         max_evidence_age_minutes=180,
         required_evidence_count=3,
         min_confidence=0.6,
+        min_relevance=0.5,
         contrarian_min_confidence=0.72,
         trend_follow_min_confidence=0.68,
         risk_max_loss_usd=120.0,
@@ -166,6 +223,7 @@ def _settings() -> ThesisBuilderSettings:
         llm_model="test-model",
         llm_daily_token_budget=100000,
         llm_max_output_tokens=500,
+        openai_api_key="test-key",
     )
 
 
@@ -235,6 +293,59 @@ def _seed_watchlist(settings: ThesisBuilderSettings) -> None:
             source="integration_test",
         )
     )
+
+
+def _seed_micron_watchlist(settings: ThesisBuilderSettings) -> None:
+    PostgresSharedInstrumentAdmin(
+        dsn=settings.postgres_dsn,
+        shared_schema=settings.shared_db_schema,
+    ).upsert_watchlist_entry(
+        SharedWatchlistEntryInput(
+            ticker="MU",
+            exchange_code="XNAS",
+            display_name="Micron Technology, Inc.",
+            aliases=("micron technology", "micron technology, inc.", "mu"),
+            source="integration_test",
+        )
+    )
+
+
+def _publish_untagged_listicle(redis_client: redis.Redis, stream_name: str, article_id: str) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    redis_client.xadd(
+        stream_name,
+        {
+            "event_id": f"evt-{article_id}",
+            "event_type": "news.article.created",
+            "event_version": "1.0",
+            "occurred_at": "2026-06-15T12:00:00Z",
+            "producer": "news_fetcher",
+            "dedupe_key": article_id,
+            "payload_json": json.dumps(
+                {
+                    "id": article_id,
+                    "source": "integration",
+                    "title": "The Best Stocks to Invest $1,000 in Right Now",
+                    "summary": "Exploring some of the top bargains in a multi-trillion-dollar industry.",
+                    "canonical_locator": "https://example.com/best-stocks-to-invest-1000-in-right-now",
+                    "entities": [],
+                    "occurred_at": now.isoformat(),
+                    "ingested_at": now.isoformat(),
+                    "attributes": {},
+                }
+            ),
+        },
+    )
+
+
+def _rejection_reason_codes(settings: ThesisBuilderSettings) -> list[str]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT rejection_reason_code FROM {settings.thesis_builder_db_schema}.t_news_analyses "
+                f"ORDER BY analyzed_at"
+            )
+            return [row[0] for row in cur.fetchall()]
 
 
 def _publish_news(redis_client: redis.Redis, stream_name: str, article_ids: list[str]) -> None:

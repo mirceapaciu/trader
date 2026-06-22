@@ -30,6 +30,7 @@ class ThesisBuilderSettings:
     max_evidence_age_minutes: int
     required_evidence_count: int
     min_confidence: float
+    min_relevance: float
     contrarian_min_confidence: float
     trend_follow_min_confidence: float
     risk_max_loss_usd: float
@@ -76,6 +77,7 @@ class ThesisBuilderSettings:
             max_evidence_age_minutes=_int_env("THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES", 180),
             required_evidence_count=_int_env("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", 3),
             min_confidence=_float_env("THESIS_BUILDER_MIN_CONFIDENCE", 0.6),
+            min_relevance=_float_env("THESIS_BUILDER_MIN_RELEVANCE", 0.5),
             contrarian_min_confidence=_float_env("THESIS_BUILDER_CONTRARIAN_MIN_CONFIDENCE", 0.72),
             trend_follow_min_confidence=_float_env("THESIS_BUILDER_TREND_FOLLOW_MIN_CONFIDENCE", 0.68),
             risk_max_loss_usd=_float_env("THESIS_BUILDER_RISK_MAX_LOSS_USD", 120.0),

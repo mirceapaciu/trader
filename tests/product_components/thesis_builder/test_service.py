@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from src.product_components.shared.adapters import SharedInstrumentRecord
 from src.product_components.thesis_builder.models import NewsArticle
 from src.product_components.thesis_builder.redis_io import NewsStreamMessage
-from src.product_components.thesis_builder.service import ThesisBuilderRunner
+from src.product_components.thesis_builder.service import ThesisBuilderRunner, _resolve_instruments
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
 
@@ -157,6 +157,59 @@ def test_article_without_registry_match_is_acked_without_processing() -> None:
     assert io.acked == ["1-0"]
 
 
+def test_resolve_instruments_ignores_short_alias_inside_words() -> None:
+    # Regression: the "mu" alias must not match inside "multi-trillion-dollar".
+    now = datetime.now(timezone.utc)
+    article = NewsArticle(
+        id="listicle-1",
+        source="rss",
+        headline="The Best Stocks to Invest $1,000 in Right Now",
+        summary="Exploring some of the top bargains in a multi-trillion-dollar industry.",
+        url="https://www.fool.com/investing/the-best-stocks-to-invest-1000-in-right-now",
+        tickers=[],
+        published_at=now,
+        fetched_at=now,
+    )
+    instruments = _resolve_instruments(
+        article=article,
+        active_instruments=[
+            SharedInstrumentRecord(
+                ticker="MU",
+                exchange_code="XNAS",
+                aliases=("micron technology", "micron technology, inc.", "mu"),
+            )
+        ],
+    )
+
+    assert instruments == []
+
+
+def test_resolve_instruments_matches_named_company() -> None:
+    now = datetime.now(timezone.utc)
+    article = NewsArticle(
+        id="micron-1",
+        source="rss",
+        headline="Micron Technology beats earnings estimates",
+        summary="Strong memory demand.",
+        url="https://example.com/micron",
+        tickers=[],
+        published_at=now,
+        fetched_at=now,
+    )
+    instruments = _resolve_instruments(
+        article=article,
+        active_instruments=[
+            SharedInstrumentRecord(
+                ticker="MU",
+                exchange_code="XNAS",
+                aliases=("micron technology", "mu"),
+            )
+        ],
+    )
+
+    assert [i.ticker for i in instruments] == ["MU"]
+
+
 class _NoopAnalyzer:
     pass
 
@@ -222,6 +275,7 @@ def _settings() -> ThesisBuilderSettings:
         max_evidence_age_minutes=180,
         required_evidence_count=3,
         min_confidence=0.6,
+        min_relevance=0.5,
         contrarian_min_confidence=0.72,
         trend_follow_min_confidence=0.68,
         risk_max_loss_usd=120.0,
@@ -229,4 +283,5 @@ def _settings() -> ThesisBuilderSettings:
         llm_model="test-model",
         llm_daily_token_budget=10000,
         llm_max_output_tokens=1200,
+        openai_api_key="test-key",
     )

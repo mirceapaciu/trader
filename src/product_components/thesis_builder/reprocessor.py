@@ -37,6 +37,7 @@ class ThesisBuilderReprocessor:
         instrument_registry: InstrumentRegistry,
         required_evidence_count: int,
         min_confidence: float,
+        min_relevance: float = 0.0,
         risk_max_loss_usd: float,
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
@@ -50,6 +51,7 @@ class ThesisBuilderReprocessor:
         self._instrument_registry = instrument_registry
         self._required_evidence_count = required_evidence_count
         self._min_confidence = min_confidence
+        self._min_relevance = min_relevance
         self._risk_max_loss_usd = risk_max_loss_usd
         self._default_time_horizon = default_time_horizon
         self._evidence_collection_max_minutes = evidence_collection_max_minutes
@@ -132,6 +134,7 @@ class ThesisBuilderReprocessor:
                     market_context_snapshot=None,
                     required_evidence_count=self._required_evidence_count,
                     min_confidence=self._min_confidence,
+                    min_relevance=self._min_relevance,
                     risk_max_loss_usd=self._risk_max_loss_usd,
                     default_time_horizon=self._default_time_horizon,
                     evidence_collection_max_minutes=self._evidence_collection_max_minutes,

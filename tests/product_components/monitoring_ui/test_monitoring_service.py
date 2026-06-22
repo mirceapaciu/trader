@@ -769,6 +769,8 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
                 last_evidence_at=_now(),
                 pending_age_seconds=720.0,
                 expires_in_seconds=1200.0,
+                evidence_count=2,
+                required_evidence_count=3,
             )
         ],
     )
@@ -1208,6 +1210,8 @@ def _thesis_builder_metrics(window: str = "1d") -> ThesisBuilderMetricsResponse:
                 last_evidence_at=_now(),
                 pending_age_seconds=600.0,
                 expires_in_seconds=1200.0,
+                evidence_count=2,
+                required_evidence_count=3,
             )
         ],
         generated_at=_now(),

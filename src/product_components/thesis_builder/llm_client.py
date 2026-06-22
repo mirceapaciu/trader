@@ -136,6 +136,7 @@ def parse_analysis_result(
         confidence=confidence,
         reasoning=str(raw.get("reasoning") or ""),
         is_market_moving=bool(raw.get("is_market_moving", direction is not TradeDirection.HOLD)),
+        instrument_is_subject=bool(raw.get("instrument_is_subject", False)),
         event_type=str(raw["event_type"]) if raw.get("event_type") else None,
         price_impact_magnitude=(
             str(raw["price_impact_magnitude"]) if raw.get("price_impact_magnitude") else None
@@ -147,7 +148,20 @@ def parse_analysis_result(
 def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_snapshot: dict[str, Any] | None) -> str:
     return json.dumps(
         {
-            "task": "Analyze whether this accepted financial news article supports a thesis card.",
+            "task": (
+                "Analyze whether this accepted financial news article supports a thesis "
+                "card for the SPECIFIED instrument. First decide whether the instrument is "
+                "genuinely a subject of the article (its company/ticker is discussed, not "
+                "merely listed among many names or matched incidentally). If the instrument "
+                "is not a clear subject, set instrument_is_subject=false, set relevance low, "
+                "and do NOT fabricate a thesis from generic market commentary, broad "
+                "'best stocks to buy' listicles, or unrelated news."
+            ),
+            "instrument_grounding_rules": [
+                "instrument_is_subject must be true only when the article is materially about this instrument.",
+                "Generic listicles, sector roundups, or articles where the instrument is not named are NOT about it.",
+                "When unsure, prefer instrument_is_subject=false and low relevance.",
+            ],
             "strategy_scope_v1": ["event_driven", "sentiment_momentum"],
             "unsupported_strategies_must_still_be_labeled_if_best_fit": [
                 "sector_rotation",
@@ -178,6 +192,7 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "confidence",
                 "reasoning",
                 "is_market_moving",
+                "instrument_is_subject",
                 "evidence_bullet_candidates",
                 "estimated_tokens",
             ],
@@ -233,6 +248,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "confidence",
             "reasoning",
             "is_market_moving",
+            "instrument_is_subject",
             "event_type",
             "price_impact_magnitude",
             "evidence_bullet_candidates",
@@ -259,6 +275,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "reasoning": {"type": "string"},
             "is_market_moving": {"type": "boolean"},
+            "instrument_is_subject": {"type": "boolean"},
             "event_type": {"type": ["string", "null"]},
             "price_impact_magnitude": {"type": ["string", "null"], "enum": ["low", "medium", "high", None]},
             "evidence_bullet_candidates": {"type": "array", "items": {"type": "string"}},

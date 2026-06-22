@@ -89,6 +89,7 @@ class PostgresThesisBuilderRepository:
         market_context_snapshot: dict[str, Any] | None,
         required_evidence_count: int,
         min_confidence: float,
+        min_relevance: float = 0.0,
         risk_max_loss_usd: float,
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
@@ -96,7 +97,9 @@ class PostgresThesisBuilderRepository:
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
-        rejection = _analysis_rejection(result, min_confidence=min_confidence)
+        rejection = _analysis_rejection(
+            result, min_confidence=min_confidence, min_relevance=min_relevance
+        )
         status = ValidationStatus.REJECTED if rejection else ValidationStatus.VALID
         with self._connect() as conn:
             analysis_id = self._insert_analysis(
@@ -441,9 +444,15 @@ class PostgresThesisBuilderRepository:
         return psycopg.connect(self._dsn, autocommit=False)
 
 
-def _analysis_rejection(result: LlmAnalysisResult, *, min_confidence: float) -> str | None:
+def _analysis_rejection(
+    result: LlmAnalysisResult, *, min_confidence: float, min_relevance: float = 0.0
+) -> str | None:
     if result.candidate_strategy not in _SUPPORTED_EXECUTABLE_STRATEGIES:
         return f"unsupported_strategy_{result.candidate_strategy.value}"
+    if not result.instrument_is_subject:
+        return "instrument_not_subject"
+    if result.relevance < min_relevance:
+        return "below_min_relevance"
     if result.direction is TradeDirection.HOLD:
         return "hold_not_executable"
     if not result.is_market_moving:

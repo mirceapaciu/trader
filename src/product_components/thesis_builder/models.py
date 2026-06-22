@@ -57,6 +57,7 @@ class LlmAnalysisResult:
     confidence: float
     reasoning: str
     is_market_moving: bool
+    instrument_is_subject: bool = False
     event_type: str | None = None
     price_impact_magnitude: str | None = None
     evidence_bullet_candidates: list[str] = field(default_factory=list)

@@ -86,6 +86,27 @@ export type ThesisBuilderDeadLetterItem = {
   failed_at: string;
 };
 
+export type WindowArticle = {
+  article_id: string;
+  headline: string;
+  url: string;
+  source: string;
+  summary?: string | null;
+  published_at?: string | null;
+  confidence?: number | null;
+  is_market_moving: boolean;
+  validation_status?: string | null;
+  rejection_reason_code?: string | null;
+};
+
+export type WindowArticlesResponse = {
+  available: boolean;
+  message?: string | null;
+  window_id: number;
+  articles: WindowArticle[];
+  generated_at: string;
+};
+
 export type ThesisReprocessRequest = {
   days_back: number;
 };
@@ -466,6 +487,12 @@ export function fetchThroughput(request: ThroughputRequest): Promise<ThroughputR
 export function fetchThesisBuilderMetrics(window: ThroughputPresetWindow): Promise<ThesisBuilderMetricsResponse> {
   return getJson<ThesisBuilderMetricsResponse>(
     `/api/thesis-builder/metrics?window=${encodeURIComponent(window)}`
+  );
+}
+
+export function fetchWindowArticles(windowId: number): Promise<WindowArticlesResponse> {
+  return getJson<WindowArticlesResponse>(
+    `/api/thesis-builder/windows/${encodeURIComponent(windowId)}/articles`
   );
 }
 

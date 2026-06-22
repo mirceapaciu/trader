@@ -97,6 +97,31 @@ class ThesisBuilderPendingWindow(BaseModel):
     required_evidence_count: int
 
 
+class WindowArticle(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    article_id: str
+    headline: str
+    url: str
+    source: str
+    summary: str | None = None
+    published_at: datetime | None = None
+    confidence: float | None = None
+    is_market_moving: bool = False
+    validation_status: str | None = None
+    rejection_reason_code: str | None = None
+
+
+class WindowArticlesResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    window_id: int
+    articles: list[WindowArticle] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class ThesisBuilderDeadLetterItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 

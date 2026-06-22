@@ -41,6 +41,7 @@ from .models import (
     WatchlistLookupResponse,
     WatchlistLookupSuggestionResponse,
     WatchlistResponse,
+    WindowArticlesResponse,
 )
 from .settings import MonitoringUiSettings
 
@@ -68,6 +69,8 @@ class MonitoringDataSource(Protocol):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse: ...
+
+    def get_window_articles(self, *, window_id: int) -> WindowArticlesResponse: ...
 
     def get_backlog(self) -> BacklogResponse: ...
 
@@ -250,6 +253,19 @@ class MonitoringService:
                 dead_letter_count=0,
                 recent_dead_letters=[],
                 generated_at=now,
+            )
+
+    def get_window_articles(self, *, window_id: int) -> WindowArticlesResponse:
+        try:
+            return self._data_source.get_window_articles(window_id=window_id)
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("window articles unavailable for window_id %s", window_id)
+            return WindowArticlesResponse(
+                available=False,
+                message="Window articles unavailable.",
+                window_id=window_id,
+                articles=[],
+                generated_at=_utc_now(),
             )
 
     def get_backlog(self) -> BacklogResponse:
@@ -496,6 +512,7 @@ class MonitoringService:
             instrument_registry=instrument_registry,
             required_evidence_count=2,
             min_confidence=0.6,
+            min_relevance=0.5,
             risk_max_loss_usd=120.0,
             default_time_horizon="swing_1d_5d",
             evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,

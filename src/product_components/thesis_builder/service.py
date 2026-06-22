@@ -12,6 +12,7 @@ from src.product_components.shared.adapters import (
     PostgresSharedThesisCardReviewWriter,
     SharedInstrumentRecord,
 )
+from src.product_components.shared.text_match import contains_term
 
 from .llm_client import OpenAIThesisClient, ThesisAnalyzer
 from .models import InstrumentIdentity, NewsArticle
@@ -207,6 +208,7 @@ class ThesisBuilderRunner:
                 market_context_snapshot=context_snapshot,
                 required_evidence_count=self._settings.required_evidence_count,
                 min_confidence=self._settings.min_confidence,
+                min_relevance=self._settings.min_relevance,
                 risk_max_loss_usd=self._settings.risk_max_loss_usd,
                 default_time_horizon=self._settings.default_time_horizon,
                 evidence_collection_max_minutes=self._settings.evidence_collection_max_minutes,
@@ -273,10 +275,12 @@ def _resolve_instruments(
     active_instruments: list[SharedInstrumentRecord],
 ) -> list[InstrumentIdentity]:
     article_tickers = {ticker.strip().upper() for ticker in article.tickers if ticker.strip()}
-    text = " ".join([article.headline, article.summary or "", article.url]).lower()
+    text = " ".join([article.headline, article.summary or "", article.url])
     matches: list[InstrumentIdentity] = []
     for instrument in active_instruments:
-        if instrument.ticker in article_tickers or any(alias and alias in text for alias in instrument.aliases):
+        if instrument.ticker in article_tickers or any(
+            contains_term(text, alias) for alias in instrument.aliases
+        ):
             matches.append(
                 InstrumentIdentity(
                     ticker=instrument.ticker,

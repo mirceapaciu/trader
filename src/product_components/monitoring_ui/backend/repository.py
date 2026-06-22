@@ -40,6 +40,8 @@ from .models import (
     ThesisBuilderPendingWindow,
     ThroughputBucket,
     ThroughputResponse,
+    WindowArticle,
+    WindowArticlesResponse,
 )
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -366,6 +368,41 @@ class PostgresRedisMonitoringDataSource:
             dead_letter_count=dead_letter_count,
             recent_dead_letters=recent_dead_letters,
             pending_windows=pending_windows,
+            generated_at=generated_at,
+        )
+
+    def get_window_articles(self, *, window_id: int) -> WindowArticlesResponse:
+        schema = self._thesis_builder_schema
+        generated_at = _utc_now()
+        sql = (
+            f"SELECT DISTINCT ON (article_id) "
+            f"article_id, article_snapshot, confidence, is_market_moving, "
+            f"validation_status, rejection_reason_code, analyzed_at "
+            f"FROM {schema}.t_news_analyses "
+            f"WHERE id IN ("
+            f"SELECT jsonb_array_elements_text(analysis_ids)::bigint "
+            f"FROM {schema}.t_evidence_windows WHERE id = %s"
+            f") "
+            f"ORDER BY article_id, analyzed_at DESC"
+        )
+        try:
+            with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (window_id,))
+                rows = cur.fetchall()
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return WindowArticlesResponse(
+                available=False,
+                message="ThesisBuilder telemetry is unavailable.",
+                window_id=window_id,
+                articles=[],
+                generated_at=generated_at,
+            )
+
+        articles = [_window_article(row) for row in rows]
+        return WindowArticlesResponse(
+            available=True,
+            window_id=window_id,
+            articles=articles,
             generated_at=generated_at,
         )
 
@@ -862,6 +899,8 @@ def _optional_float(value: Any) -> float | None:
 
 
 def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
     if not isinstance(value, str) or not value.strip():
         return {}
     try:
@@ -869,6 +908,33 @@ def _json_object(value: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return _to_utc(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return _to_utc(datetime.fromisoformat(value))
+    except ValueError:
+        return None
+
+
+def _window_article(row: dict[str, Any]) -> WindowArticle:
+    snapshot = _json_object(row.get("article_snapshot"))
+    return WindowArticle(
+        article_id=str(row["article_id"]),
+        headline=str(snapshot.get("headline") or ""),
+        url=str(snapshot.get("url") or ""),
+        source=str(snapshot.get("source") or row.get("source") or ""),
+        summary=snapshot.get("summary") or None,
+        published_at=_parse_optional_datetime(snapshot.get("published_at")),
+        confidence=_optional_float(row.get("confidence")),
+        is_market_moving=bool(row.get("is_market_moving")),
+        validation_status=row.get("validation_status"),
+        rejection_reason_code=row.get("rejection_reason_code"),
+    )
 
 
 def _stream_message_id_to_utc(message_id: str) -> datetime:

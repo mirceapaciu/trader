@@ -27,6 +27,7 @@ def _settings() -> ThesisBuilderSettings:
         max_evidence_age_minutes=180,
         required_evidence_count=3,
         min_confidence=0.6,
+        min_relevance=0.5,
         contrarian_min_confidence=0.72,
         trend_follow_min_confidence=0.68,
         risk_max_loss_usd=120.0,
@@ -34,6 +35,7 @@ def _settings() -> ThesisBuilderSettings:
         llm_model="gpt-4o-mini",
         llm_daily_token_budget=500000,
         llm_max_output_tokens=1200,
+        openai_api_key="test-key",
     )
 
 

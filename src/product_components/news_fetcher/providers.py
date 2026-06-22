@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
@@ -9,6 +8,8 @@ from typing import Any, Protocol
 import feedparser
 import requests
 from requests import HTTPError
+
+from src.product_components.shared.text_match import contains_term
 
 from .rss_feeds import RssFeedSpec
 
@@ -364,12 +365,7 @@ def _match_rss_tickers(
 
 
 def _contains_match_term(text: str, term: str) -> bool:
-    normalized = term.strip().lower()
-    if not normalized:
-        return False
-    if re.fullmatch(r"[a-z0-9]+", normalized):
-        return re.search(rf"\b{re.escape(normalized)}\b", text) is not None
-    return normalized in text
+    return contains_term(text, term)
 
 
 def _parse_datetime(value: Any) -> datetime | None:

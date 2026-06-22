@@ -13,6 +13,7 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.news_raw_queue == "news_raw_queue"
     assert settings.signal_queue == "signal_queue"
     assert settings.required_evidence_count == 3
+    assert settings.min_relevance == 0.5
     assert settings.batch_size == 10
     assert settings.block_ms == 5000
     assert settings.max_delivery_attempts == 3

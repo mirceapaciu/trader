@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   fetchThesisBuilderMetrics,
+  fetchWindowArticles,
   reprocessThesisBuilder,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderPendingWindow,
   type ThesisReprocessResponse,
-  type ThroughputPresetWindow
+  type ThroughputPresetWindow,
+  type WindowArticle
 } from "../api";
 
 const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> = [
@@ -165,6 +167,7 @@ function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[
 }
 
 function WindowDetail({ window: w }: { window: ThesisBuilderPendingWindow }) {
+  const [articlesOpen, setArticlesOpen] = useState(false);
   return (
     <div className="pending-detail-grid">
       <div className="pending-detail-row">
@@ -199,6 +202,109 @@ function WindowDetail({ window: w }: { window: ThesisBuilderPendingWindow }) {
         <span>Evidence</span>
         <strong>{w.evidence_count} of {w.required_evidence_count} articles</strong>
       </div>
+      <button
+        type="button"
+        className="quality-link"
+        onClick={() => setArticlesOpen(true)}
+        disabled={w.evidence_count === 0}
+      >
+        View {w.evidence_count} evidence article{w.evidence_count === 1 ? "" : "s"} →
+      </button>
+      {articlesOpen && (
+        <EvidenceArticlesModal window={w} onClose={() => setArticlesOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function EvidenceArticlesModal({
+  window: w,
+  onClose,
+}: {
+  window: ThesisBuilderPendingWindow;
+  onClose: () => void;
+}) {
+  const articles = useQuery({
+    queryKey: ["thesis-window-articles", w.window_id],
+    queryFn: () => fetchWindowArticles(w.window_id)
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const items = articles.data?.articles ?? [];
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Evidence articles"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h3>
+            Evidence articles · {w.ticker} {w.exchange_code}
+          </h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="modal-body">
+          {articles.isLoading && <div className="empty">Loading articles…</div>}
+          {articles.isError && <div className="inline-error">{articles.error.message}</div>}
+          {!articles.isLoading && !articles.isError && items.length === 0 && (
+            <div className="empty">No articles recorded for this window.</div>
+          )}
+          {items.length > 0 && (
+            <div className="evidence-article-list">
+              {items.map((article) => (
+                <EvidenceArticle key={article.article_id} article={article} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EvidenceArticle({ article }: { article: WindowArticle }) {
+  return (
+    <div className="evidence-article">
+      {article.url ? (
+        <a href={article.url} target="_blank" rel="noreferrer" className="evidence-article-headline">
+          {article.headline || article.url}
+        </a>
+      ) : (
+        <span className="evidence-article-headline">{article.headline || "Untitled article"}</span>
+      )}
+      <div className="evidence-article-meta">
+        <span>{article.source || "unknown source"}</span>
+        <span>{formatDate(article.published_at)}</span>
+      </div>
+      <div className="evidence-article-badges">
+        {article.confidence != null && (
+          <span className="chip">conf {article.confidence.toFixed(2)}</span>
+        )}
+        {article.is_market_moving && <span className="chip">market-moving</span>}
+        {article.validation_status && (
+          <span className={article.validation_status === "rejected" ? "chip warning" : "chip"}>
+            {article.rejection_reason_code
+              ? formatToken(article.rejection_reason_code)
+              : formatToken(article.validation_status)}
+          </span>
+        )}
+      </div>
+      {article.summary && <p className="evidence-article-summary">{article.summary}</p>}
     </div>
   );
 }
