@@ -93,6 +93,8 @@ class ThesisBuilderPendingWindow(BaseModel):
     last_evidence_at: datetime
     pending_age_seconds: float
     expires_in_seconds: float
+    evidence_count: int
+    required_evidence_count: int
 
 
 class ThesisBuilderDeadLetterItem(BaseModel):

@@ -643,7 +643,9 @@ class PostgresRedisMonitoringDataSource:
             f"SELECT id, ticker, exchange_code, strategy, direction, window_started_at, last_evidence_at, "
             f"EXTRACT(EPOCH FROM (NOW() - window_started_at)) AS pending_age_seconds, "
             f"EXTRACT(EPOCH FROM (window_started_at + (%s * INTERVAL '1 minute') - NOW())) "
-            f"AS expires_in_seconds "
+            f"AS expires_in_seconds, "
+            f"jsonb_array_length(article_ids) AS evidence_count, "
+            f"required_evidence_count "
             f"FROM {self._thesis_builder_schema}.t_evidence_windows "
             f"WHERE status = 'collecting' "
             f"AND window_started_at + (%s * INTERVAL '1 minute') > NOW() "
@@ -663,6 +665,8 @@ class PostgresRedisMonitoringDataSource:
                 last_evidence_at=_to_utc(row["last_evidence_at"]),
                 pending_age_seconds=float(row["pending_age_seconds"] or 0),
                 expires_in_seconds=float(row["expires_in_seconds"] or 0),
+                evidence_count=int(row["evidence_count"] or 0),
+                required_evidence_count=int(row["required_evidence_count"]),
             )
             for row in rows
         ]

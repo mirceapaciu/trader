@@ -195,6 +195,10 @@ function WindowDetail({ window: w }: { window: ThesisBuilderPendingWindow }) {
         <span>Last evidence</span>
         <strong>{formatDate(w.last_evidence_at)}</strong>
       </div>
+      <div className="pending-detail-row">
+        <span>Evidence</span>
+        <strong>{w.evidence_count} of {w.required_evidence_count} articles</strong>
+      </div>
     </div>
   );
 }

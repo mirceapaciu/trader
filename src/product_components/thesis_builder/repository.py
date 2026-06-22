@@ -208,7 +208,7 @@ class PostgresThesisBuilderRepository:
     ) -> ThesisCardSignal | None:
         now = clock() if clock is not None else datetime.now(timezone.utc)
         real_now = datetime.now(timezone.utc)
-        window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, reprocess_run_id=reprocess_run_id)
+        window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, required_evidence_count=required_evidence_count, reprocess_run_id=reprocess_run_id)
         article_ids = list(dict.fromkeys([*window["article_ids"], article.id]))
         analysis_ids = list(dict.fromkeys([*window["analysis_ids"], analysis_id]))
         status = "collecting"
@@ -292,10 +292,11 @@ class PostgresThesisBuilderRepository:
         article: NewsArticle,
         analysis_id: int,
         now: datetime,
+        required_evidence_count: int,
         reprocess_run_id: str | None = None,
     ) -> dict[str, Any]:
         select_sql = (
-            f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at "
+            f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count "
             f"FROM {self._thesis_schema}.t_evidence_windows "
             f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s "
             f"AND COALESCE(direction, '') = COALESCE(%s, '') AND status = 'collecting' "
@@ -312,8 +313,8 @@ class PostgresThesisBuilderRepository:
                 return _window(row)
             insert_sql = (
                 f"INSERT INTO {self._thesis_schema}.t_evidence_windows "
-                f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at"
+                f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count"
             )
             cur.execute(
                 insert_sql,
@@ -327,6 +328,7 @@ class PostgresThesisBuilderRepository:
                     _to_utc(article.published_at),
                     _to_utc(article.published_at),
                     reprocess_run_id,
+                    required_evidence_count,
                 ),
             )
             return _window(cur.fetchone())
@@ -509,6 +511,7 @@ def _window(row: dict[str, Any]) -> dict[str, Any]:
         "analysis_ids": [int(item) for item in row["analysis_ids"] or []],
         "window_started_at": _to_utc(row["window_started_at"]),
         "last_evidence_at": _to_utc(row["last_evidence_at"]),
+        "required_evidence_count": int(row["required_evidence_count"] or 3),
     }
 
 

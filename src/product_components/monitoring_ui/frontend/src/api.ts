@@ -75,6 +75,8 @@ export type ThesisBuilderPendingWindow = {
   last_evidence_at: string;
   pending_age_seconds: number;
   expires_in_seconds: number;
+  evidence_count: number;
+  required_evidence_count: number;
 };
 
 export type ThesisBuilderDeadLetterItem = {

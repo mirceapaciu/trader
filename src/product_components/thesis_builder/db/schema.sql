@@ -137,6 +137,9 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_evidence_windows (
 ALTER TABLE thesis_builder.t_evidence_windows
     ADD COLUMN IF NOT EXISTS reprocess_run_id TEXT NULL;
 
+ALTER TABLE thesis_builder.t_evidence_windows
+    ADD COLUMN IF NOT EXISTS required_evidence_count INT NOT NULL DEFAULT 3;
+
 CREATE INDEX IF NOT EXISTS ix_evidence_windows_instrument_status
     ON thesis_builder.t_evidence_windows (ticker, exchange_code, status, updated_at DESC);
 
