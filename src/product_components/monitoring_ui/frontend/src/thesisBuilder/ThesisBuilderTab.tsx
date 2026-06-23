@@ -89,8 +89,8 @@ export function ThesisBuilderTab() {
         <MetricTile label="Avg time to expiry" value={formatDuration(data?.average_pending_expires_in_seconds)} />
       </section>
 
-      <PendingWindowsPanel windows={data?.pending_windows ?? []} />
       <ActionableCardsPanel cards={data?.actionable_cards ?? []} />
+      <PendingWindowsPanel windows={data?.pending_windows ?? []} />
       <section className="layout thesis-layout">
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
@@ -323,7 +323,14 @@ function EvidenceArticle({ article }: { article: WindowArticle }) {
 
 function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selectedCard = cards.find((c) => c.card_id === selectedId) ?? null;
+  const [showExpired, setShowExpired] = useState(false);
+  const visible = showExpired ? cards : cards.filter((c) => c.expires_in_seconds > 0);
+  const selectedCard = visible.find((c) => c.card_id === selectedId) ?? null;
+
+  const emptyText =
+    cards.length === 0
+      ? "No actionable thesis cards."
+      : 'No live actionable cards. Check "Show expired" to see expired cards.';
 
   return (
     <section className="panel panel-large">
@@ -332,9 +339,17 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
           <h2>Actionable Thesis Cards</h2>
           <span>Valid buy/sell cards ready for trading</span>
         </div>
+        <label style={{ fontSize: "0.85rem", color: "var(--color-muted, #64726c)", display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={showExpired}
+            onChange={(e) => setShowExpired(e.target.checked)}
+          />
+          Show expired
+        </label>
       </div>
-      {cards.length === 0 ? (
-        <div className="empty">No actionable thesis cards.</div>
+      {visible.length === 0 ? (
+        <div className="empty">{emptyText}</div>
       ) : (
         <div className="pending-windows-layout">
           <div className="pending-list-wrap">
@@ -351,11 +366,14 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
                 </tr>
               </thead>
               <tbody>
-                {cards.map((c) => (
+                {visible.map((c) => (
                   <tr
                     key={c.card_id}
                     data-selectable
-                    className={c.card_id === selectedId ? "selected" : undefined}
+                    className={[
+                      c.card_id === selectedId ? "selected" : "",
+                      c.expires_in_seconds <= 0 ? "expired-row" : "",
+                    ].filter(Boolean).join(" ") || undefined}
                     onClick={() => setSelectedId(c.card_id)}
                   >
                     <td>
@@ -365,7 +383,7 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
                     <td>{formatToken(c.strategy)}</td>
                     <td>{formatToken(c.direction)}</td>
                     <td>{c.confidence.toFixed(2)}</td>
-                    <td>{formatDuration(c.expires_in_seconds)}</td>
+                    <td>{formatExpiresIn(c.expires_in_seconds)}</td>
                     <td>{formatDate(c.created_at)}</td>
                     <td>
                       <span className={c.signal_published ? "chip" : "chip warning"}>
@@ -395,6 +413,10 @@ function ActionableCardDetail({ card: c }: { card: ThesisBuilderActionableCard }
   return (
     <div className="pending-detail-grid">
       <div className="pending-detail-row">
+        <span>Card ID</span>
+        <strong style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>{c.card_id}</strong>
+      </div>
+      <div className="pending-detail-row">
         <span>Instrument</span>
         <strong>{c.ticker} <small style={{ fontWeight: 400, color: "#64726c" }}>{c.exchange_code}</small></strong>
       </div>
@@ -420,7 +442,7 @@ function ActionableCardDetail({ card: c }: { card: ThesisBuilderActionableCard }
       </div>
       <div className="pending-detail-row">
         <span>Expires in</span>
-        <strong>{formatDuration(c.expires_in_seconds)}</strong>
+        <strong>{formatExpiresIn(c.expires_in_seconds)}</strong>
       </div>
       <div className="pending-detail-row">
         <span>Evidence</span>
@@ -595,6 +617,16 @@ function formatDuration(seconds?: number | null) {
     return `${hours}h ${minutes}m`;
   }
   return `${minutes}m`;
+}
+
+function formatExpiresIn(seconds?: number | null) {
+  if (seconds == null) {
+    return "n/a";
+  }
+  if (seconds <= 0) {
+    return `Expired ${formatDuration(Math.abs(seconds))} ago`;
+  }
+  return formatDuration(seconds);
 }
 
 function formatDate(value?: string | null) {

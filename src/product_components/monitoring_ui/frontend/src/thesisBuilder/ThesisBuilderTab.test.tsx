@@ -66,6 +66,20 @@ describe("ThesisBuilderTab", () => {
             evidence_count: 3,
             signal_published: false,
           },
+          {
+            card_id: "card-2",
+            ticker: "MSFT",
+            exchange_code: "NASDAQ",
+            strategy: "sentiment_momentum",
+            direction: "sell",
+            time_horizon: "swing_1d_5d",
+            confidence: 0.75,
+            created_at: "2026-06-15T08:00:00Z",
+            expires_at: "2026-06-15T20:00:00Z",
+            expires_in_seconds: -3600,
+            evidence_count: 2,
+            signal_published: true,
+          },
         ],
         generated_at: "2026-06-16T10:00:00Z",
       },
@@ -92,6 +106,18 @@ describe("ThesisBuilderTab", () => {
 
     expect(screen.getByText("Time horizon")).toBeInTheDocument();
     expect(screen.getByText("swing 1d 5d")).toBeInTheDocument();
+  });
+
+  it("hides expired cards by default and reveals them when checkbox is checked", () => {
+    render(<ThesisBuilderTab />);
+
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /show expired/i }));
+
+    expect(screen.getByText("MSFT")).toBeInTheDocument();
+    expect(screen.getByText("Expired 1h 0m ago")).toBeInTheDocument();
   });
 
   it("shows a thesis-specific unavailable empty state for dead letters", () => {

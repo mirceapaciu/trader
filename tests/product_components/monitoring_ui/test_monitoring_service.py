@@ -810,7 +810,21 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
                 expires_in_seconds=86400.0,
                 evidence_count=3,
                 signal_published=False,
-            )
+            ),
+            ThesisBuilderActionableCard(
+                card_id="card-10",
+                ticker="MSFT",
+                exchange_code="XNAS",
+                strategy="sentiment_momentum",
+                direction="sell",
+                time_horizon="swing_1d_5d",
+                confidence=0.75,
+                created_at=_now(),
+                expires_at=_now(),
+                expires_in_seconds=-3600.0,
+                evidence_count=2,
+                signal_published=True,
+            ),
         ],
     )
 
@@ -827,8 +841,9 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
     assert response.missed_stale_thesis_cards_count == 1
     assert response.stale_evidence_exceeded_p95_seconds == 540.0
     assert response.dead_letter_count == 2
-    assert len(response.actionable_cards) == 1
+    assert len(response.actionable_cards) == 2
     assert response.actionable_cards[0].card_id == "card-9"
+    assert response.actionable_cards[1].expires_in_seconds == -3600.0
     assert response.recent_dead_letters[0].error_code == "missing_article_payload"
     assert response.pending_windows[0].ticker == "AAPL"
 

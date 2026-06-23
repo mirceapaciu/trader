@@ -764,7 +764,6 @@ class PostgresRedisMonitoringDataSource:
             f"FROM {self._thesis_builder_schema}.t_thesis_cards "
             f"WHERE validation_status = 'valid' "
             f"AND direction IN ('buy', 'sell') "
-            f"AND expires_at > NOW() "
             f"AND created_at >= %s AND created_at < %s "
             f"ORDER BY created_at DESC LIMIT 25"
         )
