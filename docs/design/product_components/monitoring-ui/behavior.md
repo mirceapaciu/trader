@@ -10,6 +10,8 @@ Monitoring UI responsibilities:
 - Surface provider health, throughput, deduplication, and publish outcomes.
 - Surface queue and dependency health relevant to NewsFetcher.
 - Start a bounded Filter Quality Evaluator run and surface the latest persisted evaluator summary.
+- Start a bounded Backtester run and surface backtest run summaries, equity curves, per-strategy
+  metrics, pipeline-delay breakdowns, and per-trade results in a dedicated Backtest tab.
 
 Out of scope:
 - Fetching or mutating provider payloads.
@@ -24,6 +26,7 @@ Process name:
 Inputs:
 - NewsFetcher operational telemetry (metrics and health state).
 - ThesisBuilder audit tables and evidence-window state.
+- Backtester run summaries, per-trade results, and equity curves (read-only projections).
 - NewsFetcher process logs and cycle summaries.
 - Read-only projections from NewsFetcher-owned persistence tables.
 - Environment configuration.
@@ -54,6 +57,8 @@ Runtime behavior:
 The Monitoring UI is organized as a modular tabbed application. The default tab is `NewsFetcher`; ThesisBuilder monitoring appears in a separate `ThesisBuilder` tab. Domain-specific data access, frontend state, and dashboard composition should stay separated in source code.
 
 The Monitoring UI also includes a top-level `Watchlist` tab for operator/admin workflows around shared watchlist membership and instrument alias maintenance. This tab is distinct from NewsFetcher filter tuning and must use the Monitoring UI HTTP API rather than direct browser access to external providers or databases.
+
+The Monitoring UI also includes a top-level `Backtest` tab for triggering and reviewing historical backtest runs produced by the Backtester component. Like the other tabs, it accesses data only through the Monitoring UI HTTP API and keeps its data access, frontend state, and composition separated in source code.
 
 ### 4.1 Global Health Panel
 
@@ -162,6 +167,59 @@ The ThesisBuilder tab also shows a recent dead-letter panel sourced from `failed
 
 If ThesisBuilder tables or required columns are not available, the tab renders a degraded empty state without failing the NewsFetcher monitoring tab.
 
+### 4.6 Backtest Tab
+
+The Backtest tab lets the operator trigger backtest runs and review their results. It reads only
+through the Monitoring UI HTTP API, which projects read-only data from the `backtester` schema; it
+must not embed simulation logic, which is owned by the Backtester component.
+
+#### Trigger control
+
+A `Run backtest` control starts one bounded Backtester run with operator-selected parameters:
+- `window_start_at` and `window_end_at` (UTC),
+- `mode` (`replay` default, or `regeneration`),
+- `timing_scenario` (`ideal` default, `actual`, or `both`),
+- `card_population` (`all` default, `approved_only`, or `rejected_only`),
+- optional `strategies` subset and `initial_capital`.
+
+Trigger behavior mirrors the Filter Quality control:
+- The run executes as an in-process background run inside the Monitoring UI backend and writes its
+  status and results to the `backtester` schema.
+- If a backtest run is already active, the API returns `409` with the active `run_id`.
+- The UI-triggered path is intended for bounded `replay` runs. Long or expensive runs, especially
+  `regeneration` mode, should be started from the CLI; the UI surfaces a warning when `regeneration`
+  is selected.
+
+#### Run list
+
+A list of recent runs shows, per run: `run_id`, status (`running`, `completed`, `failed`), window,
+`mode`, `timing_scenario`, `card_population`, and headline metrics (net P&L, total return, win rate,
+profit factor, max drawdown), with created and finished timestamps. Selecting a run opens its detail.
+
+#### Run detail
+
+The detail view keeps the run list visible and shows:
+- Summary tiles: total return, net P&L, win rate, profit factor, expectancy, max drawdown, Sharpe
+  ratio, number of trades, exposure fraction, and signal accuracy.
+- Equity curve chart. For a `both` run, the ideal and actual equity curves are overlaid.
+- Per-strategy breakdown table of the same trade-level metrics for each strategy in the run.
+- Card-status breakdown: metrics restricted to `approved`, `rejected`, and `stale_evidence` cards,
+  plus the live-executable slice (`card_was_live_expired = false`), so the live-fidelity subset can be
+  compared with the full thesis population.
+- Pipeline-delay panel: avg/p95/max of `news_fetch_delay`, `thesis_build_delay`, and
+  `total_pipeline_delay`, with a histogram grouped by the configured delay buckets.
+- Ideal-vs-actual gap tiles: `pnl_gap`, `win_rate_gap`, and `trades_flipped_by_delay`. Shown only when
+  `timing_scenario = both`; otherwise the panel is hidden with an explanatory note.
+- Per-trade table with bounded pagination: ticker, exchange, strategy, direction,
+  `entry_timing_scenario`, entry/exit time and price, net P&L, return, `exit_reason`, the three delay
+  values, and card status. Filterable by scenario, strategy, exit reason, and card status.
+
+Time windows for the run list follow the standard `15m`, `1h`, `1d`, `7d`, and `30d` presets over run
+`created_at`.
+
+If `backtester` tables or required columns are not available, the tab renders a degraded empty state
+without failing other tabs.
+
 ## 5. Implementation Stack
 
 The Monitoring UI frontend stack is:
@@ -202,11 +260,16 @@ Required read endpoints:
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.
 - `GET /api/filter-quality/runs/{run_id}/incorrectly-rejected` returns review-oriented incorrectly rejected article details for one run.
 - `GET /api/filter-quality/runs/{run_id}/incorrectly-accepted` returns review-oriented incorrectly accepted article details for one run.
+- `GET /api/backtests` returns recent backtest runs with status, parameters, and headline metrics for a `15m`, `1h`, `1d`, `7d`, or `30d` window, plus the currently running run when present.
+- `GET /api/backtests/{run_id}` returns one run's full summary: scalar metrics, per-strategy breakdown, card-status breakdown, delay aggregates, and ideal-vs-actual gap metrics.
+- `GET /api/backtests/{run_id}/trades` returns per-trade rows with bounded pagination and optional filters on timing scenario, strategy, exit reason, and card status.
+- `GET /api/backtests/{run_id}/equity` returns equity-curve points for the run, separated by `timing_scenario`.
 
 Optional operator-action endpoints:
 - `POST /api/actions/refresh` triggers a non-blocking refresh of UI projections when supported.
 - `POST /api/actions/alert-test` sends a test alert when alert webhooks are enabled.
 - `POST /api/filter-quality/runs` starts an in-process background Filter Quality Evaluator run for the last 24 hours and returns `202` when accepted.
+- `POST /api/backtests` starts an in-process background Backtester run with the operator-selected parameters and returns `202` when accepted, or `409` with the active `run_id` when a run is already in progress.
 - `GET /api/watchlist` returns active shared watchlist rows with alias completeness state.
 - `GET /api/watchlist/lookups` returns external instrument suggestions for operator search input.
 - `POST /api/watchlist` adds or reactivates a shared watchlist entry through the shared instrument-registry/admin capability.
@@ -238,7 +301,8 @@ Failure-handling rules:
 
 Current default guidance:
 - `GET /api/health` must degrade.
-- Existing dashboard endpoints such as `providers`, `throughput`, `backlog`, `dead-letter`, `filter-quality`, and ThesisBuilder metrics should explicitly choose between degraded `200` and structured `503` based on whether their response models can represent unavailable state safely.
+- Existing dashboard endpoints such as `providers`, `throughput`, `backlog`, `dead-letter`, `filter-quality`, `backtests`, and ThesisBuilder metrics should explicitly choose between degraded `200` and structured `503` based on whether their response models can represent unavailable state safely.
+- The `POST /api/backtests` mutation endpoint must never degrade to success: it returns `422` for invalid run parameters, `409` when a run is already active, and `503` on dependency/storage outages.
 - `ThesisBuilderMetricsResponse` already supports degraded success with `available` and `message`. Other response models should add comparable fields before adopting degraded `200` behavior.
 - New endpoints must reuse a shared backend exception-mapping helper rather than introducing ad hoc route-specific `try/except` logic.
 
@@ -264,6 +328,7 @@ Optional variables:
 - UI_EXPORT_MAX_ROWS
 - UI_ENABLE_ALERT_WEBHOOK
 - UI_ALERT_WEBHOOK_URL
+- UI_BACKTEST_REFRESH_INTERVAL_SECONDS
 
 ## 10. Acceptance Criteria
 

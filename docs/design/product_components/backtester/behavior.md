@@ -279,7 +279,10 @@ Ideal-vs-actual gap metrics (populated only when `timing_scenario = both`):
 
 Triggering:
 - Direct CLI execution of `backtester` (e.g. `uv run python -m src.product_components.backtester`).
-- No separate triggering process or queue trigger in v1; a Monitoring UI trigger may be added later.
+- Monitoring UI trigger: the Backtest tab starts a bounded run via `POST /api/backtests`, which runs
+  as an in-process background run inside the Monitoring UI backend (see
+  `docs/design/product_components/monitoring-ui/behavior.md` Section 4.6). The UI path targets bounded
+  `replay` runs; long or expensive `regeneration` runs should be started from the CLI.
 
 Trigger payload:
 - `window_start_at` (UTC), `window_end_at` (UTC), with `window_start_at < window_end_at`.
@@ -340,7 +343,9 @@ No-coupling requirements:
 - The live trading pipeline (ThesisBuilder, TradeExecutor) does not depend on Backtester runs.
 
 Consumer components:
-- Monitoring UI may render Backtester run summaries and equity curves in a later phase.
+- Monitoring UI renders Backtester run summaries, equity curves, per-strategy and delay breakdowns,
+  and per-trade results in its Backtest tab, and triggers bounded runs through its HTTP API. The UI
+  reads `backtester` data only through read-only projections exposed by the Monitoring UI HTTP API.
 
 ## 10. Core vs Product Boundary
 

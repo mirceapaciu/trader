@@ -10,6 +10,7 @@ UI_PORT=8080
 UI_REFRESH_INTERVAL_SECONDS=15
 UI_PROVIDER_REFRESH_INTERVAL_SECONDS=10
 UI_ALERTS_REFRESH_INTERVAL_SECONDS=20
+UI_BACKTEST_REFRESH_INTERVAL_SECONDS=30
 
 # Frontend API access
 UI_API_BASE_URL=http://localhost:8080/api
@@ -35,6 +36,10 @@ FILTER_QUALITY_RUN_TIMEOUT_SECONDS=1800
 THESIS_BUILDER_DB_SCHEMA=thesis_builder
 THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES=120
 
+# Backtest panel
+BACKTESTER_DB_SCHEMA=backtester
+BACKTESTER_RUN_TIMEOUT_SECONDS=3600
+
 # Shared instrument registry access
 SHARED_DB_SCHEMA=shared
 WATCHLIST_TABLE=t_watchlist_tickers
@@ -46,7 +51,7 @@ WATCHLIST_TABLE=t_watchlist_tickers
 Monitoring UI also depends on shared PostgreSQL connection, queue settings, and operational settings defined in `docs/design/shared/configuration.md`.
 This includes `QUEUE_URL`, `NEWS_RAW_QUEUE`, and `FAILED_MESSAGES_DLQ` for ThesisBuilder dead-letter telemetry shown in the ThesisBuilder tab.
 
-At startup, the backend loads `.env.shared`, `.env.prod`, `.env.monitoring-ui`, `.env.news-fetcher`, optional `.env.filter-quality-evaluator`, optional `.env.thesis-builder`, and `.env.secrets`. UI-triggered filter quality runs use `FilterQualityEvaluatorSettings.from_env()` and run inside the Monitoring UI backend process.
+At startup, the backend loads `.env.shared`, `.env.prod`, `.env.monitoring-ui`, `.env.news-fetcher`, optional `.env.filter-quality-evaluator`, optional `.env.thesis-builder`, optional `.env.backtester`, and `.env.secrets`. UI-triggered filter quality runs use `FilterQualityEvaluatorSettings.from_env()` and run inside the Monitoring UI backend process. UI-triggered backtest runs likewise use `BacktesterSettings.from_env()` and run as an in-process background run inside the Monitoring UI backend process.
 
 ## Stack Decisions
 
