@@ -23,6 +23,16 @@ class MarketDataProviderClient(Protocol):
     def fetch_daily_bars(self, symbol: ProviderSymbol, *, outputsize: str = "compact") -> list[MarketBar]:
         ...
 
+    def fetch_historical_bars(
+        self,
+        symbol: ProviderSymbol,
+        *,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[MarketBar]:
+        ...
+
 
 class AlphaVantageClient:
     provider = MarketDataProvider.ALPHA_VANTAGE
@@ -54,6 +64,103 @@ class AlphaVantageClient:
             symbol=symbol,
             fetched_at=datetime.now(timezone.utc),
         )
+
+    def fetch_historical_bars(
+        self,
+        symbol: ProviderSymbol,
+        *,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[MarketBar]:
+        # Alpha Vantage is daily-only backfill; intraday historical bars come from IBKR.
+        return []
+
+
+class IbkrClient:
+    """Interactive Brokers market-data client.
+
+    Quote and bar retrieval require a live IBKR Gateway/TWS session, so the fetch
+    methods are best-effort and may be unavailable in offline environments.
+    """
+
+    provider = MarketDataProvider.IBKR
+
+    def __init__(self, *, gateway: Any | None = None) -> None:
+        self._gateway = gateway
+
+    def fetch_quote(self, symbol: ProviderSymbol) -> MarketQuote | None:
+        return None
+
+    def fetch_daily_bars(self, symbol: ProviderSymbol, *, outputsize: str = "compact") -> list[MarketBar]:
+        return self.fetch_historical_bars(
+            symbol,
+            interval="1d",
+            start=datetime.now(timezone.utc),
+            end=datetime.now(timezone.utc),
+        )
+
+    def fetch_historical_bars(
+        self,
+        symbol: ProviderSymbol,
+        *,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[MarketBar]:
+        if self._gateway is None:
+            return []
+        raw_bars = self._gateway.historical_bars(
+            provider_symbol=symbol.provider_symbol,
+            interval=interval,
+            start=start,
+            end=end,
+            contract_metadata=symbol.provider_metadata,
+        )
+        fetched_at = datetime.now(timezone.utc)
+        return normalize_ibkr_historical_bars(
+            raw_bars,
+            symbol=symbol,
+            interval=interval,
+            fetched_at=fetched_at,
+        )
+
+
+def normalize_ibkr_historical_bars(
+    raw_bars: list[dict[str, Any]],
+    *,
+    symbol: ProviderSymbol,
+    interval: str,
+    fetched_at: datetime,
+) -> list[MarketBar]:
+    bars: list[MarketBar] = []
+    for raw_bar in raw_bars:
+        if not isinstance(raw_bar, dict):
+            continue
+        bar_start = raw_bar["bar_start_at"]
+        if not isinstance(bar_start, datetime):
+            bar_start = datetime.fromisoformat(str(bar_start).replace("Z", "+00:00"))
+        if bar_start.tzinfo is None:
+            bar_start = bar_start.replace(tzinfo=timezone.utc)
+        bars.append(
+            MarketBar(
+                ticker=symbol.ticker,
+                exchange_code=symbol.exchange_code,
+                provider=MarketDataProvider.IBKR,
+                bar_interval=interval,
+                bar_start_at=bar_start.astimezone(timezone.utc),
+                currency=symbol.currency,
+                open_price=float(raw_bar["open"]),
+                high_price=float(raw_bar["high"]),
+                low_price=float(raw_bar["low"]),
+                close_price=float(raw_bar["close"]),
+                volume=float(raw_bar["volume"]) if raw_bar.get("volume") is not None else None,
+                adjusted=False,
+                fetched_at=fetched_at,
+                provider_metadata={"provider_symbol": symbol.provider_symbol},
+            )
+        )
+    return sorted(bars, key=lambda bar: bar.bar_start_at)
 
 
 def normalize_alpha_vantage_daily_bars(

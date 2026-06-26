@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.product_components.market_data.context import build_market_context
-from src.product_components.market_data.models import ContextSourceStatus, FetchRun, MarketContextSnapshot, MarketDataProvider, ProviderSymbol
+from src.product_components.market_data.models import (
+    ContextSourceStatus,
+    FetchRun,
+    MarketBar,
+    MarketContextSnapshot,
+    MarketDataProvider,
+    ProviderSymbol,
+)
 from src.product_components.market_data.providers import MarketDataProviderClient
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 
@@ -39,6 +46,107 @@ class MarketDataService:
             self.refresh_instrument(ticker=ticker, exchange_code=exchange_code)
             snapshot = self._storage.get_market_context(ticker=ticker, exchange_code=exchange_code)
         return snapshot
+
+    def get_historical_bars(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[MarketBar]:
+        stored = self._storage.load_bars_in_range(
+            ticker=ticker,
+            exchange_code=exchange_code,
+            bar_interval=interval,
+            start=start,
+            end=end,
+            adjusted=False,
+        )
+        if self._has_coverage_gap(stored, start=start, end=end):
+            mapping = self._historical_bars_mapping(ticker=ticker, exchange_code=exchange_code)
+            if mapping is not None:
+                client = self._provider_clients.get(mapping.provider)
+                if client is not None:
+                    self._fetch_historical_bars(
+                        mapping,
+                        client,
+                        interval=interval,
+                        start=start,
+                        end=end,
+                    )
+                    stored = self._storage.load_bars_in_range(
+                        ticker=ticker,
+                        exchange_code=exchange_code,
+                        bar_interval=interval,
+                        start=start,
+                        end=end,
+                        adjusted=False,
+                    )
+        return sorted(
+            (bar for bar in stored if start <= bar.bar_start_at <= end),
+            key=lambda bar: bar.bar_start_at,
+        )
+
+    def _historical_bars_mapping(self, *, ticker: str, exchange_code: str) -> ProviderSymbol | None:
+        mappings = self._storage.load_provider_symbols(ticker=ticker, exchange_code=exchange_code)
+        ibkr = [m for m in mappings if m.provider is MarketDataProvider.IBKR]
+        if ibkr:
+            return ibkr[0]
+        return mappings[0] if mappings else None
+
+    @staticmethod
+    def _has_coverage_gap(bars: list[MarketBar], *, start: datetime, end: datetime) -> bool:
+        if not bars:
+            return True
+        earliest = min(bar.bar_start_at for bar in bars)
+        latest = max(bar.bar_start_at for bar in bars)
+        return earliest > start or latest < end
+
+    def _fetch_historical_bars(
+        self,
+        mapping: ProviderSymbol,
+        client: MarketDataProviderClient,
+        *,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> None:
+        started_at = datetime.now(timezone.utc)
+        fetched_count = 0
+        status = "success"
+        error_code = None
+        try:
+            bars = client.fetch_historical_bars(
+                mapping,
+                interval=interval,
+                start=start,
+                end=end,
+            )
+            self._storage.upsert_bars(bars)
+            fetched_count = len(bars)
+            self._storage.record_api_usage(
+                provider=mapping.provider,
+                endpoint="historical_bars",
+                called_at=started_at,
+            )
+        except Exception as exc:  # pragma: no cover - exercised through service tests with broad failure behavior.
+            status = "failed"
+            error_code = exc.__class__.__name__
+        self._storage.record_fetch_run(
+            FetchRun(
+                provider=mapping.provider,
+                operation="historical_bars",
+                ticker=mapping.ticker,
+                exchange_code=mapping.exchange_code,
+                status=status,
+                error_code=error_code,
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc),
+                fetched_count=fetched_count,
+            )
+        )
 
     def refresh_watchlist_once(self) -> None:
         for instrument in self._storage.load_active_instruments():

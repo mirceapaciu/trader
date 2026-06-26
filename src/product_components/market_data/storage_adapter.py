@@ -257,6 +257,39 @@ class PostgresMarketDataStorageAdapter:
             rows = cur.fetchall()
         return sorted((_market_bar(row) for row in rows), key=lambda bar: bar.bar_start_at)
 
+    def load_bars_in_range(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        bar_interval: str,
+        start: datetime,
+        end: datetime,
+        adjusted: bool = False,
+    ) -> list[MarketBar]:
+        sql = (
+            f"SELECT ticker, exchange_code, provider, bar_interval, bar_start_at, currency, "
+            f"open_price, high_price, low_price, close_price, volume, adjusted, fetched_at, provider_metadata "
+            f"FROM {self._market_data_schema}.t_market_bars "
+            f"WHERE ticker = %s AND exchange_code = %s AND bar_interval = %s AND adjusted = %s "
+            f"AND bar_start_at >= %s AND bar_start_at <= %s "
+            f"ORDER BY bar_start_at ASC"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                sql,
+                (
+                    ticker.strip().upper(),
+                    exchange_code.strip().upper(),
+                    bar_interval,
+                    adjusted,
+                    _to_utc(start),
+                    _to_utc(end),
+                ),
+            )
+            rows = cur.fetchall()
+        return sorted((_market_bar(row) for row in rows), key=lambda bar: bar.bar_start_at)
+
     def upsert_context_snapshot(self, snapshot: MarketContextSnapshot) -> None:
         sql = (
             f"INSERT INTO {self._market_data_schema}.t_market_context_snapshots "
