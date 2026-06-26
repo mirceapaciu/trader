@@ -12,6 +12,7 @@ The persistence engine is PostgreSQL, and each component owns a dedicated Postgr
 - MarketData schema (`market_data`): `docs/design/product_components/market-data/data-model.md`
 - TradeExecutor schema (`trade_executor`): `docs/design/product_components/trade-executor/data-model.md`
 - Filter Quality Evaluator schema (`filter_quality_evaluator`): `docs/design/product_components/filter-quality-evaluator/data-model.md`
+- Backtester schema (`backtester`): `docs/design/product_components/backtester/data-model.md`
 
 ## Separation Rules
 

@@ -64,7 +64,14 @@ Logical fields:
 
 Behavioral constraints:
 - Daily bars are the minimum required interval for ThesisBuilder market context.
-- Intraday bars are useful but not required for the first implementation.
+- Intraday bars, including 1-minute, are durably retained when fetched (for example to serve the
+  Backtester historical-bars API).
+- This table is a permanent, reusable store, not a request cache: a bar identified by its primary key
+  (`ticker`, `exchange_code`, `provider`, `bar_interval`, `bar_start_at`, `adjusted`) is never evicted
+  or expired, and is immutable once written except for adding a distinct `adjusted` variant.
+- Bars are served to consumers only through the MarketData historical-bars read API
+  (`get_historical_bars`), which backfills missing ranges on demand; consumers must not read this
+  table directly.
 
 ### `t_market_context_snapshots`
 

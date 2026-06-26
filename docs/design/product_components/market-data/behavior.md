@@ -25,7 +25,8 @@ Canonical instrument identity uses (`ticker`, `exchange_code`), where `exchange_
 - France: `XPAR`.
 
 Provider priority:
-1. IBKR for current quotes and historical bars when Gateway or TWS is connected.
+1. IBKR for current quotes and historical bars when Gateway or TWS is connected. IBKR is the primary
+   source for intraday historical bars, including 1-minute resolution used by the Backtester.
 2. IBKR delayed mode when realtime subscriptions are unavailable and delayed data is permitted.
 3. Alpha Vantage for low-frequency daily-bar backfill only when a verified provider mapping exists.
 
@@ -75,6 +76,37 @@ Consumer status rules:
 - `fresh` or `delayed`: usable for ThesisBuilder if the strategy allows delayed data.
 - `stale` or `missing`: not usable for strategies requiring market context.
 - Execution pricing must use a final IBKR quote and must fail closed if the quote is unavailable or too stale.
+
+### 4.1 Historical bars read API
+
+MarketData exposes a historical-bars read surface for consumers that need raw OHLCV series over a
+time range, such as the Backtester:
+
+```python
+get_historical_bars(ticker: str, exchange_code: str, interval: str, start: datetime, end: datetime) -> list[MarketBar]
+```
+
+API behavior:
+- Returns normalized OHLCV bars for the canonical instrument identity (`ticker`, `exchange_code`) at
+  the requested `interval` (for example `1m`, `5m`, `1d`), covering `[start, end]`.
+- On-demand backfill: if part of the requested range is not already stored, MarketData fetches the
+  missing sub-ranges from the provider (IBKR primary for intraday), persists them, then returns the
+  full requested range. Consumers never call external providers directly.
+- Provider pacing, failure classification, fetch-run records, and shared API usage accounting apply
+  exactly as for the rest of MarketData.
+- If a sub-range cannot be retrieved, MarketData returns the bars it has and reports the missing
+  coverage so callers (for example the Backtester) can skip instruments lacking price history.
+
+### 4.2 Historical bar durability
+
+Historical bars are a permanent, reusable store, not a request cache:
+- Once stored, a bar identified by (`ticker`, `exchange_code`, `provider`, `bar_interval`,
+  `bar_start_at`, `adjusted`) is durable and is never evicted or expired.
+- A stored bar is immutable for that key; re-fetches must not overwrite closed historical bars except
+  to add a distinct `adjusted` variant.
+- This durability lets repeated backtests reuse previously fetched 1-minute history without
+  re-querying providers. The rolling quote and derived-context cache semantics in Sections 3 and 4
+  are unchanged; durability applies to the bar store.
 
 ## 5. Failure Handling
 

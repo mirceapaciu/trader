@@ -13,8 +13,9 @@ This documentation is split into a system overview and implementation specs:
 - MarketData behavior: `docs/design/product_components/market-data/behavior.md`.
 - ThesisBuilder behavior: `docs/design/product_components/thesis-builder/behavior.md`.
 - Filter quality evaluator behavior: `docs/design/product_components/filter-quality-evaluator/behavior.md`.
+- Backtester behavior: `docs/design/product_components/backtester/behavior.md`.
 - Deployment specs: `docs/design/deployment/`.
-- Component folders (owner-based): `docs/design/product_components/news-fetcher/`, `docs/design/product_components/thesis-builder/`, `docs/design/product_components/trade-executor/`, `docs/design/product_components/monitoring-ui/`, `docs/design/product_components/filter-quality-evaluator/`, `docs/design/shared/`.
+- Component folders (owner-based): `docs/design/product_components/news-fetcher/`, `docs/design/product_components/thesis-builder/`, `docs/design/product_components/trade-executor/`, `docs/design/product_components/monitoring-ui/`, `docs/design/product_components/filter-quality-evaluator/`, `docs/design/product_components/backtester/`, `docs/design/shared/`.
 
 Implementation code and coding agents should follow this map and avoid adding implementation-level detail directly in this overview unless it changes architecture-level behavior.
 
@@ -169,6 +170,7 @@ For runtime decoupling, these modules run as separate OS processes (or separate 
 4. `market_data` process: retrieves and caches market quotes, historical bars, and derived context for watched instruments; ThesisBuilder consumes this through the MarketData component API rather than reading MarketData tables directly
 5. `trade_executor` process: consumes signals from `signal_queue`, applies risk checks, and executes orders via IBKR
 6. `filter_quality_evaluator` process: runs on demand, evaluates accepted/rejected NewsFetcher outcomes from DB, and produces filter-quality recommendations
+7. `backtester` process: runs on demand, replays historical thesis cards against historical price bars with a deterministic execution model, and produces per-strategy performance metrics; never connects to a broker
 
 In-process queues are not used for production because they do not provide durability or cross-process isolation. The message broker must run independently of all producer and consumer processes.
 

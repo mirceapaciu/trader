@@ -12,6 +12,7 @@ Configuration is split by ownership boundary so each process can evolve independ
 - TradeExecutor settings: `docs/design/product_components/trade-executor/configuration.md`
 - Monitoring UI settings: `docs/design/product_components/monitoring-ui/configuration.md`
 - Filter Quality Evaluator settings: `docs/design/product_components/filter-quality-evaluator/configuration.md`
+- Backtester settings: `docs/design/product_components/backtester/configuration.md`
 
 ## Separation Rules
 

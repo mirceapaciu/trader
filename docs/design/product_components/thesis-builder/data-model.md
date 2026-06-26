@@ -117,6 +117,32 @@ Behavioral constraints:
 - A window becomes `expired` when the configured evidence collection horizon is exceeded.
 - Window rows are operational state, not executable trading inputs.
 
+## Card-History Export Contract (Consumed by Backtester)
+
+ThesisBuilder owns a read-only card-history export API/contract so offline consumers (the Backtester,
+Phase 7) can replay historical cards without querying ThesisBuilder-owned tables directly. This is the
+card analogue of the NewsFetcher evaluation dataset export consumed by the Filter Quality Evaluator.
+
+Selection:
+- A time window over card `created_at`.
+- Optional filters on `validation_status` and `strategy`.
+
+Per exported card, the contract returns:
+- `id`, `ticker`, `exchange_code`, `direction`, `strategy`, `time_horizon`, `confidence`.
+- Risk box: `risk_max_loss_usd`, `risk_stop_condition`, `risk_invalidation_condition`.
+- `validation_status` and `rejection_reason_code` (so consumers can distinguish `approved`, `rejected`,
+  and `stale_evidence` cards).
+- `created_at`, `expires_at`, and `signal_published_at`.
+- `evidence`: for each evidence article, its `article_id`, `published_at`, and `fetched_at`. The
+  publication and ingestion timestamps are sourced from the article snapshot ThesisBuilder already
+  retains in `t_news_analyses.article_snapshot`, so consumers can compute NewsFetcher and
+  ThesisBuilder pipeline delays without a separate NewsFetcher export.
+
+Constraints:
+- The export is read-only and must not expose mutation of ThesisBuilder state.
+- Consumers copy the returned fields into their own audit tables for reproducibility; they must not
+  hold a foreign-key dependency on ThesisBuilder tables.
+
 ## Notes
 
 - Executable PostgreSQL DDL is maintained in `src/product_components/thesis_builder/db/schema.sql`.
