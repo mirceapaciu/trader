@@ -64,6 +64,9 @@ When making changes, keep logic in the correct layer:
 ## Documentation Expectations
 When behavior changes, update relevant docs in docs or README as needed.
 
+## Subagents
+Spawn a subagent for a subtask only when it benefits from isolation or parallelism: independent subtasks that can run concurrently, or wide searches whose intermediate output would bloat the main context. Don't spawn for sequential, dependent, or trivial subtasks — handle those inline, since each spawn re-derives context and adds cost. When you do spawn, match the model to difficulty: most-advanced (Opus / latest GPT) for complex work, second-tier (Sonnet / GPT-5.4) for routine.
+
 ## Issue Management
 
 ### Creating new issues for bugs or features
