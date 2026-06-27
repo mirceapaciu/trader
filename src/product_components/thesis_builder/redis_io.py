@@ -12,6 +12,13 @@ from .models import NewsArticle
 
 
 @dataclass(frozen=True)
+class ReprocessCommandMessage:
+    message_id: str
+    run_id: str
+    days_back: int
+
+
+@dataclass(frozen=True)
 class NewsStreamMessage:
     message_id: str
     event_id: str
@@ -83,6 +90,7 @@ class RedisThesisBuilderIo:
         failed_messages_dlq: str,
         consumer_group: str,
         consumer_name: str,
+        reprocess_command_queue: str | None = None,
     ) -> None:
         self._client = redis.from_url(queue_url, decode_responses=True)
         self._news_raw_queue = news_raw_queue
@@ -90,6 +98,8 @@ class RedisThesisBuilderIo:
         self._failed_messages_dlq = failed_messages_dlq
         self._consumer_group = consumer_group
         self._consumer_name = consumer_name
+        self._reprocess_command_queue = reprocess_command_queue
+        self._reprocess_group = f"{consumer_group}_reprocess"
 
     def ping(self) -> bool:
         return bool(self._client.ping())
@@ -97,16 +107,49 @@ class RedisThesisBuilderIo:
     def ensure_streams_and_group(self) -> None:
         for stream_name in (self._news_raw_queue, self._signal_queue, self._failed_messages_dlq):
             self._ensure_stream(stream_name)
+        self._ensure_group(self._news_raw_queue, self._consumer_group)
+        if self._reprocess_command_queue:
+            self._ensure_stream(self._reprocess_command_queue)
+            self._ensure_group(self._reprocess_command_queue, self._reprocess_group)
+
+    def _ensure_group(self, stream_name: str, group_name: str) -> None:
         try:
             self._client.xgroup_create(
-                name=self._news_raw_queue,
-                groupname=self._consumer_group,
+                name=stream_name,
+                groupname=group_name,
                 id="0",
                 mkstream=True,
             )
         except redis.exceptions.ResponseError as exc:
             if "busygroup" not in str(exc).lower():
                 raise
+
+    def read_reprocess_commands(self, *, count: int, block_ms: int) -> list[ReprocessCommandMessage]:
+        if not self._reprocess_command_queue:
+            return []
+        pending = self._client.xreadgroup(
+            groupname=self._reprocess_group,
+            consumername=self._consumer_name,
+            streams={self._reprocess_command_queue: "0"},
+            count=count,
+            block=0,
+        )
+        commands = _reprocess_commands(pending)
+        if commands:
+            return commands
+        response = self._client.xreadgroup(
+            groupname=self._reprocess_group,
+            consumername=self._consumer_name,
+            streams={self._reprocess_command_queue: ">"},
+            count=count,
+            block=block_ms,
+        )
+        return _reprocess_commands(response)
+
+    def ack_reprocess(self, message_id: str) -> None:
+        if not self._reprocess_command_queue:
+            return
+        self._client.xack(self._reprocess_command_queue, self._reprocess_group, message_id)
 
     def read(self, *, count: int, block_ms: int) -> list[NewsStreamMessage]:
         pending_response = self._client.xreadgroup(
@@ -235,6 +278,27 @@ def _messages(response) -> list[NewsStreamMessage]:
         for message_id, fields in entries:
             messages.append(_message(message_id, fields))
     return messages
+
+
+def _reprocess_commands(response) -> list[ReprocessCommandMessage]:
+    commands: list[ReprocessCommandMessage] = []
+    for _stream_name, entries in response:
+        for message_id, fields in entries:
+            run_id = str(fields.get("run_id", "")).strip()
+            if not run_id:
+                continue
+            try:
+                days_back = int(fields.get("days_back", "0"))
+            except (TypeError, ValueError):
+                days_back = 0
+            commands.append(
+                ReprocessCommandMessage(
+                    message_id=message_id,
+                    run_id=run_id,
+                    days_back=days_back,
+                )
+            )
+    return commands
 
 
 def _stream_length(client: redis.Redis, stream_name: str) -> int | None:

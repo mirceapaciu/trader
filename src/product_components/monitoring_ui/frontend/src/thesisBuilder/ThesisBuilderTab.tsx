@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
+  fetchReprocessStatus,
   fetchThesisBuilderMetrics,
   fetchThesisCardArticles,
   fetchWindowArticles,
@@ -10,11 +11,13 @@ import {
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderPendingWindow,
-  type ThesisReprocessResponse,
+  type ThesisReprocessStatusResponse,
   type ThroughputPresetWindow,
   type WindowArticle,
   type WindowArticlesResponse
 } from "../api";
+
+const REPROCESS_TERMINAL_STATES = new Set(["completed", "failed"]);
 
 const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> = [
   { label: "15m", window: "15m" },
@@ -27,14 +30,27 @@ const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> =
 export function ThesisBuilderTab() {
   const [window, setWindow] = useState<ThroughputPresetWindow>("1d");
   const [daysBack, setDaysBack] = useState(7);
+  const [runId, setRunId] = useState<string | null>(null);
   const metrics = useQuery({
     queryKey: ["thesis-builder", "metrics", window],
     queryFn: () => fetchThesisBuilderMetrics(window),
     refetchInterval: 15000
   });
   const reprocess = useMutation({
-    mutationFn: () => reprocessThesisBuilder({ days_back: daysBack })
+    mutationFn: () => reprocessThesisBuilder({ days_back: daysBack }),
+    onSuccess: (data) => setRunId(data.run_id)
   });
+  const reprocessStatus = useQuery({
+    queryKey: ["thesis-builder", "reprocess", runId],
+    queryFn: () => fetchReprocessStatus(runId as string),
+    enabled: runId !== null,
+    refetchInterval: (query) =>
+      REPROCESS_TERMINAL_STATES.has(query.state.data?.status ?? "") ? false : 2000
+  });
+  const status = reprocessStatus.data;
+  const isReprocessing =
+    reprocess.isPending ||
+    (runId !== null && status != null && !REPROCESS_TERMINAL_STATES.has(status.status));
   const data = metrics.data;
 
   return (
@@ -100,9 +116,9 @@ export function ThesisBuilderTab() {
         daysBack={daysBack}
         onDaysBackChange={setDaysBack}
         onReprocess={() => reprocess.mutate()}
-        isPending={reprocess.isPending}
-        result={reprocess.data}
-        error={reprocess.error}
+        isPending={isReprocessing}
+        status={status}
+        error={reprocess.error ?? reprocessStatus.error}
       />
     </main>
   );
@@ -530,16 +546,18 @@ function ReprocessPanel({
   onDaysBackChange,
   onReprocess,
   isPending,
-  result,
+  status,
   error,
 }: {
   daysBack: number;
   onDaysBackChange: (v: number) => void;
   onReprocess: () => void;
   isPending: boolean;
-  result?: ThesisReprocessResponse;
+  status?: ThesisReprocessStatusResponse;
   error: Error | null;
 }) {
+  const isComplete = status?.status === "completed";
+  const isFailed = status?.status === "failed";
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -565,15 +583,23 @@ function ReprocessPanel({
         <button type="button" onClick={onReprocess} disabled={isPending}>
           {isPending ? "Reprocessing…" : "Reprocess"}
         </button>
-        {isPending && <span style={{ color: "var(--color-muted, #888)", fontSize: "0.85em" }}>This may take several minutes</span>}
+        {isPending && (
+          <span style={{ color: "var(--color-muted, #888)", fontSize: "0.85em" }}>
+            Running in ThesisBuilder — this may take several minutes
+          </span>
+        )}
       </div>
       {error && <div className="inline-error">{error.message}</div>}
-      {result && (
+      {isFailed && (
+        <div className="inline-error">Reprocess run failed{status?.error_code ? `: ${status.error_code}` : ""}</div>
+      )}
+      {status && (
         <div className="quality-grid thesis-stale-grid" style={{ marginTop: "0.5rem" }}>
-          <QualityValue label="Run ID" value={result.run_id.slice(0, 8) + "…"} />
-          <QualityValue label="Articles found" value={String(result.articles_found)} />
-          <QualityValue label="Analyses created" value={String(result.analyses_created)} />
-          <QualityValue label="Cards created" value={String(result.cards_created)} />
+          <QualityValue label="Run ID" value={status.run_id.slice(0, 8) + "…"} />
+          <QualityValue label="Status" value={status.status} />
+          <QualityValue label="Articles found" value={isComplete ? String(status.articles_found ?? 0) : "—"} />
+          <QualityValue label="Analyses created" value={isComplete ? String(status.analyses_created ?? 0) : "—"} />
+          <QualityValue label="Cards created" value={isComplete ? String(status.cards_created ?? 0) : "—"} />
         </div>
       )}
     </section>

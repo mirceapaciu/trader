@@ -129,9 +129,20 @@ export type ThesisReprocessRequest = {
 
 export type ThesisReprocessResponse = {
   run_id: string;
-  articles_found: number;
-  analyses_created: number;
-  cards_created: number;
+  status: string;
+};
+
+export type ThesisReprocessStatusResponse = {
+  run_id: string;
+  status: string;
+  days_back: number;
+  articles_found?: number | null;
+  analyses_created?: number | null;
+  cards_created?: number | null;
+  error_code?: string | null;
+  requested_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 };
 
 export type ThesisBuilderMetricsResponse = {
@@ -521,6 +532,12 @@ export function fetchThesisCardArticles(cardId: string): Promise<WindowArticlesR
 
 export function reprocessThesisBuilder(payload: ThesisReprocessRequest): Promise<ThesisReprocessResponse> {
   return postJson<ThesisReprocessResponse>("/api/thesis-builder/reprocess", payload);
+}
+
+export function fetchReprocessStatus(runId: string): Promise<ThesisReprocessStatusResponse> {
+  return getJson<ThesisReprocessStatusResponse>(
+    `/api/thesis-builder/reprocess/${encodeURIComponent(runId)}`
+  );
 }
 
 export function fetchBacklog(): Promise<BacklogResponse> {

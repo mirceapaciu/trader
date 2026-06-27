@@ -231,3 +231,29 @@ CREATE INDEX IF NOT EXISTS ix_thesis_cards_stale_evidence
 CREATE INDEX IF NOT EXISTS ix_thesis_cards_unpublished_valid
     ON thesis_builder.t_thesis_cards (created_at)
     WHERE validation_status = 'valid' AND signal_published_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS thesis_builder.t_reprocess_runs (
+    run_id TEXT PRIMARY KEY,
+    days_back INT NOT NULL,
+    max_articles INT,
+    status TEXT NOT NULL,
+    articles_found INT,
+    analyses_created INT,
+    cards_created INT,
+    error_code TEXT,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    CONSTRAINT ck_reprocess_runs_status
+        CHECK (status IN ('accepted', 'running', 'completed', 'failed')),
+    CONSTRAINT ck_reprocess_runs_days_back
+        CHECK (days_back >= 1)
+);
+
+-- Concurrency guard: at most one accepted/running reprocess run at a time.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reprocess_runs_active
+    ON thesis_builder.t_reprocess_runs ((TRUE))
+    WHERE status IN ('accepted', 'running');
+
+CREATE INDEX IF NOT EXISTS ix_reprocess_runs_requested
+    ON thesis_builder.t_reprocess_runs (requested_at DESC);

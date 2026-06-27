@@ -29,7 +29,15 @@ THESIS_BUILDER_RISK_MAX_LOSS_USD=120
 
 # Pipeline scheduling
 PIPELINE_INTERVAL=120        # seconds
+
+# Historical reprocess (operator-triggered via Monitoring UI)
+REPROCESS_COMMAND_QUEUE=reprocess_command_queue
+THESIS_BUILDER_REPROCESS_MAX_ARTICLES=200
 ```
+
+## Historical Reprocess
+
+ThesisBuilder owns the historical reprocess workflow. Operators trigger a run from the Monitoring UI, which enqueues a command on `REPROCESS_COMMAND_QUEUE` and records an `accepted` row in `thesis_builder.t_reprocess_runs`. The ThesisBuilder runtime consumes the command and executes the reprocess in a background thread, so the live news consumer loop is never paused. A partial unique index (`uq_reprocess_runs_active`) enforces at most one `accepted`/`running` run at a time. Run status and result counts are read back through the ThesisBuilder-owned reprocess gateway; the LLM model and reprocess policy come from ThesisBuilder settings, not from the caller.
 
 ## Shared Dependencies
 

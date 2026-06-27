@@ -29,6 +29,7 @@ from .models import (
     ThesisBuilderMetricsResponse,
     ThesisReprocessRequest,
     ThesisReprocessResponse,
+    ThesisReprocessStatusResponse,
     ThroughputResponse,
     WatchlistItemPayload,
     WatchlistItemResponse,
@@ -42,6 +43,12 @@ from .settings import MonitoringUiSettings
 from src.product_components.shared.adapters import (
     PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
+)
+from src.product_components.thesis_builder.repository import PostgresThesisBuilderRepository
+from src.product_components.thesis_builder.reprocess_gateway import (
+    RedisReprocessCommandPublisher,
+    ReprocessRunAlreadyActive,
+    ThesisReprocessGateway,
 )
 from src.product_components.shared.instrument_lookup import (
     AlphaVantageInstrumentLookupProvider,
@@ -117,11 +124,22 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         alias_cache_ttl_seconds=resolved_settings.instrument_alias_cache_ttl_seconds,
         lookup_provider_debounce_ms=resolved_settings.instrument_lookup_provider_debounce_ms,
     )
+    reprocess_gateway = ThesisReprocessGateway(
+        repository=PostgresThesisBuilderRepository(
+            dsn=resolved_settings.postgres_dsn,
+            thesis_schema=resolved_settings.thesis_builder_db_schema,
+        ),
+        command_publisher=RedisReprocessCommandPublisher(
+            queue_url=resolved_settings.queue_url,
+            command_stream=resolved_settings.reprocess_command_queue,
+        ),
+    )
     service = MonitoringService(
         settings=resolved_settings,
         data_source=data_source,
         filter_quality_runner=FilterQualityRunCoordinator(),
         watchlist_admin=watchlist_admin,
+        reprocess_gateway=reprocess_gateway,
     )
 
     app = FastAPI(title="Trader Monitoring UI API")
@@ -294,12 +312,38 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
                 detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
             ) from exc
 
-    @app.post("/api/thesis-builder/reprocess", response_model=ThesisReprocessResponse)
+    @app.post(
+        "/api/thesis-builder/reprocess",
+        response_model=ThesisReprocessResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
     def reprocess_thesis(payload: ThesisReprocessRequest) -> ThesisReprocessResponse:
-        return _run_with_infrastructure_mapping(
-            lambda: service.reprocess_thesis(payload),
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.reprocess_thesis(payload),
+                detail="thesis reprocessing unavailable",
+            )
+        except ReprocessRunAlreadyActive as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
+            ) from exc
+
+    @app.get(
+        "/api/thesis-builder/reprocess/{run_id}",
+        response_model=ThesisReprocessStatusResponse,
+    )
+    def get_reprocess_status(run_id: str) -> ThesisReprocessStatusResponse:
+        result = _run_with_infrastructure_mapping(
+            lambda: service.get_reprocess_status(run_id=run_id),
             detail="thesis reprocessing unavailable",
         )
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="reprocess run not found",
+            )
+        return result
 
     @app.post("/api/actions/refresh")
     def refresh() -> dict[str, str]:

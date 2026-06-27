@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -16,7 +18,7 @@ from src.product_components.shared.text_match import contains_term
 
 from .llm_client import OpenAIThesisClient, ThesisAnalyzer
 from .models import InstrumentIdentity, NewsArticle
-from .redis_io import NewsStreamMessage, RedisThesisBuilderIo
+from .redis_io import NewsStreamMessage, RedisThesisBuilderIo, ReprocessCommandMessage
 from .repository import PostgresThesisBuilderRepository
 from .settings import ThesisBuilderSettings
 
@@ -36,6 +38,16 @@ class InstrumentRegistry(Protocol):
 class ThesisCardReviewWriter(Protocol):
     def upsert_system_approved_review(self, *, card_id: str, reviewed_at: datetime, review_reason: str = "thesis_builder_preapproved_v1") -> None:
         """Persist preapproved shared review state."""
+
+
+class ReprocessResultProtocol(Protocol):
+    articles_found: int
+    analyses_created: int
+    cards_created: int
+
+
+class ReprocessorProtocol(Protocol):
+    def reprocess(self, *, days_back: int, max_articles: int) -> ReprocessResultProtocol: ...
 
 
 @dataclass(frozen=True)
@@ -66,6 +78,7 @@ class ThesisBuilderRunner:
         market_context_client: MarketContextClient | None = None,
         instrument_registry: InstrumentRegistry | None = None,
         review_writer: ThesisCardReviewWriter | None = None,
+        reprocessor_factory: Callable[[], "ReprocessorProtocol"] | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository or PostgresThesisBuilderRepository(
@@ -79,7 +92,12 @@ class ThesisBuilderRunner:
             failed_messages_dlq=settings.failed_messages_dlq,
             consumer_group=settings.consumer_group,
             consumer_name=settings.consumer_name,
+            reprocess_command_queue=settings.reprocess_command_queue,
         )
+        self._reprocessor_factory = reprocessor_factory
+        self._reprocess_lock = threading.Lock()
+        self._reprocess_active = False
+        self._reprocess_thread: threading.Thread | None = None
         self._analyzer = analyzer or ThesisAnalyzer(
             client=OpenAIThesisClient(api_key=settings.openai_api_key),
             model=settings.llm_model,
@@ -104,6 +122,7 @@ class ThesisBuilderRunner:
         while True:
             try:
                 processed = self.run_once()
+                self.poll_reprocess_commands()
                 now = time.monotonic()
                 if processed == 0 and now - last_heartbeat >= self._settings.heartbeat_interval_seconds:
                     self._log_heartbeat()
@@ -124,6 +143,86 @@ class ThesisBuilderRunner:
         for message in messages:
             self._process_with_retry(message)
         return len(messages)
+
+    def poll_reprocess_commands(self) -> int:
+        """Drain pending reprocess commands and launch background runs.
+
+        Non-blocking: each accepted command is executed in a daemon thread so
+        the live news consumer loop is never paused by a reprocess run.
+        """
+        commands = self._redis.read_reprocess_commands(count=1, block_ms=0)
+        for command in commands:
+            self._handle_reprocess_command(command)
+        return len(commands)
+
+    def _handle_reprocess_command(self, command: ReprocessCommandMessage) -> None:
+        with self._reprocess_lock:
+            if self._reprocess_active:
+                LOGGER.warning(
+                    "Reprocess already active; skipping command run_id=%s", command.run_id
+                )
+                self._redis.ack_reprocess(command.message_id)
+                return
+            self._reprocess_active = True
+        self._redis.ack_reprocess(command.message_id)
+        thread = threading.Thread(
+            target=self._run_reprocess,
+            args=(command.run_id, command.days_back),
+            name=f"reprocess-{command.run_id}",
+            daemon=True,
+        )
+        self._reprocess_thread = thread
+        thread.start()
+
+    def _run_reprocess(self, run_id: str, days_back: int) -> None:
+        max_articles = self._settings.reprocess_max_articles
+        try:
+            reprocessor = self._build_reprocessor()
+            self._repository.mark_reprocess_running(run_id=run_id, max_articles=max_articles)
+            LOGGER.info("Reprocess run started run_id=%s days_back=%d", run_id, days_back)
+            result = reprocessor.reprocess(days_back=days_back, max_articles=max_articles)
+            self._repository.mark_reprocess_completed(
+                run_id=run_id,
+                articles_found=result.articles_found,
+                analyses_created=result.analyses_created,
+                cards_created=result.cards_created,
+            )
+            LOGGER.info(
+                "Reprocess run completed run_id=%s articles_found=%d analyses_created=%d cards_created=%d",
+                run_id, result.articles_found, result.analyses_created, result.cards_created,
+            )
+        except Exception as exc:
+            LOGGER.exception("Reprocess run failed run_id=%s", run_id)
+            try:
+                self._repository.mark_reprocess_failed(run_id=run_id, error_code=exc.__class__.__name__)
+            except Exception:
+                LOGGER.exception("Failed to record reprocess failure run_id=%s", run_id)
+        finally:
+            with self._reprocess_lock:
+                self._reprocess_active = False
+
+    def _build_reprocessor(self) -> "ReprocessorProtocol":
+        if self._reprocessor_factory is not None:
+            return self._reprocessor_factory()
+        # Imported lazily to avoid a circular import: reprocessor imports from
+        # this module (_resolve_instruments, InstrumentRegistry).
+        from .reprocessor import ThesisBuilderReprocessor
+
+        return ThesisBuilderReprocessor(
+            dsn=self._settings.postgres_dsn,
+            news_fetcher_schema=self._settings.news_fetcher_db_schema,
+            thesis_schema=self._settings.thesis_builder_db_schema,
+            repository=self._repository,
+            analyzer=self._analyzer,
+            instrument_registry=self._instrument_registry,
+            required_evidence_count=self._settings.required_evidence_count,
+            min_confidence=self._settings.min_confidence,
+            min_relevance=self._settings.min_relevance,
+            risk_max_loss_usd=self._settings.risk_max_loss_usd,
+            default_time_horizon=self._settings.default_time_horizon,
+            evidence_collection_max_minutes=self._settings.evidence_collection_max_minutes,
+            max_evidence_age_minutes=self._settings.max_evidence_age_minutes,
+        )
 
     def status(self) -> ThesisBuilderRuntimeStatus:
         news_raw_length, signal_length = self._redis.stream_lengths()

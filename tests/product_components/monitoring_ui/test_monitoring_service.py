@@ -1147,6 +1147,7 @@ def _settings() -> MonitoringUiSettings:
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
         failed_messages_dlq="failed_messages_dlq",
+        reprocess_command_queue="reprocess_command_queue",
         massive_api_key="",
         massive_api_base_url="https://api.polygon.io",
         alpha_vantage_api_key="",
@@ -1154,8 +1155,6 @@ def _settings() -> MonitoringUiSettings:
         instrument_lookup_cache_ttl_seconds=21600,
         instrument_alias_cache_ttl_seconds=86400,
         instrument_lookup_provider_debounce_ms=300,
-        openai_api_key="",
-        llm_model="gpt-4o-mini",
     )
 
 

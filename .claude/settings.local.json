@@ -27,7 +27,13 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('readiness:', d['readiness'], '| dependencies:', [\\(dep['kind'], dep['state']\\) for dep in d['dependencies']]\\)\")",
       "Bash(git stash *)",
       "Bash(npm test *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(cd /d/src/trader/src/product_components/monitoring_ui/frontend && grep -rn \"refetchInterval\" src/ | head -20; echo \"---version---\"; grep \"tanstack\" package.json)",
+      "Read(//d/d/src/trader/src/product_components/monitoring_ui/frontend/**)",
+      "Read(//d/d/src/trader/tests/product_components/**)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(grep -rn \"NEWS_RAW_QUEUE\\\\|SIGNAL_QUEUE\\\\|FAILED_MESSAGES_DLQ\" .env.shared)",
+      "Bash(grep -rln \"reprocess\\\\|Reprocess\" docs/design/)"
     ]
   }
 }

@@ -20,7 +20,15 @@ vi.mock("../api", async () => {
 
 describe("ThesisBuilderTab", () => {
   beforeEach(() => {
-    useQuery.mockReturnValue({
+    useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
+      if (options?.queryKey?.includes("reprocess")) {
+        return { data: undefined, error: null };
+      }
+      return metricsQueryResult;
+    });
+  });
+
+  const metricsQueryResult = {
       data: {
         available: true,
         message: null,
@@ -85,8 +93,7 @@ describe("ThesisBuilderTab", () => {
       },
       isError: false,
       error: null,
-    });
-  });
+  };
 
   it("renders the thesis dead-letter metric and recent rows", () => {
     render(<ThesisBuilderTab />);
@@ -121,7 +128,7 @@ describe("ThesisBuilderTab", () => {
   });
 
   it("shows a thesis-specific unavailable empty state for dead letters", () => {
-    useQuery.mockReturnValue({
+    const unavailableResult = {
       data: {
         available: false,
         message: "ThesisBuilder telemetry unavailable.",
@@ -143,6 +150,12 @@ describe("ThesisBuilderTab", () => {
       },
       isError: false,
       error: null,
+    };
+    useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
+      if (options?.queryKey?.includes("reprocess")) {
+        return { data: undefined, error: null };
+      }
+      return unavailableResult;
     });
 
     render(<ThesisBuilderTab />);

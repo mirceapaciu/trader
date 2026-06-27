@@ -18,6 +18,7 @@ from src.product_components.monitoring_ui.backend.models import (
 )
 from src.product_components.monitoring_ui.backend.repository import _throughput_granularity_for_window
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
+from src.product_components.thesis_builder.reprocess_gateway import ReprocessRunAlreadyActive
 
 
 def test_local_dev_origin_regex_allows_localhost_with_any_port() -> None:
@@ -153,6 +154,38 @@ class FakeFilterQualityRunner:
 
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str:
         return "unused"
+
+
+class _FakeRun:
+    def __init__(self, *, run_id: str, status: str, days_back: int = 7) -> None:
+        self.run_id = run_id
+        self.status = status
+        self.days_back = days_back
+        self.articles_found = 12 if status == "completed" else None
+        self.analyses_created = 5 if status == "completed" else None
+        self.cards_created = 2 if status == "completed" else None
+        self.error_code = None
+        self.requested_at = datetime(2026, 6, 26, 10, 0, tzinfo=timezone.utc)
+        self.started_at = None
+        self.finished_at = None
+
+
+class FakeReprocessGateway:
+    def __init__(self) -> None:
+        self.requested_days_back: int | None = None
+        self.runs: dict[str, _FakeRun] = {}
+        self.raise_already_active = False
+
+    def request_reprocess(self, *, days_back: int):
+        if self.raise_already_active:
+            raise ReprocessRunAlreadyActive("existing-run")
+        self.requested_days_back = days_back
+        run = _FakeRun(run_id="run-123", status="accepted", days_back=days_back)
+        self.runs[run.run_id] = run
+        return run
+
+    def get_run(self, *, run_id: str):
+        return self.runs.get(run_id)
 
 
 class FailingProvidersDataSource(FakeMonitoringDataSource):
@@ -557,6 +590,70 @@ def test_watchlist_add_endpoint_returns_structured_503_when_storage_is_unavailab
     assert response.json()["detail"] == "watchlist storage unavailable"
 
 
+def _reprocess_client(monkeypatch, gateway: FakeReprocessGateway) -> TestClient:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FakeMonitoringDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.ThesisReprocessGateway",
+        lambda **kwargs: gateway,
+    )
+    return TestClient(create_app(settings=_settings()))
+
+
+def test_reprocess_endpoint_accepts_command_and_returns_run_id(monkeypatch) -> None:
+    gateway = FakeReprocessGateway()
+    client = _reprocess_client(monkeypatch, gateway)
+
+    response = client.post("/api/thesis-builder/reprocess", json={"days_back": 5})
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["run_id"] == "run-123"
+    assert body["status"] == "accepted"
+    assert gateway.requested_days_back == 5
+
+
+def test_reprocess_endpoint_returns_409_when_already_active(monkeypatch) -> None:
+    gateway = FakeReprocessGateway()
+    gateway.raise_already_active = True
+    client = _reprocess_client(monkeypatch, gateway)
+
+    response = client.post("/api/thesis-builder/reprocess", json={"days_back": 5})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["run_id"] == "existing-run"
+
+
+def test_reprocess_status_endpoint_returns_run_counts(monkeypatch) -> None:
+    gateway = FakeReprocessGateway()
+    gateway.runs["run-abc"] = _FakeRun(run_id="run-abc", status="completed")
+    client = _reprocess_client(monkeypatch, gateway)
+
+    response = client.get("/api/thesis-builder/reprocess/run-abc")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["articles_found"] == 12
+    assert body["analyses_created"] == 5
+    assert body["cards_created"] == 2
+
+
+def test_reprocess_status_endpoint_returns_404_for_unknown_run(monkeypatch) -> None:
+    gateway = FakeReprocessGateway()
+    client = _reprocess_client(monkeypatch, gateway)
+
+    response = client.get("/api/thesis-builder/reprocess/does-not-exist")
+
+    assert response.status_code == 404
+
+
 def _settings() -> MonitoringUiSettings:
     return MonitoringUiSettings(
         ui_port=8080,
@@ -578,6 +675,7 @@ def _settings() -> MonitoringUiSettings:
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",
         failed_messages_dlq="failed_messages_dlq",
+        reprocess_command_queue="reprocess_command_queue",
         massive_api_key="",
         massive_api_base_url="https://api.polygon.io",
         alpha_vantage_api_key="",

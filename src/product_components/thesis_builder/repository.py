@@ -35,6 +35,29 @@ class AnalysisPersistenceResult:
     signal: ThesisCardSignal | None = None
 
 
+@dataclass(frozen=True)
+class ReprocessRunRecord:
+    run_id: str
+    days_back: int
+    max_articles: int | None
+    status: str
+    articles_found: int | None
+    analyses_created: int | None
+    cards_created: int | None
+    error_code: str | None
+    requested_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class ReprocessRunAlreadyActive(RuntimeError):
+    """Raised when an accepted/running reprocess run already exists."""
+
+    def __init__(self, run_id: str | None = None) -> None:
+        super().__init__("reprocess_run_already_active")
+        self.run_id = run_id
+
+
 class PostgresThesisBuilderRepository:
     def __init__(
         self,
@@ -440,8 +463,114 @@ class PostgresThesisBuilderRepository:
             expires_at=_to_utc(row["expires_at"]),
         )
 
+    def insert_reprocess_run(self, *, run_id: str, days_back: int) -> None:
+        """Insert a reprocess run in the 'accepted' state.
+
+        Raises ReprocessRunAlreadyActive if another accepted/running run exists
+        (enforced by the uq_reprocess_runs_active partial unique index).
+        """
+        sql = (
+            f"INSERT INTO {self._thesis_schema}.t_reprocess_runs "
+            f"(run_id, days_back, status, requested_at) "
+            f"VALUES (%s, %s, 'accepted', NOW())"
+        )
+        with self._connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id, days_back))
+                conn.commit()
+            except psycopg.errors.UniqueViolation as exc:
+                conn.rollback()
+                if "uq_reprocess_runs_active" in str(exc):
+                    raise ReprocessRunAlreadyActive() from exc
+                raise
+
+    def mark_reprocess_running(self, *, run_id: str, max_articles: int) -> None:
+        sql = (
+            f"UPDATE {self._thesis_schema}.t_reprocess_runs "
+            f"SET status = 'running', max_articles = %s, started_at = NOW() "
+            f"WHERE run_id = %s"
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (max_articles, run_id))
+            conn.commit()
+
+    def mark_reprocess_completed(
+        self,
+        *,
+        run_id: str,
+        articles_found: int,
+        analyses_created: int,
+        cards_created: int,
+    ) -> None:
+        sql = (
+            f"UPDATE {self._thesis_schema}.t_reprocess_runs "
+            f"SET status = 'completed', articles_found = %s, analyses_created = %s, "
+            f"cards_created = %s, finished_at = NOW() "
+            f"WHERE run_id = %s"
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (articles_found, analyses_created, cards_created, run_id))
+            conn.commit()
+
+    def mark_reprocess_failed(self, *, run_id: str, error_code: str) -> None:
+        sql = (
+            f"UPDATE {self._thesis_schema}.t_reprocess_runs "
+            f"SET status = 'failed', error_code = %s, finished_at = NOW() "
+            f"WHERE run_id = %s"
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (error_code[:200], run_id))
+            conn.commit()
+
+    def get_reprocess_run(self, *, run_id: str) -> ReprocessRunRecord | None:
+        sql = (
+            f"SELECT run_id, days_back, max_articles, status, articles_found, analyses_created, "
+            f"cards_created, error_code, requested_at, started_at, finished_at "
+            f"FROM {self._thesis_schema}.t_reprocess_runs "
+            f"WHERE run_id = %s"
+        )
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (run_id,))
+                row = cur.fetchone()
+        return _reprocess_run(row) if row else None
+
+    def get_active_reprocess_run(self) -> ReprocessRunRecord | None:
+        sql = (
+            f"SELECT run_id, days_back, max_articles, status, articles_found, analyses_created, "
+            f"cards_created, error_code, requested_at, started_at, finished_at "
+            f"FROM {self._thesis_schema}.t_reprocess_runs "
+            f"WHERE status IN ('accepted', 'running') "
+            f"ORDER BY requested_at DESC LIMIT 1"
+        )
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql)
+                row = cur.fetchone()
+        return _reprocess_run(row) if row else None
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)
+
+
+def _reprocess_run(row: dict[str, Any]) -> ReprocessRunRecord:
+    return ReprocessRunRecord(
+        run_id=str(row["run_id"]),
+        days_back=int(row["days_back"]),
+        max_articles=int(row["max_articles"]) if row["max_articles"] is not None else None,
+        status=str(row["status"]),
+        articles_found=int(row["articles_found"]) if row["articles_found"] is not None else None,
+        analyses_created=int(row["analyses_created"]) if row["analyses_created"] is not None else None,
+        cards_created=int(row["cards_created"]) if row["cards_created"] is not None else None,
+        error_code=row["error_code"],
+        requested_at=row["requested_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+    )
 
 
 def _analysis_rejection(

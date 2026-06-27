@@ -442,6 +442,19 @@ class ThesisReprocessResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     run_id: str
-    articles_found: int
-    analyses_created: int
-    cards_created: int
+    status: str
+
+
+class ThesisReprocessStatusResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    status: str
+    days_back: int
+    articles_found: int | None = None
+    analyses_created: int | None = None
+    cards_created: int | None = None
+    error_code: str | None = None
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

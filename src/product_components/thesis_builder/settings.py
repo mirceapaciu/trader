@@ -18,8 +18,10 @@ class ThesisBuilderSettings:
     news_raw_queue: str
     signal_queue: str
     failed_messages_dlq: str
+    reprocess_command_queue: str
     consumer_group: str
     consumer_name: str
+    reprocess_max_articles: int
 
     poll_interval_seconds: int
     heartbeat_interval_seconds: int
@@ -66,8 +68,10 @@ class ThesisBuilderSettings:
             news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
             signal_queue=os.getenv("SIGNAL_QUEUE", "signal_queue"),
             failed_messages_dlq=os.getenv("FAILED_MESSAGES_DLQ", "failed_messages_dlq"),
+            reprocess_command_queue=os.getenv("REPROCESS_COMMAND_QUEUE", "reprocess_command_queue"),
             consumer_group=os.getenv("THESIS_BUILDER_CONSUMER_GROUP", "thesis_builder_group"),
             consumer_name=os.getenv("THESIS_BUILDER_CONSUMER_NAME", _default_consumer_name()),
+            reprocess_max_articles=_int_env("THESIS_BUILDER_REPROCESS_MAX_ARTICLES", 200),
             poll_interval_seconds=_int_env("THESIS_BUILDER_POLL_INTERVAL_SECONDS", _int_env("PIPELINE_INTERVAL", 120)),
             heartbeat_interval_seconds=_int_env("THESIS_BUILDER_HEARTBEAT_INTERVAL_SECONDS", 60),
             batch_size=_int_env("THESIS_BUILDER_BATCH_SIZE", 10),
