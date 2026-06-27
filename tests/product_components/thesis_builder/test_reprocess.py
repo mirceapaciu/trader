@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.product_components.thesis_builder import reprocessor as reprocessor_module
+from src.product_components.thesis_builder.models import NewsArticle
 from src.product_components.thesis_builder.redis_io import NewsStreamMessage, ReprocessCommandMessage
 from src.product_components.thesis_builder.reprocess_gateway import (
     ReprocessRunAlreadyActive,
     ThesisReprocessGateway,
 )
 from src.product_components.thesis_builder.repository import ReprocessRunRecord
+from src.product_components.thesis_builder.reprocessor import ThesisBuilderReprocessor
 from src.product_components.thesis_builder.service import ThesisBuilderRunner
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
@@ -263,6 +266,70 @@ def test_live_news_consumer_not_blocked_during_reprocess() -> None:
 
     release.set()
     runner._reprocess_thread.join(timeout=5)
+
+
+# --------------------------------------------------------------------------- #
+# Reprocessor article-selection tests
+# --------------------------------------------------------------------------- #
+
+
+class _StubAnalyzer:
+    max_tokens_per_run = 10000
+    model = "test-model"
+
+
+def _article(idx: int) -> NewsArticle:
+    ts = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc) + timedelta(hours=idx)
+    return NewsArticle(
+        id=f"a-{idx}",
+        source="test",
+        headline=f"headline {idx}",
+        summary=None,
+        url=f"https://example.com/{idx}",
+        tickers=["AAA"],
+        published_at=ts,
+        fetched_at=ts,
+    )
+
+
+def test_reprocess_keeps_most_recent_articles_in_chronological_order(monkeypatch) -> None:
+    # Five articles, oldest (idx 0) to newest (idx 4).
+    articles = [_article(i) for i in range(5)]
+
+    class _Registry:
+        def list_active_instruments(self):
+            return []
+
+    reprocessor = ThesisBuilderReprocessor(
+        dsn="postgresql://unused",
+        news_fetcher_schema="news_fetcher",
+        thesis_schema="thesis_builder",
+        repository=object(),
+        analyzer=_StubAnalyzer(),
+        instrument_registry=_Registry(),
+        required_evidence_count=3,
+        min_confidence=0.6,
+        risk_max_loss_usd=120.0,
+        default_time_horizon="swing_1d_5d",
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+    )
+    monkeypatch.setattr(reprocessor, "_fetch_articles", lambda *, days_back: list(articles))
+
+    processed: list[str] = []
+
+    def _record(*, article, active_instruments):
+        processed.append(article.id)
+        return []  # no instruments -> loop continues without analyzer/repo
+
+    monkeypatch.setattr(reprocessor_module, "_resolve_instruments", _record)
+
+    result = reprocessor.reprocess(days_back=7, max_articles=3)
+
+    # The three NEWEST articles are processed, oldest-first (chronological).
+    assert processed == ["a-2", "a-3", "a-4"]
+    # articles_found reflects the full backlog, not the capped subset.
+    assert result.articles_found == 5
 
 
 def _settings() -> ThesisBuilderSettings:

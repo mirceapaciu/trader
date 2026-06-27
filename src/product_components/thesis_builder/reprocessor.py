@@ -63,7 +63,10 @@ class ThesisBuilderReprocessor:
         articles = sorted(articles, key=lambda a: a.published_at)
         articles_found = len(articles)
         if len(articles) > max_articles:
-            articles = articles[:max_articles]
+            # Keep the most recent articles (the tail of the ascending sort) so a
+            # large backlog does not cause us to only reprocess the oldest, least
+            # relevant news. Processing stays chronological for evidence windows.
+            articles = articles[-max_articles:]
         LOGGER.info(
             "Reprocessing started run_id=%s articles_found=%d processing=%d days_back=%d token_budget=%d",
             run_id, articles_found, len(articles), days_back, self._analyzer.max_tokens_per_run,
