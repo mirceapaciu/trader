@@ -18,3 +18,6 @@
 | 260615-09 | Remove Monitoring UI direct database access to Filter Quality Evaluator | new | docs/issues/issues-detail/260615-09.md |
 | 260615-10 | Remove Monitoring UI direct database access to Shared contracts | new | docs/issues/issues-detail/260615-10.md |
 | 260615-11 | Add Monitoring UI watchlist editor with ticker lookup and alias management | resolved | docs/issues/issues-detail/260615-11.md |
+| 260626-01 | Repo-wide pytest collection failure due to duplicate test basenames and missing __init__.py | new | docs/issues/issues-detail/260626-01.md |
+llm_model fields | new | docs/issues/issues-detail/260626-02.md |
+| 260627-01 | Move thesis reprocessing out of Monitoring UI into ThesisBuilder via Redis command stream | new | docs/issues/issues-detail/260627-01.md |
