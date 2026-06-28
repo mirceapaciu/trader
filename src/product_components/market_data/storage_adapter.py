@@ -290,6 +290,67 @@ class PostgresMarketDataStorageAdapter:
             rows = cur.fetchall()
         return sorted((_market_bar(row) for row in rows), key=lambda bar: bar.bar_start_at)
 
+    def load_bar_coverage(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        provider: MarketDataProvider,
+        bar_interval: str,
+    ) -> tuple[datetime, datetime] | None:
+        sql = (
+            f"SELECT covered_start, covered_end "
+            f"FROM {self._market_data_schema}.t_market_bar_coverage "
+            f"WHERE ticker = %s AND exchange_code = %s AND provider = %s AND bar_interval = %s"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                sql,
+                (
+                    ticker.strip().upper(),
+                    exchange_code.strip().upper(),
+                    provider.value,
+                    bar_interval,
+                ),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return (row["covered_start"], row["covered_end"])
+
+    def upsert_bar_coverage(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        provider: MarketDataProvider,
+        bar_interval: str,
+        covered_start: datetime,
+        covered_end: datetime,
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._market_data_schema}.t_market_bar_coverage "
+            f"(ticker, exchange_code, provider, bar_interval, covered_start, covered_end, fetched_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, NOW()) "
+            f"ON CONFLICT (ticker, exchange_code, provider, bar_interval) DO UPDATE SET "
+            f"covered_start = LEAST(t_market_bar_coverage.covered_start, EXCLUDED.covered_start), "
+            f"covered_end = GREATEST(t_market_bar_coverage.covered_end, EXCLUDED.covered_end), "
+            f"fetched_at = NOW()"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    ticker.strip().upper(),
+                    exchange_code.strip().upper(),
+                    provider.value,
+                    bar_interval,
+                    _to_utc(covered_start),
+                    _to_utc(covered_end),
+                ),
+            )
+            conn.commit()
+
     def upsert_context_snapshot(self, snapshot: MarketContextSnapshot) -> None:
         sql = (
             f"INSERT INTO {self._market_data_schema}.t_market_context_snapshots "

@@ -16,6 +16,7 @@ from src.product_components.backtester.models import (
 from src.product_components.backtester.repository import BacktesterRepository
 from src.product_components.backtester.service import BacktesterService, new_run_id
 from src.product_components.backtester.settings import BacktesterSettings
+from src.product_components.market_data.providers import build_provider_clients
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.market_data.settings import MarketDataSettings
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
@@ -109,9 +110,11 @@ class BacktestRunCoordinator:
                         shared_schema=market_data_settings.shared_db_schema,
                     ),
                 ),
-                provider_clients={},
+                provider_clients=build_provider_clients(market_data_settings),
                 quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
                 daily_bar_lookback_days=market_data_settings.daily_bar_lookback_days,
+                historical_bars_provider=market_data_settings.historical_bars_provider,
+                max_requests_per_minute=market_data_settings.polygon_max_requests_per_minute,
             )
             bars_provider = MarketDataBarsProvider(market_data_service=market_data_service)
             cards_provider = ThesisCardHistoryExporter(

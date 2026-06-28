@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from src.core_components.backtest_engine import Bar
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.thesis_builder.export import ExportedThesisCard
+
+WarmProgress = Callable[[int, int, str, str], None]
 
 
 @runtime_checkable
@@ -19,6 +22,16 @@ class BarsProvider(Protocol):
         start: datetime,
         end: datetime,
     ) -> list[Bar]: ...
+
+    def warm(
+        self,
+        instruments: Iterable[tuple[str, str]],
+        *,
+        interval: str,
+        start: datetime,
+        end: datetime,
+        progress: WarmProgress | None = None,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -66,3 +79,20 @@ class MarketDataBarsProvider:
             )
             for bar in market_bars
         ]
+
+    def warm(
+        self,
+        instruments: Iterable[tuple[str, str]],
+        *,
+        interval: str,
+        start: datetime,
+        end: datetime,
+        progress: WarmProgress | None = None,
+    ) -> None:
+        self._market_data_service.prefetch_historical_bars(
+            instruments,
+            interval=interval,
+            start=start,
+            end=end,
+            progress=progress,
+        )

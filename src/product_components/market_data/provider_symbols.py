@@ -35,6 +35,8 @@ def default_provider_symbol(
         return _ibkr_symbol(normalized_ticker, canonical_exchange)
     if provider is MarketDataProvider.ALPHA_VANTAGE:
         return _alpha_vantage_symbol(normalized_ticker, canonical_exchange)
+    if provider is MarketDataProvider.POLYGON:
+        return _polygon_symbol(normalized_ticker, canonical_exchange)
     raise ValueError(f"unsupported_provider:{provider}")
 
 
@@ -68,6 +70,23 @@ def _ibkr_symbol(ticker: str, exchange_code: str) -> ProviderSymbol:
             "primary_exchange": primary_exchange,
             "sec_type": "STK",
         },
+    )
+
+
+_POLYGON_US_EXCHANGES = {"XNAS", "XNYS"}
+
+
+def _polygon_symbol(ticker: str, exchange_code: str) -> ProviderSymbol:
+    # Polygon's free tier covers US stocks only; non-US instruments route to IBKR instead.
+    if exchange_code not in _POLYGON_US_EXCHANGES:
+        raise ValueError(f"polygon_unsupported_exchange:{exchange_code}")
+    return ProviderSymbol(
+        ticker=ticker,
+        exchange_code=exchange_code,
+        provider=MarketDataProvider.POLYGON,
+        provider_symbol=ticker,
+        currency="USD",
+        provider_metadata={},
     )
 
 

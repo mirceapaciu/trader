@@ -16,12 +16,23 @@ CREATE TABLE IF NOT EXISTS market_data.t_market_provider_symbols (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (ticker, exchange_code, provider),
     CONSTRAINT ck_market_provider_symbols_provider
-        CHECK (provider IN ('ibkr', 'alpha_vantage')),
+        CHECK (provider IN ('ibkr', 'alpha_vantage', 'polygon')),
     CONSTRAINT ck_market_provider_symbols_exchange
         CHECK (exchange_code IN ('XNAS', 'XNYS', 'XETR', 'XPAR')),
     CONSTRAINT ck_market_provider_symbols_asset_class
         CHECK (asset_class IN ('stock', 'etf'))
 );
+
+-- Idempotent constraint refresh so existing databases accept the 'polygon' provider.
+DO $$
+BEGIN
+    ALTER TABLE market_data.t_market_provider_symbols
+        DROP CONSTRAINT IF EXISTS ck_market_provider_symbols_provider;
+    ALTER TABLE market_data.t_market_provider_symbols
+        ADD CONSTRAINT ck_market_provider_symbols_provider
+        CHECK (provider IN ('ibkr', 'alpha_vantage', 'polygon'));
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS market_data.t_market_quotes (
     ticker TEXT NOT NULL,
@@ -67,6 +78,22 @@ CREATE TABLE IF NOT EXISTS market_data.t_market_bars (
 
 CREATE INDEX IF NOT EXISTS ix_market_bars_instrument_interval_start
     ON market_data.t_market_bars (ticker, exchange_code, bar_interval, bar_start_at DESC);
+
+-- Records which [covered_start, covered_end] window has already been backfilled per
+-- instrument/interval, so a backtest does not re-request ranges that are sparse by nature
+-- (weekends, holidays, pre-market) but already fetched.
+CREATE TABLE IF NOT EXISTS market_data.t_market_bar_coverage (
+    ticker TEXT NOT NULL,
+    exchange_code TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    bar_interval TEXT NOT NULL,
+    covered_start TIMESTAMPTZ NOT NULL,
+    covered_end TIMESTAMPTZ NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (ticker, exchange_code, provider, bar_interval),
+    CONSTRAINT ck_market_bar_coverage_interval
+        CHECK (bar_interval IN ('1m', '5m', '15m', '30m', '1h', '1d'))
+);
 
 CREATE TABLE IF NOT EXISTS market_data.t_market_context_snapshots (
     ticker TEXT NOT NULL,

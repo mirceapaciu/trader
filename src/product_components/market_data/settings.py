@@ -21,6 +21,10 @@ class MarketDataSettings:
     ibkr_port: int
     ibkr_market_data_client_id: int
     alpha_vantage_api_key: str
+    polygon_api_key: str
+    polygon_api_base_url: str
+    polygon_max_requests_per_minute: int
+    historical_bars_provider: str
 
     @property
     def postgres_dsn(self) -> str:
@@ -53,6 +57,11 @@ class MarketDataSettings:
             ibkr_port=_int_env("IBKR_PORT", 7497),
             ibkr_market_data_client_id=_int_env("IBKR_MARKET_DATA_CLIENT_ID", 2),
             alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
+            # Reuse the existing Massive/Polygon key for historical bar backfills.
+            polygon_api_key=os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY", ""),
+            polygon_api_base_url=os.getenv("POLYGON_API_BASE_URL", "https://api.polygon.io"),
+            polygon_max_requests_per_minute=_int_env("POLYGON_MAX_REQUESTS_PER_MINUTE", 5),
+            historical_bars_provider=os.getenv("MARKET_DATA_HISTORICAL_BARS_PROVIDER", "polygon"),
         )
 
 

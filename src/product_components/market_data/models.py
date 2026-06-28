@@ -9,6 +9,7 @@ from typing import Any
 class MarketDataProvider(StrEnum):
     IBKR = "ibkr"
     ALPHA_VANTAGE = "alpha_vantage"
+    POLYGON = "polygon"
 
 
 class QuoteDataType(StrEnum):

@@ -56,6 +56,7 @@ class _FakeStorage:
         self.upserted: list[MarketBar] = []
         self.fetch_runs: list[FetchRun] = []
         self.api_usage: list[tuple[MarketDataProvider, str]] = []
+        self.coverage: dict[tuple[str, str, str, str], tuple[datetime, datetime]] = {}
         self.mapping = ProviderSymbol(
             ticker="RHM",
             exchange_code="XETR",
@@ -82,6 +83,19 @@ class _FakeStorage:
 
     def record_api_usage(self, *, provider, endpoint, called_at) -> None:
         self.api_usage.append((provider, endpoint))
+
+    def load_bar_coverage(self, *, ticker, exchange_code, provider, bar_interval):
+        return self.coverage.get((ticker.upper(), exchange_code.upper(), provider.value, bar_interval))
+
+    def upsert_bar_coverage(
+        self, *, ticker, exchange_code, provider, bar_interval, covered_start, covered_end
+    ) -> None:
+        key = (ticker.upper(), exchange_code.upper(), provider.value, bar_interval)
+        existing = self.coverage.get(key)
+        if existing is None:
+            self.coverage[key] = (covered_start, covered_end)
+        else:
+            self.coverage[key] = (min(existing[0], covered_start), max(existing[1], covered_end))
 
 
 def _service(storage: _FakeStorage, provider: _FakeProvider) -> MarketDataService:

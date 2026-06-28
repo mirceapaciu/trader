@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from .clients import BarsProvider, CardsProvider
@@ -7,6 +8,8 @@ from .engine import BacktesterEngine
 from .models import BacktestRunParams
 from .repository import BacktesterRepository, dataset_snapshot_hash
 from .settings import BacktesterSettings
+
+LOGGER = logging.getLogger("backtester")
 
 
 def new_run_id() -> str:
@@ -36,6 +39,8 @@ class BacktesterService:
         snapshot_hash = dataset_snapshot_hash(cards)
         self._repository.create_run(params=params, dataset_snapshot_hash=snapshot_hash)
 
+        self._prefetch_market_data(cards, params)
+
         try:
             result = BacktesterEngine(
                 params=params,
@@ -62,6 +67,40 @@ class BacktesterService:
                 details={"message": str(error)[:1000]},
             )
             raise
+
+    def _prefetch_market_data(self, cards: list, params: BacktestRunParams) -> None:
+        """Warm the DB with bars for every instrument before the deterministic sim runs.
+
+        Decouples the slow, rate-limited network backfill from the engine, which then reads
+        bars purely from the DB. No-ops if the bars provider does not support warming.
+        """
+        warm = getattr(self._bars, "warm", None)
+        if warm is None:
+            return
+        instruments = sorted(
+            {(card.ticker, card.exchange_code) for card in cards}
+        )
+        if not instruments:
+            return
+        interval = params.execution_model.bar_interval
+        LOGGER.info(
+            "prefetching market data run_id=%s instruments=%d interval=%s",
+            params.run_id,
+            len(instruments),
+            interval,
+        )
+
+        def _progress(done: int, total: int, ticker: str, status: str) -> None:
+            LOGGER.info("market data %s %d/%d %s", status, done, total, ticker)
+
+        warm(
+            instruments,
+            interval=interval,
+            start=params.window_start_at,
+            end=params.window_end_at,
+            progress=_progress,
+        )
+        LOGGER.info("prefetch complete run_id=%s", params.run_id)
 
     def _validate_params(self, params: BacktestRunParams) -> None:
         if params.window_start_at >= params.window_end_at:
