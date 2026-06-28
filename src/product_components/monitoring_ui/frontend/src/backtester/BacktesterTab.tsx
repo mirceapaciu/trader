@@ -153,7 +153,7 @@ function TriggerPanel({
 
   const conflict = error instanceof ApiError && error.status === 409;
   const invalid = error instanceof ApiError && error.status === 422;
-  const canSubmit = windowStart !== "" && windowEnd !== "" && !isPending;
+  const canSubmit = windowStart !== "" && windowEnd !== "" && !isPending && activeRun === null;
 
   const submit = () => {
     if (!canSubmit) {
@@ -276,7 +276,12 @@ function TriggerPanel({
           <button type="button" className="primary-button" onClick={submit} disabled={!canSubmit}>
             {isPending ? "Starting" : "Run backtest"}
           </button>
-          {!isPending && (windowStart === "" || windowEnd === "") && (
+          {!isPending && activeRun !== null && (
+            <span className="muted">
+              Run <strong>{activeRun.run_id.slice(0, 8)}…</strong> is active. Wait for it to finish.
+            </span>
+          )}
+          {!isPending && activeRun === null && (windowStart === "" || windowEnd === "") && (
             <span className="muted">
               Set a full UTC date <em>and</em> time for both window start and end to enable this.
             </span>

@@ -224,6 +224,20 @@ describe("BacktesterTab", () => {
     expect(payload.timing_scenario).toBe("ideal");
   });
 
+  it("disables the Run backtest button and shows a hint when a run is active", () => {
+    installQueryRouter({
+      backtests: backtestsResult([], { active_run: makeRun({ run_id: "active-111" }) }),
+      detail: emptyResult
+    });
+    render(<BacktesterTab />);
+
+    const button = screen.getByRole("button", { name: "Run backtest" });
+    expect(button).toBeDisabled();
+    // run_id is sliced to 8 chars in the hint: "active-1…"
+    expect(screen.getByText(/active-1/)).toBeInTheDocument();
+    expect(screen.getByText(/is active/)).toBeInTheDocument();
+  });
+
   it("shows a busy state when the trigger returns 409", () => {
     useMutation.mockReturnValue({
       ...defaultMutation,
