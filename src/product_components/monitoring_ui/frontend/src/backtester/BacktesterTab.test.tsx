@@ -231,11 +231,12 @@ describe("BacktesterTab", () => {
     });
     render(<BacktesterTab />);
 
-    const button = screen.getByRole("button", { name: "Run backtest" });
+    // Button changes label to "Running…" and is disabled while a run is active.
+    const button = screen.getByRole("button", { name: "Running…" });
     expect(button).toBeDisabled();
     // run_id is sliced to 8 chars in the hint: "active-1…"
     expect(screen.getByText(/active-1/)).toBeInTheDocument();
-    expect(screen.getByText(/is active/)).toBeInTheDocument();
+    expect(screen.getByText(/is running/)).toBeInTheDocument();
   });
 
   it("shows a busy state when the trigger returns 409", () => {

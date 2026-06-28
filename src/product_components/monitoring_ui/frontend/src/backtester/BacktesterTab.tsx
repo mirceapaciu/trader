@@ -45,6 +45,7 @@ export function BacktesterTab() {
   const queryClient = useQueryClient();
   const [window, setWindow] = useState<ThroughputPresetWindow>("1d");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [submittedRunId, setSubmittedRunId] = useState<string | null>(null);
 
   const backtests = useQuery({
     queryKey: ["backtests", window],
@@ -59,9 +60,19 @@ export function BacktesterTab() {
     mutationFn: (request: StartBacktestRequest) => startBacktest(request),
     onSuccess: (result) => {
       setSelectedRunId(result.run_id);
+      setSubmittedRunId(result.run_id);
       queryClient.invalidateQueries({ queryKey: ["backtests"] });
     }
   });
+
+  // Clear once the submitted run appears in the list with a terminal status.
+  useEffect(() => {
+    if (!submittedRunId) return;
+    const found = runs.find((r) => r.run_id === submittedRunId);
+    if (found && RUN_TERMINAL_STATES.has(found.status)) {
+      setSubmittedRunId(null);
+    }
+  }, [runs, submittedRunId]);
 
   // Keep a sensible default selection without overriding operator choices.
   useEffect(() => {
@@ -72,6 +83,10 @@ export function BacktesterTab() {
       setSelectedRunId(runs[0].run_id);
     }
   }, [runs, selectedRunId]);
+
+  // Local submission takes priority over the server-polled active_run so the
+  // button stays disabled even when a fast run finishes before the next poll.
+  const effectiveActiveRunId = submittedRunId ?? activeRun?.run_id ?? null;
 
   return (
     <main className="shell">
@@ -93,7 +108,8 @@ export function BacktesterTab() {
 
       <TriggerPanel
         onSubmit={(request) => startMutation.mutate(request)}
-        isPending={startMutation.isPending}
+        isSubmitting={startMutation.isPending}
+        activeRunId={effectiveActiveRunId}
         error={startMutation.error}
         activeRun={activeRun}
       />
@@ -134,12 +150,14 @@ export function BacktesterTab() {
 
 function TriggerPanel({
   onSubmit,
-  isPending,
+  isSubmitting,
+  activeRunId,
   error,
   activeRun
 }: {
   onSubmit: (request: StartBacktestRequest) => void;
-  isPending: boolean;
+  isSubmitting: boolean;
+  activeRunId: string | null;
   error: Error | null;
   activeRun: BacktestRunSummary | null;
 }) {
@@ -153,7 +171,8 @@ function TriggerPanel({
 
   const conflict = error instanceof ApiError && error.status === 409;
   const invalid = error instanceof ApiError && error.status === 422;
-  const canSubmit = windowStart !== "" && windowEnd !== "" && !isPending && activeRun === null;
+  const busy = isSubmitting || activeRunId !== null;
+  const canSubmit = windowStart !== "" && windowEnd !== "" && !busy;
 
   const submit = () => {
     if (!canSubmit) {
@@ -192,7 +211,7 @@ function TriggerPanel({
               type="datetime-local"
               value={windowStart}
               onChange={(event) => setWindowStart(event.target.value)}
-              disabled={isPending}
+              disabled={busy}
             />
           </label>
           <label>
@@ -201,7 +220,7 @@ function TriggerPanel({
               type="datetime-local"
               value={windowEnd}
               onChange={(event) => setWindowEnd(event.target.value)}
-              disabled={isPending}
+              disabled={busy}
             />
           </label>
         </div>
@@ -211,7 +230,7 @@ function TriggerPanel({
             <select
               value={mode}
               onChange={(event) => setMode(event.target.value as StartBacktestRequest["mode"])}
-              disabled={isPending}
+              disabled={busy}
             >
               <option value="replay">replay</option>
               <option value="regeneration">regeneration</option>
@@ -224,7 +243,7 @@ function TriggerPanel({
               onChange={(event) =>
                 setTimingScenario(event.target.value as StartBacktestRequest["timing_scenario"])
               }
-              disabled={isPending}
+              disabled={busy}
             >
               <option value="ideal">ideal</option>
               <option value="actual">actual</option>
@@ -238,7 +257,7 @@ function TriggerPanel({
               onChange={(event) =>
                 setCardPopulation(event.target.value as StartBacktestRequest["card_population"])
               }
-              disabled={isPending}
+              disabled={busy}
             >
               <option value="all">all</option>
               <option value="approved_only">approved_only</option>
@@ -252,7 +271,7 @@ function TriggerPanel({
             <input
               value={strategiesText}
               onChange={(event) => setStrategiesText(event.target.value)}
-              disabled={isPending}
+              disabled={busy}
             />
           </label>
           <label>
@@ -263,7 +282,7 @@ function TriggerPanel({
               step="any"
               value={initialCapitalText}
               onChange={(event) => setInitialCapitalText(event.target.value)}
-              disabled={isPending}
+              disabled={busy}
             />
           </label>
         </div>
@@ -274,14 +293,14 @@ function TriggerPanel({
         )}
         <div className="filter-editor-actions">
           <button type="button" className="primary-button" onClick={submit} disabled={!canSubmit}>
-            {isPending ? "Starting" : "Run backtest"}
+            {isSubmitting ? "Starting…" : activeRunId ? "Running…" : "Run backtest"}
           </button>
-          {!isPending && activeRun !== null && (
+          {activeRunId !== null && !isSubmitting && (
             <span className="muted">
-              Run <strong>{activeRun.run_id.slice(0, 8)}…</strong> is active. Wait for it to finish.
+              Run <strong>{activeRunId.slice(0, 8)}…</strong> is running. Wait for it to finish.
             </span>
           )}
-          {!isPending && activeRun === null && (windowStart === "" || windowEnd === "") && (
+          {!busy && (windowStart === "" || windowEnd === "") && (
             <span className="muted">
               Set a full UTC date <em>and</em> time for both window start and end to enable this.
             </span>
