@@ -5,12 +5,13 @@ import {
   fetchReprocessStatus,
   fetchThesisBuilderMetrics,
   fetchThesisCardArticles,
+  fetchThesisCards,
   fetchWindowArticles,
   reprocessThesisBuilder,
-  type ThesisBuilderActionableCard,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderPendingWindow,
+  type ThesisCardSummary,
   type ThesisReprocessStatusResponse,
   type ThroughputPresetWindow,
   type WindowArticle,
@@ -105,7 +106,7 @@ export function ThesisBuilderTab() {
         <MetricTile label="Avg time to expiry" value={formatDuration(data?.average_pending_expires_in_seconds)} />
       </section>
 
-      <ActionableCardsPanel cards={data?.actionable_cards ?? []} />
+      <ThesisCardsPanel window={window} />
       <PendingWindowsPanel windows={data?.pending_windows ?? []} />
       <section className="layout thesis-layout">
         <StaleEvidencePanel data={data} />
@@ -337,25 +338,145 @@ function EvidenceArticle({ article }: { article: WindowArticle }) {
   );
 }
 
-function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] }) {
+type ValidationFilter = "all" | "valid" | "rejected";
+type DirectionFilter = "buy_sell" | "all" | "buy" | "sell" | "hold";
+type SignalFilter = "all" | "published" | "pending";
+
+function matchesFilters(
+  card: ThesisCardSummary,
+  filters: {
+    validation: ValidationFilter;
+    direction: DirectionFilter;
+    signal: SignalFilter;
+    strategy: string;
+    ticker: string;
+    showExpired: boolean;
+  }
+): boolean {
+  if (filters.validation !== "all" && card.validation_status !== filters.validation) {
+    return false;
+  }
+  if (filters.direction === "buy_sell") {
+    if (card.direction !== "buy" && card.direction !== "sell") {
+      return false;
+    }
+  } else if (filters.direction !== "all" && card.direction !== filters.direction) {
+    return false;
+  }
+  if (filters.signal === "published" && !card.signal_published) {
+    return false;
+  }
+  if (filters.signal === "pending" && card.signal_published) {
+    return false;
+  }
+  if (filters.strategy !== "all" && card.strategy !== filters.strategy) {
+    return false;
+  }
+  if (filters.ticker && !card.ticker.toLowerCase().includes(filters.ticker.toLowerCase())) {
+    return false;
+  }
+  if (!filters.showExpired && card.expires_in_seconds <= 0) {
+    return false;
+  }
+  return true;
+}
+
+function ThesisCardsPanel({ window }: { window: ThroughputPresetWindow }) {
+  const cardsQuery = useQuery({
+    queryKey: ["thesis-builder", "cards", window],
+    queryFn: () => fetchThesisCards(window),
+    refetchInterval: 15000
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [validation, setValidation] = useState<ValidationFilter>("valid");
+  const [direction, setDirection] = useState<DirectionFilter>("buy_sell");
+  const [signal, setSignal] = useState<SignalFilter>("all");
+  const [strategy, setStrategy] = useState<string>("all");
+  const [ticker, setTicker] = useState<string>("");
   const [showExpired, setShowExpired] = useState(false);
-  const visible = showExpired ? cards : cards.filter((c) => c.expires_in_seconds > 0);
+
+  const cards = cardsQuery.data?.cards ?? [];
+  const strategyOptions = Array.from(new Set(cards.map((c) => c.strategy))).sort();
+  const filters = { validation, direction, signal, strategy, ticker, showExpired };
+  const visible = cards.filter((c) => matchesFilters(c, filters));
   const selectedCard = visible.find((c) => c.card_id === selectedId) ?? null;
 
   const emptyText =
     cards.length === 0
-      ? "No actionable thesis cards."
-      : 'No live actionable cards. Check "Show expired" to see expired cards.';
+      ? "No thesis cards in this window."
+      : "No cards match the current filters.";
 
   return (
     <section className="panel panel-large">
       <div className="panel-heading">
         <div>
-          <h2>Actionable Thesis Cards</h2>
-          <span>Valid buy/sell cards ready for trading</span>
+          <h2>Thesis Cards</h2>
+          <span>All thesis cards in the window, newest first — filter to slice</span>
         </div>
-        <label style={{ fontSize: "0.85rem", color: "var(--color-muted, #64726c)", display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+      </div>
+      <div className="thesis-card-filters">
+        <label>
+          Status
+          <select
+            aria-label="Filter by validation status"
+            value={validation}
+            onChange={(e) => setValidation(e.target.value as ValidationFilter)}
+          >
+            <option value="all">All</option>
+            <option value="valid">Valid</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </label>
+        <label>
+          Direction
+          <select
+            aria-label="Filter by direction"
+            value={direction}
+            onChange={(e) => setDirection(e.target.value as DirectionFilter)}
+          >
+            <option value="buy_sell">Buy + Sell</option>
+            <option value="all">All</option>
+            <option value="buy">Buy</option>
+            <option value="sell">Sell</option>
+            <option value="hold">Hold</option>
+          </select>
+        </label>
+        <label>
+          Signal
+          <select
+            aria-label="Filter by signal"
+            value={signal}
+            onChange={(e) => setSignal(e.target.value as SignalFilter)}
+          >
+            <option value="all">All</option>
+            <option value="published">Published</option>
+            <option value="pending">Pending</option>
+          </select>
+        </label>
+        <label>
+          Strategy
+          <select
+            aria-label="Filter by strategy"
+            value={strategy}
+            onChange={(e) => setStrategy(e.target.value)}
+          >
+            <option value="all">All</option>
+            {strategyOptions.map((s) => (
+              <option key={s} value={s}>{formatToken(s)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Ticker
+          <input
+            type="text"
+            aria-label="Filter by ticker"
+            value={ticker}
+            placeholder="e.g. AAPL"
+            onChange={(e) => setTicker(e.target.value)}
+          />
+        </label>
+        <label className="thesis-card-filter-check">
           <input
             type="checkbox"
             checked={showExpired}
@@ -364,8 +485,12 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
           Show expired
         </label>
       </div>
+      {cardsQuery.isError && <div className="inline-error">{cardsQuery.error.message}</div>}
+      {cardsQuery.data && !cardsQuery.data.available && (
+        <div className="inline-error">{cardsQuery.data.message ?? "Thesis cards unavailable."}</div>
+      )}
       {visible.length === 0 ? (
-        <div className="empty">{emptyText}</div>
+        <div className="empty">{cardsQuery.isLoading ? "Loading thesis cards…" : emptyText}</div>
       ) : (
         <div className="pending-windows-layout">
           <div className="pending-list-wrap">
@@ -376,6 +501,7 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
                   <th>Strategy</th>
                   <th>Direction</th>
                   <th>Confidence</th>
+                  <th>Status</th>
                   <th>Expires in</th>
                   <th>Created</th>
                   <th>Signal</th>
@@ -399,6 +525,11 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
                     <td>{formatToken(c.strategy)}</td>
                     <td>{formatToken(c.direction)}</td>
                     <td>{c.confidence.toFixed(2)}</td>
+                    <td>
+                      <span className={c.validation_status === "valid" ? "chip" : "chip warning"}>
+                        {formatToken(c.validation_status)}
+                      </span>
+                    </td>
                     <td>{formatExpiresIn(c.expires_in_seconds)}</td>
                     <td>{formatDate(c.created_at)}</td>
                     <td>
@@ -413,7 +544,7 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
           </div>
           <div className="pending-detail">
             {selectedCard ? (
-              <ActionableCardDetail card={selectedCard} />
+              <ThesisCardDetail card={selectedCard} />
             ) : (
               <div className="empty">Select a card to see details.</div>
             )}
@@ -424,7 +555,7 @@ function ActionableCardsPanel({ cards }: { cards: ThesisBuilderActionableCard[] 
   );
 }
 
-function ActionableCardDetail({ card: c }: { card: ThesisBuilderActionableCard }) {
+function ThesisCardDetail({ card: c }: { card: ThesisCardSummary }) {
   const [articlesOpen, setArticlesOpen] = useState(false);
   return (
     <div className="pending-detail-grid">
@@ -452,6 +583,16 @@ function ActionableCardDetail({ card: c }: { card: ThesisBuilderActionableCard }
         <span>Confidence</span>
         <strong>{c.confidence.toFixed(2)}</strong>
       </div>
+      <div className="pending-detail-row">
+        <span>Validation status</span>
+        <strong>{formatToken(c.validation_status)}</strong>
+      </div>
+      {c.validation_status !== "valid" && c.rejection_reason_code && (
+        <div className="pending-detail-row">
+          <span>Rejection reason</span>
+          <strong>{formatToken(c.rejection_reason_code)}</strong>
+        </div>
+      )}
       <div className="pending-detail-row">
         <span>Created</span>
         <strong>{formatDate(c.created_at)}</strong>

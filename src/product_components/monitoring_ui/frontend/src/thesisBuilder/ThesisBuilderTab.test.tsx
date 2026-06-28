@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { ThesisBuilderTab } from "./ThesisBuilderTab";
 
 const fetchThesisBuilderMetrics = vi.fn();
+const fetchThesisCards = vi.fn();
 const useQuery = vi.fn();
 
 vi.mock("@tanstack/react-query", () => ({
@@ -15,6 +16,7 @@ vi.mock("../api", async () => {
   return {
     ...actual,
     fetchThesisBuilderMetrics: (...args: unknown[]) => fetchThesisBuilderMetrics(...args),
+    fetchThesisCards: (...args: unknown[]) => fetchThesisCards(...args),
   };
 });
 
@@ -23,6 +25,9 @@ describe("ThesisBuilderTab", () => {
     useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
       if (options?.queryKey?.includes("reprocess")) {
         return { data: undefined, error: null };
+      }
+      if (options?.queryKey?.includes("cards")) {
+        return cardsQueryResult;
       }
       return metricsQueryResult;
     });
@@ -59,40 +64,75 @@ describe("ThesisBuilderTab", () => {
           },
         ],
         pending_windows: [],
-        actionable_cards: [
-          {
-            card_id: "card-1",
-            ticker: "AAPL",
-            exchange_code: "NASDAQ",
-            strategy: "event_driven",
-            direction: "buy",
-            time_horizon: "swing_1d_5d",
-            confidence: 0.82,
-            created_at: "2026-06-16T09:30:00Z",
-            expires_at: "2026-06-17T09:30:00Z",
-            expires_in_seconds: 86400,
-            evidence_count: 3,
-            signal_published: false,
-          },
-          {
-            card_id: "card-2",
-            ticker: "MSFT",
-            exchange_code: "NASDAQ",
-            strategy: "sentiment_momentum",
-            direction: "sell",
-            time_horizon: "swing_1d_5d",
-            confidence: 0.75,
-            created_at: "2026-06-15T08:00:00Z",
-            expires_at: "2026-06-15T20:00:00Z",
-            expires_in_seconds: -3600,
-            evidence_count: 2,
-            signal_published: true,
-          },
-        ],
+        actionable_cards: [],
         generated_at: "2026-06-16T10:00:00Z",
       },
       isError: false,
       error: null,
+  };
+
+  const cardsQueryResult = {
+    data: {
+      available: true,
+      message: null,
+      window: "1d",
+      window_start_at: "2026-06-16T09:00:00Z",
+      window_end_at: "2026-06-16T10:00:00Z",
+      cards: [
+        {
+          card_id: "card-1",
+          ticker: "AAPL",
+          exchange_code: "NASDAQ",
+          strategy: "event_driven",
+          direction: "buy",
+          time_horizon: "swing_1d_5d",
+          confidence: 0.82,
+          created_at: "2026-06-16T09:30:00Z",
+          expires_at: "2026-06-17T09:30:00Z",
+          expires_in_seconds: 86400,
+          evidence_count: 3,
+          signal_published: false,
+          validation_status: "valid",
+          rejection_reason_code: null,
+        },
+        {
+          card_id: "card-2",
+          ticker: "MSFT",
+          exchange_code: "NASDAQ",
+          strategy: "sentiment_momentum",
+          direction: "sell",
+          time_horizon: "swing_1d_5d",
+          confidence: 0.75,
+          created_at: "2026-06-15T08:00:00Z",
+          expires_at: "2026-06-15T20:00:00Z",
+          expires_in_seconds: -3600,
+          evidence_count: 2,
+          signal_published: true,
+          validation_status: "valid",
+          rejection_reason_code: null,
+        },
+        {
+          card_id: "card-3",
+          ticker: "TSLA",
+          exchange_code: "NASDAQ",
+          strategy: "contrarian_reversal",
+          direction: "sell",
+          time_horizon: "swing_1d_5d",
+          confidence: 0.41,
+          created_at: "2026-06-16T09:45:00Z",
+          expires_at: "2026-06-16T11:45:00Z",
+          expires_in_seconds: 7200,
+          evidence_count: 1,
+          signal_published: false,
+          validation_status: "rejected",
+          rejection_reason_code: "stale_evidence",
+        },
+      ],
+      generated_at: "2026-06-16T10:00:00Z",
+    },
+    isError: false,
+    isLoading: false,
+    error: null,
   };
 
   it("renders the thesis dead-letter metric and recent rows", () => {
@@ -103,10 +143,10 @@ describe("ThesisBuilderTab", () => {
     expect(screen.getByText("missing_article_payload")).toBeInTheDocument();
   });
 
-  it("renders the actionable thesis cards section and detail on selection", () => {
+  it("renders the thesis cards section and detail on selection", () => {
     render(<ThesisBuilderTab />);
 
-    expect(screen.getByText("Actionable Thesis Cards")).toBeInTheDocument();
+    expect(screen.getByText("Thesis Cards")).toBeInTheDocument();
     expect(screen.getByText("Select a card to see details.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("AAPL"));
@@ -115,16 +155,58 @@ describe("ThesisBuilderTab", () => {
     expect(screen.getByText("swing 1d 5d")).toBeInTheDocument();
   });
 
-  it("hides expired cards by default and reveals them when checkbox is checked", () => {
+  it("defaults to valid buy/sell live cards and hides rejected/expired", () => {
     render(<ThesisBuilderTab />);
 
+    // AAPL: valid buy, live -> visible
     expect(screen.getByText("AAPL")).toBeInTheDocument();
+    // MSFT: valid sell, expired -> hidden by default
+    expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
+    // TSLA: rejected -> hidden by default
+    expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
+  });
+
+  it("reveals expired cards when the checkbox is checked", () => {
+    render(<ThesisBuilderTab />);
+
     expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /show expired/i }));
 
     expect(screen.getByText("MSFT")).toBeInTheDocument();
     expect(screen.getByText("Expired 1h 0m ago")).toBeInTheDocument();
+  });
+
+  it("reveals rejected cards when the status filter is switched to rejected", () => {
+    render(<ThesisBuilderTab />);
+
+    expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Filter by validation status"), {
+      target: { value: "rejected" },
+    });
+
+    expect(screen.getByText("TSLA")).toBeInTheDocument();
+    // AAPL (valid) is now filtered out
+    expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(screen.getByText("Rejection reason")).toBeInTheDocument();
+    expect(screen.getByText("stale evidence")).toBeInTheDocument();
+  });
+
+  it("filters by ticker search", () => {
+    render(<ThesisBuilderTab />);
+
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Filter by ticker"), {
+      target: { value: "msft" },
+    });
+
+    // AAPL no longer matches the search; MSFT is expired so still hidden -> empty state
+    expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
+    expect(screen.getByText("No cards match the current filters.")).toBeInTheDocument();
   });
 
   it("shows a thesis-specific unavailable empty state for dead letters", () => {
@@ -154,6 +236,9 @@ describe("ThesisBuilderTab", () => {
     useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
       if (options?.queryKey?.includes("reprocess")) {
         return { data: undefined, error: null };
+      }
+      if (options?.queryKey?.includes("cards")) {
+        return cardsQueryResult;
       }
       return unavailableResult;
     });

@@ -114,6 +114,37 @@ class ThesisBuilderActionableCard(BaseModel):
     signal_published: bool
 
 
+class ThesisCardSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    card_id: str
+    ticker: str
+    exchange_code: str
+    strategy: str
+    direction: str
+    time_horizon: str
+    confidence: float
+    created_at: datetime
+    expires_at: datetime
+    expires_in_seconds: float
+    evidence_count: int
+    signal_published: bool
+    validation_status: str
+    rejection_reason_code: str | None = None
+
+
+class ThesisCardListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    window: str
+    window_start_at: datetime
+    window_end_at: datetime
+    cards: list[ThesisCardSummary] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class WindowArticle(BaseModel):
     model_config = ConfigDict(frozen=True)
 

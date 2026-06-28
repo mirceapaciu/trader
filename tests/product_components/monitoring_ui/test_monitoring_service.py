@@ -24,6 +24,8 @@ from src.product_components.monitoring_ui.backend.models import (
     ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThesisBuilderPendingWindow,
+    ThesisCardListResponse,
+    ThesisCardSummary,
     ThroughputResponse,
     WindowArticlesResponse,
     WatchlistItemPayload,
@@ -108,6 +110,51 @@ class FakeDataSource:
         self.thesis_builder_window = window
         self.thesis_builder_evidence_collection_max_minutes = evidence_collection_max_minutes
         return _thesis_builder_metrics(window=window)
+
+    def fetch_thesis_cards(
+        self,
+        *,
+        window_start_at: datetime,
+        window_end_at: datetime,
+        limit: int = 500,
+    ) -> list[ThesisCardSummary]:
+        self.thesis_cards_window_start_at = window_start_at
+        self.thesis_cards_window_end_at = window_end_at
+        self.thesis_cards_limit = limit
+        return [
+            ThesisCardSummary(
+                card_id="card-valid",
+                ticker="AAPL",
+                exchange_code="XNAS",
+                strategy="event_driven",
+                direction="buy",
+                time_horizon="swing_1d_5d",
+                confidence=0.82,
+                created_at=_now(),
+                expires_at=_now(),
+                expires_in_seconds=86400.0,
+                evidence_count=3,
+                signal_published=False,
+                validation_status="valid",
+                rejection_reason_code=None,
+            ),
+            ThesisCardSummary(
+                card_id="card-rejected",
+                ticker="MSFT",
+                exchange_code="XNAS",
+                strategy="sentiment_momentum",
+                direction="hold",
+                time_horizon="swing_1d_5d",
+                confidence=0.40,
+                created_at=_now(),
+                expires_at=_now(),
+                expires_in_seconds=-3600.0,
+                evidence_count=1,
+                signal_published=False,
+                validation_status="rejected",
+                rejection_reason_code="stale_evidence",
+            ),
+        ]
 
     def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse:
         self.thesis_card_articles_id = card_id
@@ -245,6 +292,17 @@ class FailingThesisBuilderMetricsDataSource(FakeDataSource):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse:
+        raise redis.ConnectionError("redis unavailable")
+
+
+class FailingThesisBuilderCardsDataSource(FakeDataSource):
+    def fetch_thesis_cards(
+        self,
+        *,
+        window_start_at: datetime,
+        window_end_at: datetime,
+        limit: int = 500,
+    ) -> list[ThesisCardSummary]:
         raise redis.ConnectionError("redis unavailable")
 
 
@@ -689,6 +747,47 @@ def test_get_thesis_builder_metrics_forwards_supported_window() -> None:
     assert len(response.actionable_cards) == 1
     assert response.actionable_cards[0].card_id == "card-1"
     assert response.actionable_cards[0].direction == "buy"
+
+
+def test_get_thesis_cards_forwards_window_and_returns_all_statuses() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_cards(window="7d")
+
+    assert response.available is True
+    assert response.window == "7d"
+    assert data_source.thesis_cards_window_start_at == response.window_start_at
+    assert data_source.thesis_cards_window_end_at == response.window_end_at
+    # Includes rejected/hold cards the actionable query excludes.
+    statuses = {card.validation_status for card in response.cards}
+    assert statuses == {"valid", "rejected"}
+    rejected = next(c for c in response.cards if c.validation_status == "rejected")
+    assert rejected.direction == "hold"
+    assert rejected.rejection_reason_code == "stale_evidence"
+
+
+def test_get_thesis_cards_rejects_invalid_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    try:
+        service.get_thesis_cards(window="12h")
+    except InvalidThroughputWindow as exc:
+        assert "Unsupported thesis-builder cards window" in str(exc)
+    else:
+        raise AssertionError("expected InvalidThroughputWindow")
+
+
+def test_get_thesis_cards_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingThesisBuilderCardsDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_cards(window="1d")
+
+    assert response.available is False
+    assert response.message == "ThesisBuilder telemetry unavailable."
+    assert response.cards == []
 
 
 def test_get_thesis_card_articles_forwards_card_id() -> None:

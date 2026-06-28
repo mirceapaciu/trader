@@ -35,6 +35,7 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
+    ThesisCardListResponse,
     ThesisReprocessRequest,
     ThesisReprocessResponse,
     ThesisReprocessStatusResponse,
@@ -203,6 +204,16 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
             return _run_with_infrastructure_mapping(
                 lambda: service.get_thesis_builder_metrics(window=window),
                 detail="thesis-builder metrics unavailable",
+            )
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get("/api/thesis-builder/cards", response_model=ThesisCardListResponse)
+    def get_thesis_cards(window: str | None = Query(default=None)) -> ThesisCardListResponse:
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.get_thesis_cards(window=window),
+                detail="thesis-builder cards unavailable",
             )
         except InvalidThroughputWindow as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc

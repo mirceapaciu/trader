@@ -40,6 +40,7 @@ from .models import (
     ThesisBuilderMetricsResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderPendingWindow,
+    ThesisCardSummary,
     ThroughputBucket,
     ThroughputResponse,
     WindowArticle,
@@ -947,6 +948,51 @@ class PostgresRedisMonitoringDataSource:
                 expires_in_seconds=float(row["expires_in_seconds"] or 0),
                 evidence_count=int(row["evidence_count"] or 0),
                 signal_published=bool(row["signal_published"]),
+            )
+            for row in rows
+        ]
+
+    def fetch_thesis_cards(
+        self,
+        *,
+        window_start_at: datetime,
+        window_end_at: datetime,
+        limit: int = 500,
+    ) -> list[ThesisCardSummary]:
+        sql = (
+            f"SELECT id, ticker, exchange_code, strategy, direction, time_horizon, confidence, "
+            f"created_at, expires_at, "
+            f"EXTRACT(EPOCH FROM (expires_at - NOW())) AS expires_in_seconds, "
+            f"jsonb_array_length(evidence) AS evidence_count, "
+            f"(signal_published_at IS NOT NULL) AS signal_published, "
+            f"validation_status, rejection_reason_code "
+            f"FROM {self._thesis_builder_schema}.t_thesis_cards "
+            f"WHERE created_at >= %s AND created_at < %s "
+            f"ORDER BY created_at DESC LIMIT %s"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (window_start_at, window_end_at, limit))
+            rows = cur.fetchall()
+        return [
+            ThesisCardSummary(
+                card_id=str(row["id"]),
+                ticker=str(row["ticker"]),
+                exchange_code=str(row["exchange_code"]),
+                strategy=str(row["strategy"]),
+                direction=str(row["direction"]),
+                time_horizon=str(row["time_horizon"]),
+                confidence=float(row["confidence"] or 0),
+                created_at=_to_utc(row["created_at"]),
+                expires_at=_to_utc(row["expires_at"]),
+                expires_in_seconds=float(row["expires_in_seconds"] or 0),
+                evidence_count=int(row["evidence_count"] or 0),
+                signal_published=bool(row["signal_published"]),
+                validation_status=str(row["validation_status"]),
+                rejection_reason_code=(
+                    str(row["rejection_reason_code"])
+                    if row["rejection_reason_code"]
+                    else None
+                ),
             )
             for row in rows
         ]

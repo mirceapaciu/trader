@@ -590,6 +590,37 @@ h2 {
   min-height: 0;
 }
 
+.thesis-card-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  padding: 8px 0 12px;
+}
+
+.thesis-card-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--color-muted, #64726c);
+}
+
+.thesis-card-filters select,
+.thesis-card-filters input[type="text"] {
+  font-size: 0.85rem;
+  padding: 4px 6px;
+  border: 1px solid #dbe3dc;
+  border-radius: 6px;
+}
+
+.thesis-card-filters .thesis-card-filter-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 .pending-list-wrap {
   flex: 0 0 55%;
   max-height: 350px;

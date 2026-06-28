@@ -48,6 +48,8 @@ from .models import (
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
+    ThesisCardListResponse,
+    ThesisCardSummary,
     ThesisReprocessRequest,
     ThesisReprocessResponse,
     ThesisReprocessStatusResponse,
@@ -93,6 +95,14 @@ class MonitoringDataSource(Protocol):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse: ...
+
+    def fetch_thesis_cards(
+        self,
+        *,
+        window_start_at: datetime,
+        window_end_at: datetime,
+        limit: int = 500,
+    ) -> list[ThesisCardSummary]: ...
 
     def get_window_articles(self, *, window_id: int) -> WindowArticlesResponse: ...
 
@@ -347,6 +357,36 @@ class MonitoringService:
                 missed_stale_thesis_cards_count=0,
                 dead_letter_count=0,
                 recent_dead_letters=[],
+                generated_at=now,
+            )
+
+    def get_thesis_cards(self, *, window: str | None) -> ThesisCardListResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported thesis-builder cards window: {selected_window}")
+        now = _utc_now()
+        window_start_at = now - _window_duration(selected_window)
+        try:
+            cards = self._data_source.fetch_thesis_cards(
+                window_start_at=window_start_at,
+                window_end_at=now,
+            )
+            return ThesisCardListResponse(
+                window=selected_window,
+                window_start_at=window_start_at,
+                window_end_at=now,
+                cards=cards,
+                generated_at=now,
+            )
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("thesis builder cards unavailable for window %s", selected_window)
+            return ThesisCardListResponse(
+                available=False,
+                message="ThesisBuilder telemetry unavailable.",
+                window=selected_window,
+                window_start_at=window_start_at,
+                window_end_at=now,
+                cards=[],
                 generated_at=now,
             )
 

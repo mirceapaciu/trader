@@ -94,6 +94,33 @@ export type ThesisBuilderActionableCard = {
   signal_published: boolean;
 };
 
+export type ThesisCardSummary = {
+  card_id: string;
+  ticker: string;
+  exchange_code: string;
+  strategy: string;
+  direction: string;
+  time_horizon: string;
+  confidence: number;
+  created_at: string;
+  expires_at: string;
+  expires_in_seconds: number;
+  evidence_count: number;
+  signal_published: boolean;
+  validation_status: string;
+  rejection_reason_code?: string | null;
+};
+
+export type ThesisCardListResponse = {
+  available: boolean;
+  message?: string | null;
+  window: string;
+  window_start_at: string;
+  window_end_at: string;
+  cards: ThesisCardSummary[];
+  generated_at: string;
+};
+
 export type ThesisBuilderDeadLetterItem = {
   source_message_id: string;
   article_id: string;
@@ -751,6 +778,12 @@ export function fetchThroughput(request: ThroughputRequest): Promise<ThroughputR
 export function fetchThesisBuilderMetrics(window: ThroughputPresetWindow): Promise<ThesisBuilderMetricsResponse> {
   return getJson<ThesisBuilderMetricsResponse>(
     `/api/thesis-builder/metrics?window=${encodeURIComponent(window)}`
+  );
+}
+
+export function fetchThesisCards(window: ThroughputPresetWindow): Promise<ThesisCardListResponse> {
+  return getJson<ThesisCardListResponse>(
+    `/api/thesis-builder/cards?window=${encodeURIComponent(window)}`
   );
 }
 
