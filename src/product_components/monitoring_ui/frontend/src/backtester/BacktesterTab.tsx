@@ -276,6 +276,11 @@ function TriggerPanel({
           <button type="button" className="primary-button" onClick={submit} disabled={!canSubmit}>
             {isPending ? "Starting" : "Run backtest"}
           </button>
+          {!isPending && (windowStart === "" || windowEnd === "") && (
+            <span className="muted">
+              Set a full UTC date <em>and</em> time for both window start and end to enable this.
+            </span>
+          )}
         </div>
       </div>
       {conflict && (
