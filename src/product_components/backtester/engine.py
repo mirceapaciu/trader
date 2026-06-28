@@ -195,15 +195,23 @@ class BacktesterEngine:
             if news_published_at is not None and news_fetched_at is not None
             else None
         )
-        thesis_build_delay = (
+        # Clamp to None when timestamps are causally inconsistent (e.g. article
+        # re-fetched after the card was already created).
+        thesis_build_delay_raw = (
             (created_at - news_fetched_at).total_seconds()
             if news_fetched_at is not None
             else None
         )
-        total_pipeline_delay = (
+        thesis_build_delay = (
+            thesis_build_delay_raw if thesis_build_delay_raw is None or thesis_build_delay_raw >= 0 else None
+        )
+        total_pipeline_delay_raw = (
             (created_at - news_published_at).total_seconds()
             if news_published_at is not None
             else None
+        )
+        total_pipeline_delay = (
+            total_pipeline_delay_raw if total_pipeline_delay_raw is None or total_pipeline_delay_raw >= 0 else None
         )
         return _CardTiming(
             news_ready_at=news_ready_at,

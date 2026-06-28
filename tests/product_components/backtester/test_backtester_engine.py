@@ -163,3 +163,44 @@ def test_delays_recorded_on_trade():
     assert trade.news_fetch_delay_seconds == 120.0
     assert trade.thesis_build_delay_seconds == 60.0
     assert trade.total_pipeline_delay_seconds == 180.0
+
+
+def test_negative_thesis_build_delay_clamped_to_none():
+    # When an article is re-fetched after card creation (fetched_at > created_at),
+    # thesis_build_delay would be negative — clamp to None to satisfy DB constraint.
+    published = T0
+    fetched_late = T0 + timedelta(hours=2)  # re-fetched well after card creation
+    created = T0 + timedelta(seconds=300)   # card created 5 min after publish
+    card = ExportedThesisCard(
+        id="card-late-fetch",
+        ticker="AAPL",
+        exchange_code="NASDAQ",
+        direction="buy",
+        strategy="sentiment_momentum",
+        time_horizon="intraday",
+        confidence=0.9,
+        risk_max_loss_usd=100.0,
+        risk_stop_condition="stop",
+        risk_invalidation_condition="invalidate",
+        validation_status="valid",
+        rejection_reason_code=None,
+        created_at=created,
+        expires_at=created + timedelta(hours=4),
+        signal_published_at=created,
+        evidence=[
+            ExportedEvidenceArticle(
+                article_id="art-late", published_at=published, fetched_at=fetched_late
+            )
+        ],
+        news_ready_at=published,
+    )
+    entry = created + timedelta(seconds=180)
+    engine = BacktesterEngine(
+        params=_params(),
+        cards_provider=FakeCards([card]),
+        bars_provider=FakeBars(_bars_rising(entry)),
+    )
+    trade = engine.run().trades[0]
+    assert trade.thesis_build_delay_seconds is None
+    assert trade.news_fetch_delay_seconds is not None  # fetch delay is still valid
+    assert trade.total_pipeline_delay_seconds == 300.0  # created - published = 300s
