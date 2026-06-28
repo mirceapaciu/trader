@@ -23,11 +23,27 @@ $null = New-Item -ItemType Directory -Path $logsDir -Force
 
 if (Test-Path -LiteralPath $stopScript) {
     & $stopScript -BackendPort $BackendPort -FrontendPort $FrontendPort
+    # Give the OS time to release file handles from killed pipeline processes
+    Start-Sleep -Milliseconds 500
+}
+
+function Write-StartLog {
+    param([string]$LogFile, [string]$Message)
+    $retries = 5
+    for ($i = 0; $i -lt $retries; $i++) {
+        try {
+            Out-File -LiteralPath $LogFile -InputObject $Message -Append -Encoding utf8
+            return
+        } catch {
+            if ($i -lt $retries - 1) { Start-Sleep -Milliseconds 300 }
+        }
+    }
+    Write-Warning "Could not write to log file: $LogFile"
 }
 
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-Out-File -LiteralPath $backendLog -InputObject "[$timestamp] starting backend on $apiBaseUrl" -Append -Encoding utf8
-Out-File -LiteralPath $frontendLog -InputObject "[$timestamp] starting frontend on $uiUrl" -Append -Encoding utf8
+Write-StartLog -LogFile $backendLog -Message "[$timestamp] starting backend on $apiBaseUrl"
+Write-StartLog -LogFile $frontendLog -Message "[$timestamp] starting frontend on $uiUrl"
 
 $backendCommand = "& { `$env:UI_PORT='$BackendPort'; Set-Location -LiteralPath '$repoRoot'; & '$pythonExe' -m src.product_components.monitoring_ui.backend 2>&1 | Out-File -LiteralPath '$backendLog' -Append -Encoding utf8 }"
 
