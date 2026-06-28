@@ -42,7 +42,8 @@
       "PowerShell(cmd.exe /c \"taskkill /PID 40012 /T /F\" 2>&1)",
       "PowerShell(cmd.exe /c \"taskkill /PID 10536 /T /F\" 2>&1)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('active_run before:', d.get\\('active_run'\\)\\)\")",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(PGPASSWORD=change_me psql -h 127.0.0.1 -p 5432 -U trader -d trader -c \"SELECT run_id, status, mode, timing_scenario, card_population, window_start_at, window_end_at, created_at, started_at, finished_at, error_code FROM backtester.backtest_runs ORDER BY created_at DESC LIMIT 5;\")"
     ]
   }
 }
