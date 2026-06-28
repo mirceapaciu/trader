@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -49,6 +50,24 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _THESIS_BUILDER_RECENT_DEAD_LETTER_LIMIT = 10
 _DLQ_SCAN_BATCH_SIZE = 500
 
+_BACKTEST_RUN_COLUMNS = (
+    "run_id, status, window_start_at, window_end_at, mode, timing_scenario, card_population, "
+    "strategies_requested, initial_capital, net_pnl, total_return, win_rate, profit_factor, "
+    "max_drawdown, created_at, started_at, finished_at, error_code, gross_profit, gross_loss, "
+    "total_commission, total_slippage, avg_win, avg_loss, expectancy, "
+    "max_drawdown_duration_seconds, sharpe_ratio, exposure_fraction, signal_accuracy, "
+    "cards_considered, cards_in_population, cards_live_executable, cards_skipped_no_price, "
+    "trades_opened, trades_closed, trades_risk_blocked, "
+    "avg_news_fetch_delay_seconds, p95_news_fetch_delay_seconds, max_news_fetch_delay_seconds, "
+    "avg_thesis_build_delay_seconds, p95_thesis_build_delay_seconds, max_thesis_build_delay_seconds, "
+    "avg_total_pipeline_delay_seconds, p95_total_pipeline_delay_seconds, max_total_pipeline_delay_seconds, "
+    "pnl_gap, win_rate_gap, trades_flipped_by_delay, summary_json"
+)
+
+
+class BacktesterTablesUnavailable(RuntimeError):
+    """Raised when the backtester schema/tables are missing, so the UI can degrade."""
+
 
 class PostgresRedisMonitoringDataSource:
     def __init__(
@@ -62,11 +81,13 @@ class PostgresRedisMonitoringDataSource:
         news_raw_queue: str,
         failed_messages_dlq: str,
         query_timeout_seconds: int,
+        backtester_schema: str = "backtester",
     ) -> None:
         self._dsn = dsn
         self._news_schema = _safe_identifier(news_schema)
         self._filter_quality_schema = _safe_identifier(filter_quality_schema)
         self._thesis_builder_schema = _safe_identifier(thesis_builder_schema)
+        self._backtester_schema = _safe_identifier(backtester_schema)
         self._queue_url = queue_url
         self._news_raw_queue = news_raw_queue
         self._failed_messages_dlq = failed_messages_dlq
@@ -686,6 +707,133 @@ class PostgresRedisMonitoringDataSource:
                 return 0
             return int(cur.rowcount or 0)
 
+    def list_backtest_runs(self, *, window_start_at: datetime) -> list["BacktestRunRow"]:
+        sql = (
+            f"SELECT {_BACKTEST_RUN_COLUMNS} "
+            f"FROM {self._backtester_schema}.t_backtest_runs "
+            f"WHERE created_at >= %s "
+            f"ORDER BY created_at DESC"
+        )
+        rows = self._fetch_backtest_rows(sql, (_to_utc(window_start_at),))
+        return [_backtest_run_row(row) for row in rows]
+
+    def get_active_backtest_run(self) -> "BacktestRunRow | None":
+        sql = (
+            f"SELECT {_BACKTEST_RUN_COLUMNS} "
+            f"FROM {self._backtester_schema}.t_backtest_runs "
+            f"WHERE status = 'running' "
+            f"ORDER BY created_at DESC LIMIT 1"
+        )
+        rows = self._fetch_backtest_rows(sql, ())
+        return _backtest_run_row(rows[0]) if rows else None
+
+    def get_backtest_run(self, *, run_id: str) -> "BacktestRunRow | None":
+        sql = (
+            f"SELECT {_BACKTEST_RUN_COLUMNS} "
+            f"FROM {self._backtester_schema}.t_backtest_runs "
+            f"WHERE run_id = %s LIMIT 1"
+        )
+        rows = self._fetch_backtest_rows(sql, (run_id,))
+        return _backtest_run_row(rows[0]) if rows else None
+
+    def list_backtest_trades(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        exit_reason: str | None = None,
+        card_status: str | None = None,
+        limit: int,
+        offset: int,
+    ) -> list["BacktestTradeRow"]:
+        where, params = self._backtest_trade_filters(
+            run_id=run_id,
+            timing_scenario=timing_scenario,
+            strategy=strategy,
+            exit_reason=exit_reason,
+            card_status=card_status,
+        )
+        sql = (
+            f"SELECT trade_id, ticker, exchange_code, strategy, direction, entry_timing_scenario, "
+            f"entry_at, entry_price, exit_at, exit_price, net_pnl, return_pct, exit_reason, "
+            f"risk_block_rule, news_fetch_delay_seconds, thesis_build_delay_seconds, "
+            f"total_pipeline_delay_seconds, card_decision_state, card_was_live_expired "
+            f"FROM {self._backtester_schema}.t_backtest_trades "
+            f"WHERE {where} "
+            f"ORDER BY entry_at ASC NULLS LAST, trade_id "
+            f"LIMIT %s OFFSET %s"
+        )
+        rows = self._fetch_backtest_rows(sql, (*params, limit, offset))
+        return [_backtest_trade_row(row) for row in rows]
+
+    def count_backtest_trades(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        exit_reason: str | None = None,
+        card_status: str | None = None,
+    ) -> int:
+        where, params = self._backtest_trade_filters(
+            run_id=run_id,
+            timing_scenario=timing_scenario,
+            strategy=strategy,
+            exit_reason=exit_reason,
+            card_status=card_status,
+        )
+        sql = (
+            f"SELECT COUNT(*) AS total "
+            f"FROM {self._backtester_schema}.t_backtest_trades "
+            f"WHERE {where}"
+        )
+        rows = self._fetch_backtest_rows(sql, tuple(params))
+        return int(rows[0]["total"]) if rows else 0
+
+    def list_backtest_equity_points(self, *, run_id: str) -> list["BacktestEquityRow"]:
+        sql = (
+            f"SELECT timing_scenario, as_of, equity, open_positions "
+            f"FROM {self._backtester_schema}.t_backtest_equity_points "
+            f"WHERE run_id = %s "
+            f"ORDER BY timing_scenario, as_of"
+        )
+        rows = self._fetch_backtest_rows(sql, (run_id,))
+        return [_backtest_equity_row(row) for row in rows]
+
+    def _backtest_trade_filters(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None,
+        strategy: str | None,
+        exit_reason: str | None,
+        card_status: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses = ["run_id = %s"]
+        params: list[Any] = [run_id]
+        if timing_scenario:
+            clauses.append("entry_timing_scenario = %s")
+            params.append(timing_scenario)
+        if strategy:
+            clauses.append("strategy = %s")
+            params.append(strategy)
+        if exit_reason:
+            clauses.append("exit_reason = %s")
+            params.append(exit_reason)
+        if card_status:
+            clauses.append("card_decision_state = %s")
+            params.append(card_status)
+        return " AND ".join(clauses), params
+
+    def _fetch_backtest_rows(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            try:
+                cur.execute(sql, params)
+            except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn) as exc:
+                raise BacktesterTablesUnavailable(str(exc)) from exc
+            return [dict(row) for row in cur.fetchall()]
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=True, connect_timeout=self._query_timeout_seconds)
 
@@ -1270,3 +1418,179 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list | tuple | set):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+@dataclass(frozen=True)
+class BacktestRunRow:
+    run_id: str
+    status: str
+    window_start_at: datetime
+    window_end_at: datetime
+    mode: str
+    timing_scenario: str
+    card_population: str
+    strategies_requested: list[str] | None
+    initial_capital: float
+    net_pnl: float | None
+    total_return: float | None
+    win_rate: float | None
+    profit_factor: float | None
+    max_drawdown: float | None
+    created_at: datetime
+    started_at: datetime
+    finished_at: datetime | None
+    error_code: str | None
+    gross_profit: float | None
+    gross_loss: float | None
+    total_commission: float | None
+    total_slippage: float | None
+    avg_win: float | None
+    avg_loss: float | None
+    expectancy: float | None
+    max_drawdown_duration_seconds: float | None
+    sharpe_ratio: float | None
+    exposure_fraction: float | None
+    signal_accuracy: float | None
+    cards_considered: int
+    cards_in_population: int
+    cards_live_executable: int
+    cards_skipped_no_price: int
+    trades_opened: int
+    trades_closed: int
+    trades_risk_blocked: int
+    avg_news_fetch_delay_seconds: float | None
+    p95_news_fetch_delay_seconds: float | None
+    max_news_fetch_delay_seconds: float | None
+    avg_thesis_build_delay_seconds: float | None
+    p95_thesis_build_delay_seconds: float | None
+    max_thesis_build_delay_seconds: float | None
+    avg_total_pipeline_delay_seconds: float | None
+    p95_total_pipeline_delay_seconds: float | None
+    max_total_pipeline_delay_seconds: float | None
+    pnl_gap: float | None
+    win_rate_gap: float | None
+    trades_flipped_by_delay: int | None
+    summary_json: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BacktestTradeRow:
+    trade_id: str
+    ticker: str
+    exchange_code: str
+    strategy: str
+    direction: str
+    entry_timing_scenario: str
+    entry_at: datetime | None
+    entry_price: float | None
+    exit_at: datetime | None
+    exit_price: float | None
+    net_pnl: float | None
+    return_pct: float | None
+    exit_reason: str
+    risk_block_rule: str | None
+    news_fetch_delay_seconds: float | None
+    thesis_build_delay_seconds: float | None
+    total_pipeline_delay_seconds: float | None
+    card_decision_state: str
+    card_was_live_expired: bool
+
+
+@dataclass(frozen=True)
+class BacktestEquityRow:
+    timing_scenario: str
+    as_of: datetime
+    equity: float
+    open_positions: int
+
+
+def _backtest_run_row(row: dict[str, Any]) -> BacktestRunRow:
+    strategies = row.get("strategies_requested")
+    return BacktestRunRow(
+        run_id=str(row["run_id"]),
+        status=str(row["status"]),
+        window_start_at=_to_utc(row["window_start_at"]),
+        window_end_at=_to_utc(row["window_end_at"]),
+        mode=str(row["mode"]),
+        timing_scenario=str(row["timing_scenario"]),
+        card_population=str(row["card_population"]),
+        strategies_requested=list(strategies) if strategies is not None else None,
+        initial_capital=float(row["initial_capital"]),
+        net_pnl=_optional_float(row.get("net_pnl")),
+        total_return=_optional_float(row.get("total_return")),
+        win_rate=_optional_float(row.get("win_rate")),
+        profit_factor=_optional_float(row.get("profit_factor")),
+        max_drawdown=_optional_float(row.get("max_drawdown")),
+        created_at=_to_utc(row["created_at"]),
+        started_at=_to_utc(row["started_at"]),
+        finished_at=_to_utc(row["finished_at"]) if row.get("finished_at") else None,
+        error_code=row.get("error_code"),
+        gross_profit=_optional_float(row.get("gross_profit")),
+        gross_loss=_optional_float(row.get("gross_loss")),
+        total_commission=_optional_float(row.get("total_commission")),
+        total_slippage=_optional_float(row.get("total_slippage")),
+        avg_win=_optional_float(row.get("avg_win")),
+        avg_loss=_optional_float(row.get("avg_loss")),
+        expectancy=_optional_float(row.get("expectancy")),
+        max_drawdown_duration_seconds=_optional_float(row.get("max_drawdown_duration_seconds")),
+        sharpe_ratio=_optional_float(row.get("sharpe_ratio")),
+        exposure_fraction=_optional_float(row.get("exposure_fraction")),
+        signal_accuracy=_optional_float(row.get("signal_accuracy")),
+        cards_considered=int(row.get("cards_considered") or 0),
+        cards_in_population=int(row.get("cards_in_population") or 0),
+        cards_live_executable=int(row.get("cards_live_executable") or 0),
+        cards_skipped_no_price=int(row.get("cards_skipped_no_price") or 0),
+        trades_opened=int(row.get("trades_opened") or 0),
+        trades_closed=int(row.get("trades_closed") or 0),
+        trades_risk_blocked=int(row.get("trades_risk_blocked") or 0),
+        avg_news_fetch_delay_seconds=_optional_float(row.get("avg_news_fetch_delay_seconds")),
+        p95_news_fetch_delay_seconds=_optional_float(row.get("p95_news_fetch_delay_seconds")),
+        max_news_fetch_delay_seconds=_optional_float(row.get("max_news_fetch_delay_seconds")),
+        avg_thesis_build_delay_seconds=_optional_float(row.get("avg_thesis_build_delay_seconds")),
+        p95_thesis_build_delay_seconds=_optional_float(row.get("p95_thesis_build_delay_seconds")),
+        max_thesis_build_delay_seconds=_optional_float(row.get("max_thesis_build_delay_seconds")),
+        avg_total_pipeline_delay_seconds=_optional_float(row.get("avg_total_pipeline_delay_seconds")),
+        p95_total_pipeline_delay_seconds=_optional_float(row.get("p95_total_pipeline_delay_seconds")),
+        max_total_pipeline_delay_seconds=_optional_float(row.get("max_total_pipeline_delay_seconds")),
+        pnl_gap=_optional_float(row.get("pnl_gap")),
+        win_rate_gap=_optional_float(row.get("win_rate_gap")),
+        trades_flipped_by_delay=(
+            int(row["trades_flipped_by_delay"])
+            if row.get("trades_flipped_by_delay") is not None
+            else None
+        ),
+        summary_json=dict(row.get("summary_json") or {}),
+    )
+
+
+def _backtest_trade_row(row: dict[str, Any]) -> BacktestTradeRow:
+    return BacktestTradeRow(
+        trade_id=str(row["trade_id"]),
+        ticker=str(row["ticker"]),
+        exchange_code=str(row["exchange_code"]),
+        strategy=str(row["strategy"]),
+        direction=str(row["direction"]),
+        entry_timing_scenario=str(row["entry_timing_scenario"]),
+        entry_at=_to_utc(row["entry_at"]) if row.get("entry_at") else None,
+        entry_price=_optional_float(row.get("entry_price")),
+        exit_at=_to_utc(row["exit_at"]) if row.get("exit_at") else None,
+        exit_price=_optional_float(row.get("exit_price")),
+        net_pnl=_optional_float(row.get("net_pnl")),
+        return_pct=_optional_float(row.get("return_pct")),
+        exit_reason=str(row["exit_reason"]),
+        risk_block_rule=row.get("risk_block_rule"),
+        news_fetch_delay_seconds=_optional_float(row.get("news_fetch_delay_seconds")),
+        thesis_build_delay_seconds=_optional_float(row.get("thesis_build_delay_seconds")),
+        total_pipeline_delay_seconds=_optional_float(row.get("total_pipeline_delay_seconds")),
+        card_decision_state=str(row["card_decision_state"]),
+        card_was_live_expired=bool(row.get("card_was_live_expired")),
+    )
+
+
+def _backtest_equity_row(row: dict[str, Any]) -> BacktestEquityRow:
+    return BacktestEquityRow(
+        timing_scenario=str(row["timing_scenario"]),
+        as_of=_to_utc(row["as_of"]),
+        equity=float(row["equity"]),
+        open_positions=int(row.get("open_positions") or 0),
+    )

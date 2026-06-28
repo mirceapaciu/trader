@@ -14,6 +14,10 @@ vi.mock("./watchlist/WatchlistTab", () => ({
   WatchlistTab: () => <div>Watchlist content</div>
 }));
 
+vi.mock("./backtester/BacktesterTab", () => ({
+  BacktesterTab: () => <div>Backtester content</div>
+}));
+
 describe("App", () => {
   it("switches to the Watchlist tab", () => {
     render(<App />);
@@ -21,5 +25,13 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Watchlist" }));
 
     expect(screen.getByText("Watchlist content")).toBeInTheDocument();
+  });
+
+  it("switches to the Backtester tab", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Backtester" }));
+
+    expect(screen.getByText("Backtester content")).toBeInTheDocument();
   });
 });

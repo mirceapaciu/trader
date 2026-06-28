@@ -12,10 +12,17 @@ from fastapi.middleware.cors import CORSMiddleware
 import psycopg
 import redis
 
+from .backtest_runner import BacktestRunCoordinator
 from .filter_quality_runner import FilterQualityRunCoordinator
 from .models import (
     AliasDiscoveryResponse,
     BacklogResponse,
+    BacktestEquityResponse,
+    BacktestRunDetailResponse,
+    BacktestRunsResponse,
+    BacktestStartRunRequest,
+    BacktestStartRunResponse,
+    BacktestTradesResponse,
     DeadLetterResponse,
     FilterConfigSimulationStartResponse,
     FilterQualityIncorrectlyAcceptedResponse,
@@ -38,7 +45,13 @@ from .models import (
     WindowArticlesResponse,
 )
 from .repository import PostgresRedisMonitoringDataSource
-from .service import FilterQualityRunAlreadyActive, InvalidThroughputWindow, MonitoringService
+from .service import (
+    BacktestRunAlreadyActive,
+    FilterQualityRunAlreadyActive,
+    InvalidBacktestWindow,
+    InvalidThroughputWindow,
+    MonitoringService,
+)
 from .settings import MonitoringUiSettings
 from src.product_components.shared.adapters import (
     PostgresSharedInstrumentAdmin,
@@ -91,6 +104,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         news_raw_queue=resolved_settings.news_raw_queue,
         failed_messages_dlq=resolved_settings.failed_messages_dlq,
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
+        backtester_schema=resolved_settings.backtester_db_schema,
     )
     try:
         data_source.bootstrap_shared_schema(repo_root=_repo_root())
@@ -140,6 +154,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         filter_quality_runner=FilterQualityRunCoordinator(),
         watchlist_admin=watchlist_admin,
         reprocess_gateway=reprocess_gateway,
+        backtest_runner=BacktestRunCoordinator(),
     )
 
     app = FastAPI(title="Trader Monitoring UI API")
@@ -311,6 +326,75 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
             ) from exc
+
+    @app.get("/api/backtests", response_model=BacktestRunsResponse)
+    def get_backtests(window: str | None = Query(default=None)) -> BacktestRunsResponse:
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.get_backtests(window=window),
+                detail="backtest data unavailable",
+            )
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get("/api/backtests/{run_id}", response_model=BacktestRunDetailResponse)
+    def get_backtest_detail(run_id: str) -> BacktestRunDetailResponse:
+        result = _run_with_infrastructure_mapping(
+            lambda: service.get_backtest_detail(run_id=run_id),
+            detail="backtest data unavailable",
+        )
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="backtest run not found")
+        return result
+
+    @app.get("/api/backtests/{run_id}/trades", response_model=BacktestTradesResponse)
+    def list_backtest_trades(
+        run_id: str,
+        timing_scenario: str | None = Query(default=None),
+        strategy: str | None = Query(default=None),
+        exit_reason: str | None = Query(default=None),
+        card_status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1),
+        offset: int = Query(default=0, ge=0),
+    ) -> BacktestTradesResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.list_backtest_trades(
+                run_id=run_id,
+                timing_scenario=timing_scenario,
+                strategy=strategy,
+                exit_reason=exit_reason,
+                card_status=card_status,
+                limit=limit,
+                offset=offset,
+            ),
+            detail="backtest trades unavailable",
+        )
+
+    @app.get("/api/backtests/{run_id}/equity", response_model=BacktestEquityResponse)
+    def get_backtest_equity(run_id: str) -> BacktestEquityResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.get_backtest_equity(run_id=run_id),
+            detail="backtest equity unavailable",
+        )
+
+    @app.post(
+        "/api/backtests",
+        response_model=BacktestStartRunResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def start_backtest_run(payload: BacktestStartRunRequest) -> BacktestStartRunResponse:
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.start_backtest_run(payload),
+                detail="backtest runner unavailable",
+            )
+        except BacktestRunAlreadyActive as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"run_id": exc.run_id, "status": "running", "message": "already running"},
+            ) from exc
+        except InvalidBacktestWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     @app.post(
         "/api/thesis-builder/reprocess",

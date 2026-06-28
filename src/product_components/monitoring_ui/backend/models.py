@@ -458,3 +458,220 @@ class ThesisReprocessStatusResponse(BaseModel):
     requested_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+BacktestRunStatus = Literal["running", "completed", "failed"]
+
+
+class BacktestRunSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    status: BacktestRunStatus
+    window_start_at: datetime
+    window_end_at: datetime
+    mode: str
+    timing_scenario: str
+    card_population: str
+    strategies_requested: list[str] | None = None
+    initial_capital: float
+    net_pnl: float | None = None
+    total_return: float | None = None
+    win_rate: float | None = None
+    profit_factor: float | None = None
+    max_drawdown: float | None = None
+    created_at: datetime
+    started_at: datetime
+    finished_at: datetime | None = None
+    error_code: str | None = None
+
+
+class BacktestRunsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    window: str
+    runs: list[BacktestRunSummary] = Field(default_factory=list)
+    active_run: BacktestRunSummary | None = None
+    generated_at: datetime
+
+
+class BacktestScalarMetrics(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    net_pnl: float | None = None
+    gross_profit: float | None = None
+    gross_loss: float | None = None
+    total_commission: float | None = None
+    total_slippage: float | None = None
+    total_return: float | None = None
+    win_rate: float | None = None
+    avg_win: float | None = None
+    avg_loss: float | None = None
+    profit_factor: float | None = None
+    expectancy: float | None = None
+    max_drawdown: float | None = None
+    max_drawdown_duration_seconds: float | None = None
+    sharpe_ratio: float | None = None
+    exposure_fraction: float | None = None
+    signal_accuracy: float | None = None
+    cards_considered: int
+    cards_in_population: int
+    cards_live_executable: int
+    cards_skipped_no_price: int
+    trades_opened: int
+    trades_closed: int
+    trades_risk_blocked: int
+
+
+class BacktestStrategyMetrics(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    strategy: str
+    trades_opened: int | None = None
+    trades_closed: int | None = None
+    trades_risk_blocked: int | None = None
+    net_pnl: float | None = None
+    gross_profit: float | None = None
+    gross_loss: float | None = None
+    win_rate: float | None = None
+    avg_win: float | None = None
+    avg_loss: float | None = None
+    profit_factor: float | None = None
+    expectancy: float | None = None
+
+
+class BacktestCardStatusMetrics(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    bucket: str
+    trades_opened: int | None = None
+    trades_closed: int | None = None
+    trades_risk_blocked: int | None = None
+    net_pnl: float | None = None
+    gross_profit: float | None = None
+    gross_loss: float | None = None
+    win_rate: float | None = None
+    avg_win: float | None = None
+    avg_loss: float | None = None
+    profit_factor: float | None = None
+    expectancy: float | None = None
+
+
+class BacktestDelayAggregates(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    avg_news_fetch_delay_seconds: float | None = None
+    p95_news_fetch_delay_seconds: float | None = None
+    max_news_fetch_delay_seconds: float | None = None
+    avg_thesis_build_delay_seconds: float | None = None
+    p95_thesis_build_delay_seconds: float | None = None
+    max_thesis_build_delay_seconds: float | None = None
+    avg_total_pipeline_delay_seconds: float | None = None
+    p95_total_pipeline_delay_seconds: float | None = None
+    max_total_pipeline_delay_seconds: float | None = None
+
+
+class BacktestGapMetrics(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    pnl_gap: float | None = None
+    win_rate_gap: float | None = None
+    trades_flipped_by_delay: int | None = None
+
+
+class BacktestRunDetailResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    run: BacktestRunSummary
+    metrics: BacktestScalarMetrics
+    per_strategy: list[BacktestStrategyMetrics] = Field(default_factory=list)
+    card_status_breakdown: list[BacktestCardStatusMetrics] = Field(default_factory=list)
+    delays: BacktestDelayAggregates
+    gap: BacktestGapMetrics | None = None
+    generated_at: datetime
+
+
+class BacktestTrade(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    trade_id: str
+    ticker: str
+    exchange_code: str
+    strategy: str
+    direction: str
+    entry_timing_scenario: str
+    entry_at: datetime | None = None
+    entry_price: float | None = None
+    exit_at: datetime | None = None
+    exit_price: float | None = None
+    net_pnl: float | None = None
+    return_pct: float | None = None
+    exit_reason: str
+    risk_block_rule: str | None = None
+    news_fetch_delay_seconds: float | None = None
+    thesis_build_delay_seconds: float | None = None
+    total_pipeline_delay_seconds: float | None = None
+    card_decision_state: str
+    card_was_live_expired: bool = False
+
+
+class BacktestTradesResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    run_id: str
+    trades: list[BacktestTrade] = Field(default_factory=list)
+    limit: int
+    offset: int
+    total_count: int
+    generated_at: datetime
+
+
+class BacktestEquityPoint(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    as_of: datetime
+    equity: float
+    open_positions: int
+
+
+class BacktestEquitySeries(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    timing_scenario: str
+    points: list[BacktestEquityPoint] = Field(default_factory=list)
+
+
+class BacktestEquityResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    run_id: str
+    series: list[BacktestEquitySeries] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class BacktestStartRunRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    window_start_at: datetime
+    window_end_at: datetime
+    mode: str = "replay"
+    timing_scenario: str = "ideal"
+    card_population: str = "all"
+    strategies: list[str] | None = None
+    initial_capital: float | None = None
+    run_note: str | None = None
+
+
+class BacktestStartRunResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    status: Literal["running"]

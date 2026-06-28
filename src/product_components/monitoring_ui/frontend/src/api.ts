@@ -397,6 +397,207 @@ export type AliasDiscoveryResponse = {
   generated_at: string;
 };
 
+export type BacktestRunStatus = "running" | "completed" | "failed";
+
+export type BacktestMode = "replay" | "regeneration";
+
+export type BacktestTimingScenario = "ideal" | "actual" | "both";
+
+export type BacktestCardPopulation = "all" | "approved_only" | "rejected_only";
+
+export type BacktestRunSummary = {
+  run_id: string;
+  status: BacktestRunStatus;
+  window_start_at: string;
+  window_end_at: string;
+  mode: string;
+  timing_scenario: string;
+  card_population: string;
+  strategies_requested?: string[] | null;
+  initial_capital: number;
+  net_pnl?: number | null;
+  total_return?: number | null;
+  win_rate?: number | null;
+  profit_factor?: number | null;
+  max_drawdown?: number | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_code?: string | null;
+};
+
+export type BacktestsResponse = {
+  available: boolean;
+  message?: string | null;
+  window: string;
+  runs: BacktestRunSummary[];
+  active_run?: BacktestRunSummary | null;
+  generated_at: string;
+};
+
+export type BacktestMetrics = {
+  net_pnl?: number | null;
+  gross_profit?: number | null;
+  gross_loss?: number | null;
+  total_commission?: number | null;
+  total_slippage?: number | null;
+  total_return?: number | null;
+  win_rate?: number | null;
+  avg_win?: number | null;
+  avg_loss?: number | null;
+  profit_factor?: number | null;
+  expectancy?: number | null;
+  max_drawdown?: number | null;
+  max_drawdown_duration_seconds?: number | null;
+  sharpe_ratio?: number | null;
+  exposure_fraction?: number | null;
+  signal_accuracy?: number | null;
+  cards_considered?: number | null;
+  cards_in_population?: number | null;
+  cards_live_executable?: number | null;
+  cards_skipped_no_price?: number | null;
+  trades_opened?: number | null;
+  trades_closed?: number | null;
+  trades_risk_blocked?: number | null;
+};
+
+export type BacktestStrategyMetrics = {
+  strategy: string;
+  trades_opened?: number | null;
+  trades_closed?: number | null;
+  trades_risk_blocked?: number | null;
+  net_pnl?: number | null;
+  gross_profit?: number | null;
+  gross_loss?: number | null;
+  win_rate?: number | null;
+  avg_win?: number | null;
+  avg_loss?: number | null;
+  profit_factor?: number | null;
+  expectancy?: number | null;
+};
+
+export type BacktestCardStatusBucket = {
+  bucket: string;
+  trades_opened?: number | null;
+  trades_closed?: number | null;
+  trades_risk_blocked?: number | null;
+  net_pnl?: number | null;
+  gross_profit?: number | null;
+  gross_loss?: number | null;
+  win_rate?: number | null;
+  avg_win?: number | null;
+  avg_loss?: number | null;
+  profit_factor?: number | null;
+  expectancy?: number | null;
+};
+
+export type BacktestDelays = {
+  avg_news_fetch_delay_seconds?: number | null;
+  p95_news_fetch_delay_seconds?: number | null;
+  max_news_fetch_delay_seconds?: number | null;
+  avg_thesis_build_delay_seconds?: number | null;
+  p95_thesis_build_delay_seconds?: number | null;
+  max_thesis_build_delay_seconds?: number | null;
+  avg_total_pipeline_delay_seconds?: number | null;
+  p95_total_pipeline_delay_seconds?: number | null;
+  max_total_pipeline_delay_seconds?: number | null;
+};
+
+export type BacktestGap = {
+  pnl_gap?: number | null;
+  win_rate_gap?: number | null;
+  trades_flipped_by_delay?: number | null;
+};
+
+export type BacktestDetailResponse = {
+  available: boolean;
+  message?: string | null;
+  run: BacktestRunSummary;
+  metrics: BacktestMetrics;
+  per_strategy: BacktestStrategyMetrics[];
+  card_status_breakdown: BacktestCardStatusBucket[];
+  delays: BacktestDelays;
+  gap?: BacktestGap | null;
+  generated_at: string;
+};
+
+export type BacktestTrade = {
+  trade_id: string;
+  ticker: string;
+  exchange_code: string;
+  strategy: string;
+  direction: string;
+  entry_timing_scenario: string;
+  entry_at: string;
+  entry_price?: number | null;
+  exit_at?: string | null;
+  exit_price?: number | null;
+  net_pnl?: number | null;
+  return_pct?: number | null;
+  exit_reason?: string | null;
+  risk_block_rule?: string | null;
+  news_fetch_delay_seconds?: number | null;
+  thesis_build_delay_seconds?: number | null;
+  total_pipeline_delay_seconds?: number | null;
+  card_decision_state?: string | null;
+  card_was_live_expired?: boolean | null;
+};
+
+export type BacktestTradesResponse = {
+  available: boolean;
+  message?: string | null;
+  run_id: string;
+  trades: BacktestTrade[];
+  limit: number;
+  offset: number;
+  total_count: number;
+  generated_at: string;
+};
+
+export type BacktestTradeFilters = {
+  timing_scenario?: string;
+  strategy?: string;
+  exit_reason?: string;
+  card_status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type BacktestEquityPoint = {
+  as_of: string;
+  equity?: number | null;
+  open_positions?: number | null;
+};
+
+export type BacktestEquitySeries = {
+  timing_scenario: "ideal" | "actual";
+  points: BacktestEquityPoint[];
+};
+
+export type BacktestEquityResponse = {
+  available: boolean;
+  message?: string | null;
+  run_id: string;
+  series: BacktestEquitySeries[];
+  generated_at: string;
+};
+
+export type StartBacktestRequest = {
+  window_start_at: string;
+  window_end_at: string;
+  mode: BacktestMode;
+  timing_scenario: BacktestTimingScenario;
+  card_population: BacktestCardPopulation;
+  strategies?: string[] | null;
+  initial_capital?: number | null;
+  run_note?: string | null;
+};
+
+export type StartBacktestResponse = {
+  run_id: string;
+  status: "running";
+};
+
 const apiBaseUrl = import.meta.env.VITE_UI_API_BASE_URL ?? "";
 
 function apiUrl(path: string): string {
@@ -630,4 +831,36 @@ export function discoverWatchlistAliases(
 
 export function deactivateWatchlistItem(ticker: string, exchangeCode: string): Promise<void> {
   return deleteJson(`/api/watchlist/${encodeURIComponent(ticker)}/${encodeURIComponent(exchangeCode)}`);
+}
+
+export function fetchBacktests(window: ThroughputPresetWindow): Promise<BacktestsResponse> {
+  return getJson<BacktestsResponse>(`/api/backtests?window=${encodeURIComponent(window)}`);
+}
+
+export function fetchBacktestDetail(runId: string): Promise<BacktestDetailResponse> {
+  return getJson<BacktestDetailResponse>(`/api/backtests/${encodeURIComponent(runId)}`);
+}
+
+export function fetchBacktestTrades(
+  runId: string,
+  filters: BacktestTradeFilters = {}
+): Promise<BacktestTradesResponse> {
+  const params = new URLSearchParams();
+  if (filters.timing_scenario) params.set("timing_scenario", filters.timing_scenario);
+  if (filters.strategy) params.set("strategy", filters.strategy);
+  if (filters.exit_reason) params.set("exit_reason", filters.exit_reason);
+  if (filters.card_status) params.set("card_status", filters.card_status);
+  params.set("limit", String(filters.limit ?? 50));
+  params.set("offset", String(filters.offset ?? 0));
+  return getJson<BacktestTradesResponse>(
+    `/api/backtests/${encodeURIComponent(runId)}/trades?${params.toString()}`
+  );
+}
+
+export function fetchBacktestEquity(runId: string): Promise<BacktestEquityResponse> {
+  return getJson<BacktestEquityResponse>(`/api/backtests/${encodeURIComponent(runId)}/equity`);
+}
+
+export function startBacktest(request: StartBacktestRequest): Promise<StartBacktestResponse> {
+  return postJson<StartBacktestResponse>("/api/backtests", request);
 }

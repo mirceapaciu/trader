@@ -14,9 +14,25 @@ from src.product_components.shared.instrument_lookup import (
     SharedInstrumentLookupAdminService,
 )
 
+from .backtest_run_request import BacktestRunRequest
 from .models import (
     AliasDiscoveryResponse,
     BacklogResponse,
+    BacktestCardStatusMetrics,
+    BacktestDelayAggregates,
+    BacktestEquityPoint,
+    BacktestEquityResponse,
+    BacktestEquitySeries,
+    BacktestGapMetrics,
+    BacktestRunDetailResponse,
+    BacktestRunSummary,
+    BacktestRunsResponse,
+    BacktestScalarMetrics,
+    BacktestStartRunRequest,
+    BacktestStartRunResponse,
+    BacktestStrategyMetrics,
+    BacktestTrade,
+    BacktestTradesResponse,
     DeadLetterResponse,
     DependencyHealth,
     FilterQualityIncorrectlyAcceptedResponse,
@@ -40,6 +56,12 @@ from .models import (
     WatchlistLookupSuggestionResponse,
     WatchlistResponse,
     WindowArticlesResponse,
+)
+from .repository import (
+    BacktestEquityRow,
+    BacktestRunRow,
+    BacktestTradeRow,
+    BacktesterTablesUnavailable,
 )
 from .settings import MonitoringUiSettings
 
@@ -102,6 +124,36 @@ class MonitoringDataSource(Protocol):
 
     def mark_stale_filter_quality_runs_failed(self, *, timeout_seconds: int) -> int: ...
 
+    def list_backtest_runs(self, *, window_start_at: datetime) -> list[BacktestRunRow]: ...
+
+    def get_active_backtest_run(self) -> BacktestRunRow | None: ...
+
+    def get_backtest_run(self, *, run_id: str) -> BacktestRunRow | None: ...
+
+    def list_backtest_trades(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        exit_reason: str | None = None,
+        card_status: str | None = None,
+        limit: int,
+        offset: int,
+    ) -> list[BacktestTradeRow]: ...
+
+    def count_backtest_trades(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        exit_reason: str | None = None,
+        card_status: str | None = None,
+    ) -> int: ...
+
+    def list_backtest_equity_points(self, *, run_id: str) -> list[BacktestEquityRow]: ...
+
 
 class FilterQualityRunner(Protocol):
     def start_last_24h_run(self, *, accepted_audit_enabled: bool = False) -> str: ...
@@ -109,10 +161,24 @@ class FilterQualityRunner(Protocol):
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str: ...
 
 
+class BacktestRunner(Protocol):
+    def start_run(self, request: BacktestRunRequest) -> str: ...
+
+
 class FilterQualityRunAlreadyActive(RuntimeError):
     def __init__(self, run_id: str) -> None:
         super().__init__("filter_quality_run_already_active")
         self.run_id = run_id
+
+
+class BacktestRunAlreadyActive(RuntimeError):
+    def __init__(self, run_id: str) -> None:
+        super().__init__("backtest_run_already_active")
+        self.run_id = run_id
+
+
+class InvalidBacktestWindow(ValueError):
+    pass
 
 
 class ReprocessRunStatusLike(Protocol):
@@ -147,12 +213,14 @@ class MonitoringService:
         filter_quality_runner: FilterQualityRunner | None = None,
         watchlist_admin: SharedInstrumentLookupAdminService | None = None,
         reprocess_gateway: ThesisReprocessGateway | None = None,
+        backtest_runner: BacktestRunner | None = None,
     ) -> None:
         self._settings = settings
         self._data_source = data_source
         self._filter_quality_runner = filter_quality_runner
         self._watchlist_admin = watchlist_admin
         self._reprocess_gateway = reprocess_gateway
+        self._backtest_runner = backtest_runner
 
     def get_health(self) -> HealthResponse:
         now = _utc_now()
@@ -549,6 +617,183 @@ class MonitoringService:
             finished_at=run.finished_at,
         )
 
+    def get_backtests(self, *, window: str | None) -> BacktestRunsResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported backtest window: {selected_window}")
+        now = _utc_now()
+        window_start_at = now - _window_duration(selected_window)
+        try:
+            runs = self._data_source.list_backtest_runs(window_start_at=window_start_at)
+            active = self._data_source.get_active_backtest_run()
+        except BacktesterTablesUnavailable:
+            return BacktestRunsResponse(
+                available=False,
+                message="Backtester data unavailable.",
+                window=selected_window,
+                runs=[],
+                active_run=None,
+                generated_at=_utc_now(),
+            )
+        return BacktestRunsResponse(
+            window=selected_window,
+            runs=[_backtest_run_summary(row) for row in runs],
+            active_run=_backtest_run_summary(active) if active is not None else None,
+            generated_at=_utc_now(),
+        )
+
+    def get_backtest_detail(self, *, run_id: str) -> BacktestRunDetailResponse | None:
+        try:
+            run = self._data_source.get_backtest_run(run_id=run_id)
+        except BacktesterTablesUnavailable:
+            return None
+        if run is None:
+            return None
+        per_strategy = _project_per_strategy(run.summary_json)
+        card_status = _project_card_status(run.summary_json)
+        gap = (
+            BacktestGapMetrics(
+                pnl_gap=run.pnl_gap,
+                win_rate_gap=run.win_rate_gap,
+                trades_flipped_by_delay=run.trades_flipped_by_delay,
+            )
+            if run.timing_scenario == "both"
+            else None
+        )
+        return BacktestRunDetailResponse(
+            run=_backtest_run_summary(run),
+            metrics=BacktestScalarMetrics(
+                net_pnl=run.net_pnl,
+                gross_profit=run.gross_profit,
+                gross_loss=run.gross_loss,
+                total_commission=run.total_commission,
+                total_slippage=run.total_slippage,
+                total_return=run.total_return,
+                win_rate=run.win_rate,
+                avg_win=run.avg_win,
+                avg_loss=run.avg_loss,
+                profit_factor=run.profit_factor,
+                expectancy=run.expectancy,
+                max_drawdown=run.max_drawdown,
+                max_drawdown_duration_seconds=run.max_drawdown_duration_seconds,
+                sharpe_ratio=run.sharpe_ratio,
+                exposure_fraction=run.exposure_fraction,
+                signal_accuracy=run.signal_accuracy,
+                cards_considered=run.cards_considered,
+                cards_in_population=run.cards_in_population,
+                cards_live_executable=run.cards_live_executable,
+                cards_skipped_no_price=run.cards_skipped_no_price,
+                trades_opened=run.trades_opened,
+                trades_closed=run.trades_closed,
+                trades_risk_blocked=run.trades_risk_blocked,
+            ),
+            per_strategy=per_strategy,
+            card_status_breakdown=card_status,
+            delays=BacktestDelayAggregates(
+                avg_news_fetch_delay_seconds=run.avg_news_fetch_delay_seconds,
+                p95_news_fetch_delay_seconds=run.p95_news_fetch_delay_seconds,
+                max_news_fetch_delay_seconds=run.max_news_fetch_delay_seconds,
+                avg_thesis_build_delay_seconds=run.avg_thesis_build_delay_seconds,
+                p95_thesis_build_delay_seconds=run.p95_thesis_build_delay_seconds,
+                max_thesis_build_delay_seconds=run.max_thesis_build_delay_seconds,
+                avg_total_pipeline_delay_seconds=run.avg_total_pipeline_delay_seconds,
+                p95_total_pipeline_delay_seconds=run.p95_total_pipeline_delay_seconds,
+                max_total_pipeline_delay_seconds=run.max_total_pipeline_delay_seconds,
+            ),
+            gap=gap,
+            generated_at=_utc_now(),
+        )
+
+    def list_backtest_trades(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        exit_reason: str | None = None,
+        card_status: str | None = None,
+        limit: int,
+        offset: int,
+    ) -> BacktestTradesResponse:
+        bounded_limit = max(1, min(limit, self._settings.ui_export_max_rows))
+        bounded_offset = max(0, offset)
+        try:
+            total_count = self._data_source.count_backtest_trades(
+                run_id=run_id,
+                timing_scenario=timing_scenario,
+                strategy=strategy,
+                exit_reason=exit_reason,
+                card_status=card_status,
+            )
+            trades = self._data_source.list_backtest_trades(
+                run_id=run_id,
+                timing_scenario=timing_scenario,
+                strategy=strategy,
+                exit_reason=exit_reason,
+                card_status=card_status,
+                limit=bounded_limit,
+                offset=bounded_offset,
+            )
+        except BacktesterTablesUnavailable:
+            return BacktestTradesResponse(
+                available=False,
+                message="Backtester data unavailable.",
+                run_id=run_id,
+                trades=[],
+                limit=bounded_limit,
+                offset=bounded_offset,
+                total_count=0,
+                generated_at=_utc_now(),
+            )
+        return BacktestTradesResponse(
+            run_id=run_id,
+            trades=[_backtest_trade(row) for row in trades],
+            limit=bounded_limit,
+            offset=bounded_offset,
+            total_count=total_count,
+            generated_at=_utc_now(),
+        )
+
+    def get_backtest_equity(self, *, run_id: str) -> BacktestEquityResponse:
+        try:
+            points = self._data_source.list_backtest_equity_points(run_id=run_id)
+        except BacktesterTablesUnavailable:
+            return BacktestEquityResponse(
+                available=False,
+                message="Backtester data unavailable.",
+                run_id=run_id,
+                series=[],
+                generated_at=_utc_now(),
+            )
+        return BacktestEquityResponse(
+            run_id=run_id,
+            series=_project_equity_series(points),
+            generated_at=_utc_now(),
+        )
+
+    def start_backtest_run(self, payload: BacktestStartRunRequest) -> BacktestStartRunResponse:
+        if self._backtest_runner is None:
+            raise RuntimeError("backtest_runner_unavailable")
+        window_start_at = _to_utc(payload.window_start_at)
+        window_end_at = _to_utc(payload.window_end_at)
+        if window_start_at >= window_end_at:
+            raise InvalidBacktestWindow("Backtest window must have window_start_at earlier than window_end_at.")
+        request = BacktestRunRequest(
+            window_start_at=window_start_at,
+            window_end_at=window_end_at,
+            mode=payload.mode,
+            timing_scenario=payload.timing_scenario,
+            card_population=payload.card_population,
+            strategies=list(payload.strategies) if payload.strategies else None,
+            initial_capital=payload.initial_capital,
+            run_note=payload.run_note,
+        )
+        try:
+            run_id = self._backtest_runner.start_run(request)
+        except ValueError as exc:
+            raise InvalidBacktestWindow(str(exc)) from exc
+        return BacktestStartRunResponse(run_id=run_id, status="running")
+
     def _require_watchlist_admin(self) -> SharedInstrumentLookupAdminService:
         if self._watchlist_admin is None:
             raise RuntimeError("watchlist_admin_unavailable")
@@ -639,6 +884,121 @@ def _watchlist_input(payload: WatchlistItemPayload) -> SharedWatchlistEntryInput
         aliases=tuple(str(alias).strip() for alias in payload.aliases if str(alias).strip()),
         source=payload.source.strip() or "manual",
     )
+
+
+_CARD_STATUS_BUCKETS = (
+    "approved",
+    "rejected",
+    "card_was_live_expired",
+    "card_unexpired_at_entry",
+)
+
+
+def _backtest_run_summary(row: BacktestRunRow) -> BacktestRunSummary:
+    return BacktestRunSummary(
+        run_id=row.run_id,
+        status=row.status,
+        window_start_at=row.window_start_at,
+        window_end_at=row.window_end_at,
+        mode=row.mode,
+        timing_scenario=row.timing_scenario,
+        card_population=row.card_population,
+        strategies_requested=row.strategies_requested,
+        initial_capital=row.initial_capital,
+        net_pnl=row.net_pnl,
+        total_return=row.total_return,
+        win_rate=row.win_rate,
+        profit_factor=row.profit_factor,
+        max_drawdown=row.max_drawdown,
+        created_at=row.created_at,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        error_code=row.error_code,
+    )
+
+
+def _backtest_trade(row: BacktestTradeRow) -> BacktestTrade:
+    return BacktestTrade(
+        trade_id=row.trade_id,
+        ticker=row.ticker,
+        exchange_code=row.exchange_code,
+        strategy=row.strategy,
+        direction=row.direction,
+        entry_timing_scenario=row.entry_timing_scenario,
+        entry_at=row.entry_at,
+        entry_price=row.entry_price,
+        exit_at=row.exit_at,
+        exit_price=row.exit_price,
+        net_pnl=row.net_pnl,
+        return_pct=row.return_pct,
+        exit_reason=row.exit_reason,
+        risk_block_rule=row.risk_block_rule,
+        news_fetch_delay_seconds=row.news_fetch_delay_seconds,
+        thesis_build_delay_seconds=row.thesis_build_delay_seconds,
+        total_pipeline_delay_seconds=row.total_pipeline_delay_seconds,
+        card_decision_state=row.card_decision_state,
+        card_was_live_expired=row.card_was_live_expired,
+    )
+
+
+def _project_per_strategy(summary_json: dict) -> list[BacktestStrategyMetrics]:
+    by_strategy = summary_json.get("by_strategy")
+    if not isinstance(by_strategy, dict):
+        return []
+    metrics: list[BacktestStrategyMetrics] = []
+    for strategy in sorted(by_strategy):
+        agg = by_strategy.get(strategy)
+        if not isinstance(agg, dict):
+            continue
+        metrics.append(BacktestStrategyMetrics(strategy=strategy, **_agg_fields(agg)))
+    return metrics
+
+
+def _project_card_status(summary_json: dict) -> list[BacktestCardStatusMetrics]:
+    by_card_status = summary_json.get("by_card_status")
+    if not isinstance(by_card_status, dict):
+        return []
+    ordered = [bucket for bucket in _CARD_STATUS_BUCKETS if bucket in by_card_status]
+    ordered.extend(bucket for bucket in by_card_status if bucket not in _CARD_STATUS_BUCKETS)
+    metrics: list[BacktestCardStatusMetrics] = []
+    for bucket in ordered:
+        agg = by_card_status.get(bucket)
+        if not isinstance(agg, dict):
+            continue
+        metrics.append(BacktestCardStatusMetrics(bucket=bucket, **_agg_fields(agg)))
+    return metrics
+
+
+def _agg_fields(agg: dict) -> dict:
+    return {
+        "trades_opened": agg.get("trades_opened"),
+        "trades_closed": agg.get("trades_closed"),
+        "trades_risk_blocked": agg.get("trades_risk_blocked"),
+        "net_pnl": agg.get("net_pnl"),
+        "gross_profit": agg.get("gross_profit"),
+        "gross_loss": agg.get("gross_loss"),
+        "win_rate": agg.get("win_rate"),
+        "avg_win": agg.get("avg_win"),
+        "avg_loss": agg.get("avg_loss"),
+        "profit_factor": agg.get("profit_factor"),
+        "expectancy": agg.get("expectancy"),
+    }
+
+
+def _project_equity_series(points: list[BacktestEquityRow]) -> list[BacktestEquitySeries]:
+    grouped: dict[str, list[BacktestEquityPoint]] = {}
+    for point in points:
+        grouped.setdefault(point.timing_scenario, []).append(
+            BacktestEquityPoint(
+                as_of=point.as_of,
+                equity=point.equity,
+                open_positions=point.open_positions,
+            )
+        )
+    return [
+        BacktestEquitySeries(timing_scenario=scenario, points=grouped[scenario])
+        for scenario in sorted(grouped)
+    ]
 
 
 def _lookup_suggestion_response(item: InstrumentLookupSuggestion) -> WatchlistLookupSuggestionResponse:

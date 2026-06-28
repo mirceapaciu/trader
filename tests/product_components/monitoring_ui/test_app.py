@@ -668,6 +668,8 @@ def _settings() -> MonitoringUiSettings:
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",
         thesis_builder_db_schema="thesis_builder",
+        backtester_db_schema="backtester",
+        ui_backtest_refresh_interval_seconds=15,
         shared_db_schema="shared",
         watchlist_table="t_watchlist_tickers",
         thesis_builder_evidence_collection_max_minutes=120,

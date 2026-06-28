@@ -203,9 +203,10 @@ The detail view keeps the run list visible and shows:
   ratio, number of trades, exposure fraction, and signal accuracy.
 - Equity curve chart. For a `both` run, the ideal and actual equity curves are overlaid.
 - Per-strategy breakdown table of the same trade-level metrics for each strategy in the run.
-- Card-status breakdown: metrics restricted to `approved`, `rejected`, and `stale_evidence` cards,
-  plus the live-executable slice (`card_was_live_expired = false`), so the live-fidelity subset can be
-  compared with the full thesis population.
+- Card-status breakdown: metrics restricted to `approved` and `rejected` cards, the
+  `card_was_live_expired` (expired-at-entry) slice, and its complementary live-executable slice
+  (`card_was_live_expired = false`), so the live-fidelity subset can be compared with the full thesis
+  population.
 - Pipeline-delay panel: avg/p95/max of `news_fetch_delay`, `thesis_build_delay`, and
   `total_pipeline_delay`, with a histogram grouped by the configured delay buckets.
 - Ideal-vs-actual gap tiles: `pnl_gap`, `win_rate_gap`, and `trades_flipped_by_delay`. Shown only when

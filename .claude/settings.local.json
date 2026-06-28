@@ -33,7 +33,10 @@
       "Read(//d/d/src/trader/tests/product_components/**)",
       "Bash(echo \"exit: $?\")",
       "Bash(grep -rn \"NEWS_RAW_QUEUE\\\\|SIGNAL_QUEUE\\\\|FAILED_MESSAGES_DLQ\" .env.shared)",
-      "Bash(grep -rln \"reprocess\\\\|Reprocess\" docs/design/)"
+      "Bash(grep -rln \"reprocess\\\\|Reprocess\" docs/design/)",
+      "Bash(bash scripts/deployment/postgres/start.sh)",
+      "Bash(bash scripts/deployment/redis/start.sh)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

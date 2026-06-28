@@ -21,6 +21,8 @@ class MonitoringUiSettings:
     newsfetcher_db_schema: str
     filter_quality_db_schema: str
     thesis_builder_db_schema: str
+    backtester_db_schema: str
+    ui_backtest_refresh_interval_seconds: int
     shared_db_schema: str
     watchlist_table: str
     thesis_builder_evidence_collection_max_minutes: int
@@ -65,6 +67,8 @@ class MonitoringUiSettings:
             newsfetcher_db_schema=os.getenv("NEWSFETCHER_DB_SCHEMA", "news_fetcher"),
             filter_quality_db_schema=os.getenv("FILTER_QUALITY_DB_SCHEMA", "filter_quality_evaluator"),
             thesis_builder_db_schema=os.getenv("THESIS_BUILDER_DB_SCHEMA", "thesis_builder"),
+            backtester_db_schema=os.getenv("BACKTESTER_DB_SCHEMA", "backtester"),
+            ui_backtest_refresh_interval_seconds=_int_env("UI_BACKTEST_REFRESH_INTERVAL_SECONDS", 15),
             shared_db_schema=os.getenv("SHARED_DB_SCHEMA", "shared"),
             watchlist_table=os.getenv("WATCHLIST_TABLE", "t_watchlist_tickers"),
             thesis_builder_evidence_collection_max_minutes=_int_env(
