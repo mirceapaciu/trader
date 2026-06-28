@@ -290,6 +290,26 @@ class BacktesterRepository:
         return psycopg.connect(self._dsn, autocommit=False)
 
 
+def backtester_schema_file(repo_root: Path) -> Path:
+    return repo_root / "src" / "product_components" / "backtester" / "db" / "schema.sql"
+
+
+def bootstrap_backtester_schema(*, dsn: str, repo_root: Path) -> None:
+    """Create the backtester schema and its tables if they do not exist.
+
+    Owned by the Backtester component so other components (e.g. the Monitoring
+    UI) can ensure the schema exists by calling this function, instead of
+    reaching into the Backtester's schema files or duplicating its DDL. The
+    backtester ``schema.sql`` is self-contained (no cross-schema dependencies),
+    so applying it alone is sufficient.
+    """
+    schema_sql = backtester_schema_file(repo_root).read_text(encoding="utf-8")
+    with closing(psycopg.connect(dsn)) as connection:
+        connection.autocommit = True
+        with connection.cursor() as cursor:
+            cursor.execute(schema_sql)
+
+
 def dataset_snapshot_hash(cards: list[ExportedThesisCard]) -> str:
     payload = [
         {

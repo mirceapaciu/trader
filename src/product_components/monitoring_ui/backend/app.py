@@ -45,6 +45,7 @@ from .models import (
     WindowArticlesResponse,
 )
 from .repository import PostgresRedisMonitoringDataSource
+from src.product_components.backtester.repository import bootstrap_backtester_schema
 from .service import (
     BacktestRunAlreadyActive,
     FilterQualityRunAlreadyActive,
@@ -110,6 +111,10 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         data_source.bootstrap_shared_schema(repo_root=_repo_root())
         data_source.bootstrap_news_schema(repo_root=_repo_root())
         data_source.bootstrap_thesis_builder_schema(repo_root=_repo_root())
+        bootstrap_backtester_schema(
+            dsn=resolved_settings.postgres_dsn,
+            repo_root=_repo_root(),
+        )
     except Exception:
         logger.exception("schema bootstrap failed — starting in degraded mode")
     watchlist_admin = SharedInstrumentLookupAdminService(
