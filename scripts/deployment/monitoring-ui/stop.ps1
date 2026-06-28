@@ -73,7 +73,6 @@ function Stop-MonitoringProcess {
         return
     }
 
-    $failedIds = @()
     foreach ($processId in $pidCandidates) {
         Write-BestEffortLog -LogFile $LogFile -Message "[$timestamp] stopping $Name via PID $processId"
         $taskkillOutput = ""
@@ -84,19 +83,16 @@ function Stop-MonitoringProcess {
             $taskkillOutput = $_.Exception.Message
         }
         if ($LASTEXITCODE -ne 0 -or $taskkillOutput -match 'Access denied') {
-            $failedIds += $processId
-            Write-BestEffortLog -LogFile $LogFile -Message "[$timestamp] failed to stop $Name via PID ${processId}: $taskkillOutput"
+            Write-BestEffortLog -LogFile $LogFile -Message "[$timestamp] taskkill issue for $Name PID ${processId}: $taskkillOutput"
         }
     }
 
+    # Wait briefly for the OS to release the port before checking
+    Start-Sleep -Milliseconds 500
+
     $remainingPortPid = Get-ListeningPid -Port $Port
     if ($remainingPortPid -and ($pidCandidates -contains $remainingPortPid)) {
-        $failedIds += $remainingPortPid
-    }
-    $failedIds = $failedIds | Select-Object -Unique
-
-    if ($failedIds) {
-        Write-Host "Failed to stop $Name (PID(s): $($failedIds -join ', '))."
+        Write-Host "Failed to stop $Name (PID(s): $remainingPortPid)."
         return
     }
 
