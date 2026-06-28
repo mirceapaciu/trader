@@ -36,7 +36,9 @@
       "Bash(grep -rln \"reprocess\\\\|Reprocess\" docs/design/)",
       "Bash(bash scripts/deployment/postgres/start.sh)",
       "Bash(bash scripts/deployment/redis/start.sh)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(echo \"---STATUS:$?\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('status:', d.get\\('status'\\), '\\\\nerror:', d.get\\('error_detail'\\)\\)\")"
     ]
   }
 }
