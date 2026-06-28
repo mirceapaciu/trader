@@ -137,6 +137,7 @@ function installQueryRouter(handlers: {
   detail?: unknown;
   equity?: unknown;
   trades?: unknown;
+  cards?: unknown;
 }) {
   useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
     const key = options?.queryKey ?? [];
@@ -148,6 +149,9 @@ function installQueryRouter(handlers: {
     }
     if (key.includes("trades")) {
       return handlers.trades ?? emptyResult;
+    }
+    if (key.includes("cards")) {
+      return handlers.cards ?? emptyResult;
     }
     return handlers.backtests ?? emptyResult;
   });
@@ -263,6 +267,62 @@ describe("BacktesterTab", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "regeneration" } });
 
     expect(screen.getByText(/Regeneration runs can be long/)).toBeInTheDocument();
+  });
+
+  it("shows card details on the right when a card is selected", () => {
+    const run = makeRun({ timing_scenario: "ideal" });
+    const cardsResult = {
+      ...emptyResult,
+      data: {
+        available: true,
+        message: null,
+        run_id: run.run_id,
+        cards: [
+          {
+            thesis_card_id: "card-abc",
+            ticker: "AAPL",
+            exchange_code: "NASDAQ",
+            direction: "buy",
+            strategy: "event_driven",
+            time_horizon: "intraday",
+            confidence: 0.82,
+            decision_state: "approved",
+            card_created_at: "2026-06-16T09:05:00Z",
+            card_expires_at: "2026-06-16T11:05:00Z",
+            trades: [
+              {
+                trade_id: "trade-1",
+                entry_timing_scenario: "ideal",
+                entry_at: "2026-06-16T09:10:00Z",
+                entry_price: 190.5,
+                exit_at: "2026-06-16T09:40:00Z",
+                exit_price: 192.0,
+                net_pnl: 150,
+                return_pct: 0.0079,
+                exit_reason: "take_profit",
+                risk_block_rule: null
+              }
+            ]
+          }
+        ],
+        generated_at: "2026-06-16T08:10:00Z"
+      }
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) },
+      cards: cardsResult
+    });
+    render(<BacktesterTab />);
+
+    // Detail starts empty until a card is selected.
+    expect(screen.getByText("Select a card to see details.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("AAPL"));
+
+    expect(screen.getByText("card-abc")).toBeInTheDocument();
+    expect(screen.getByText("take profit")).toBeInTheDocument();
+    expect(screen.queryByText("Select a card to see details.")).not.toBeInTheDocument();
   });
 
   it("renders a degraded empty state when backtests are unavailable", () => {

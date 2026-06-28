@@ -753,6 +753,13 @@ function CardsPanel({ runId }: { runId: string }) {
   });
   const data = cards.data as BacktestCardsResponse | undefined;
   const rows = data?.cards ?? [];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedCard = rows.find((card) => card.thesis_card_id === selectedId) ?? null;
+
+  // Reset the selection when switching runs so we never show a stale card.
+  useEffect(() => {
+    setSelectedId(null);
+  }, [runId]);
 
   return (
     <section className="panel panel-large">
@@ -769,17 +776,106 @@ function CardsPanel({ runId }: { runId: string }) {
       {rows.length === 0 ? (
         <div className="empty">{cards.isLoading ? "Loading cards…" : "No cards for this run."}</div>
       ) : (
+        <div className="pending-windows-layout">
+          <div className="pending-list-wrap cards-list-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Instrument</th>
+                  <th>Strategy</th>
+                  <th>Direction</th>
+                  <th>Confidence</th>
+                  <th>Decision</th>
+                  <th>Trades</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((card) => (
+                  <tr
+                    key={card.thesis_card_id}
+                    data-selectable
+                    className={card.thesis_card_id === selectedId ? "selected" : undefined}
+                    onClick={() => setSelectedId(card.thesis_card_id)}
+                  >
+                    <td>
+                      <strong>{card.ticker}</strong>
+                      <span className="table-subtext">{card.exchange_code}</span>
+                    </td>
+                    <td>{formatToken(card.strategy)}</td>
+                    <td>{formatToken(card.direction)}</td>
+                    <td>{card.confidence != null ? `${(card.confidence * 100).toFixed(0)}%` : "—"}</td>
+                    <td>{formatToken(card.decision_state)}</td>
+                    <td>{card.trades.length}</td>
+                    <td>{formatDate(card.card_created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="pending-detail">
+            {selectedCard ? (
+              <CardDetail card={selectedCard} />
+            ) : (
+              <div className="empty">Select a card to see details.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CardDetail({ card }: { card: BacktestCard }) {
+  return (
+    <div className="pending-detail-grid">
+      <div className="pending-detail-row">
+        <span>Card ID</span>
+        <strong style={{ fontSize: "0.8rem", wordBreak: "break-all" }}>{card.thesis_card_id}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Instrument</span>
+        <strong>
+          {card.ticker} <small style={{ fontWeight: 400, color: "#64726c" }}>{card.exchange_code}</small>
+        </strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Strategy</span>
+        <strong>{formatToken(card.strategy)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Direction</span>
+        <strong>{formatToken(card.direction)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Time horizon</span>
+        <strong>{card.time_horizon ? formatToken(card.time_horizon) : "—"}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Confidence</span>
+        <strong>{card.confidence != null ? `${(card.confidence * 100).toFixed(0)}%` : "—"}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Decision</span>
+        <strong>{formatToken(card.decision_state)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Created</span>
+        <strong>{formatDate(card.card_created_at)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Expires</span>
+        <strong>{card.card_expires_at ? formatDate(card.card_expires_at) : "—"}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Trades</span>
+        <strong>{card.trades.length} trade{card.trades.length === 1 ? "" : "s"}</strong>
+      </div>
+      {card.trades.length > 0 && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Instrument</th>
-                <th>Strategy</th>
-                <th>Direction</th>
-                <th>Confidence</th>
-                <th>Decision</th>
-                <th>Created</th>
-                <th>Expires</th>
                 <th>Timing</th>
                 <th>Entry</th>
                 <th>Exit</th>
@@ -789,63 +885,27 @@ function CardsPanel({ runId }: { runId: string }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((card) => (
-                <CardRows key={card.thesis_card_id} card={card} />
+              {card.trades.map((trade) => (
+                <tr key={trade.trade_id}>
+                  <td>{formatToken(trade.entry_timing_scenario)}</td>
+                  <td>
+                    {formatDate(trade.entry_at)}
+                    <span className="table-subtext">{formatNumber(trade.entry_price)}</span>
+                  </td>
+                  <td>
+                    {formatDate(trade.exit_at)}
+                    <span className="table-subtext">{formatNumber(trade.exit_price)}</span>
+                  </td>
+                  <td>{formatCurrency(trade.net_pnl)}</td>
+                  <td>{formatPercent(trade.return_pct)}</td>
+                  <td>{trade.exit_reason ? formatToken(trade.exit_reason) : "—"}</td>
+                </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-    </section>
-  );
-}
-
-function CardRows({ card }: { card: BacktestCard }) {
-  const tradeCount = card.trades.length;
-  const cardCells = (
-    <>
-      <td>
-        <strong>{card.ticker}</strong>
-        <span className="table-subtext">{card.exchange_code}</span>
-      </td>
-      <td>{formatToken(card.strategy)}</td>
-      <td>{formatToken(card.direction)}</td>
-      <td>{card.confidence != null ? `${(card.confidence * 100).toFixed(0)}%` : "—"}</td>
-      <td>{formatToken(card.decision_state)}</td>
-      <td>{formatDate(card.card_created_at)}</td>
-      <td>{card.card_expires_at ? formatDate(card.card_expires_at) : "—"}</td>
-    </>
-  );
-
-  if (tradeCount === 0) {
-    return (
-      <tr>
-        {cardCells}
-        <td colSpan={6} className="table-subtext">No trades</td>
-      </tr>
-    );
-  }
-
-  return (
-    <>
-      {card.trades.map((trade, index) => (
-        <tr key={trade.trade_id}>
-          {index === 0 ? cardCells : <td colSpan={7} />}
-          <td>{formatToken(trade.entry_timing_scenario)}</td>
-          <td>
-            {formatDate(trade.entry_at)}
-            <span className="table-subtext">{formatNumber(trade.entry_price)}</span>
-          </td>
-          <td>
-            {formatDate(trade.exit_at)}
-            <span className="table-subtext">{formatNumber(trade.exit_price)}</span>
-          </td>
-          <td>{formatCurrency(trade.net_pnl)}</td>
-          <td>{formatPercent(trade.return_pct)}</td>
-          <td>{trade.exit_reason ? formatToken(trade.exit_reason) : "—"}</td>
-        </tr>
-      ))}
-    </>
+    </div>
   );
 }
 

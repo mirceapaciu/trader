@@ -629,6 +629,18 @@ h2 {
   border-radius: 6px;
 }
 
+.cards-list-wrap {
+  /* Tall enough to show ~10 card rows before scrolling. */
+  max-height: 600px;
+}
+
+.cards-list-wrap thead th {
+  position: sticky;
+  top: 0;
+  background: #ffffff;
+  z-index: 1;
+}
+
 .pending-list-wrap tr[data-selectable] {
   cursor: pointer;
 }

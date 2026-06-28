@@ -41,7 +41,8 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('status:', d.get\\('status'\\), '\\\\nerror:', d.get\\('error_detail'\\)\\)\")",
       "PowerShell(cmd.exe /c \"taskkill /PID 40012 /T /F\" 2>&1)",
       "PowerShell(cmd.exe /c \"taskkill /PID 10536 /T /F\" 2>&1)",
-      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('active_run before:', d.get\\('active_run'\\)\\)\")"
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('active_run before:', d.get\\('active_run'\\)\\)\")",
+      "Bash(npx tsc *)"
     ]
   }
 }
