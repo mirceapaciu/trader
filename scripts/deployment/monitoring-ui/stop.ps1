@@ -101,4 +101,19 @@ function Stop-MonitoringProcess {
 }
 
 Stop-MonitoringProcess -Name 'Monitoring UI backend' -PidFile $backendPidFile -LogFile $backendLog -Port $BackendPort
+
+# Stop frontend: check the configured port plus a small range in case Vite drifted to another port
+$frontendPortsToScan = $FrontendPort..($FrontendPort + 9)
 Stop-MonitoringProcess -Name 'Monitoring UI frontend' -PidFile $frontendPidFile -LogFile $frontendLog -Port $FrontendPort
+$killedDrifted = $false
+foreach ($port in ($frontendPortsToScan | Select-Object -Skip 1)) {
+    $driftedPid = Get-ListeningPid -Port $port
+    if ($driftedPid) {
+        Write-Host "Killing orphaned Vite process on port $port (PID $driftedPid)."
+        cmd.exe /c "taskkill /PID $driftedPid /T /F" 2>&1 | Out-Null
+        $killedDrifted = $true
+    }
+}
+if ($killedDrifted) {
+    Start-Sleep -Milliseconds 500
+}

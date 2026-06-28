@@ -47,7 +47,7 @@ Write-StartLog -LogFile $frontendLog -Message "[$timestamp] starting frontend on
 
 $backendCommand = "& { `$env:UI_PORT='$BackendPort'; Set-Location -LiteralPath '$repoRoot'; & '$pythonExe' -m src.product_components.monitoring_ui.backend 2>&1 | Out-File -LiteralPath '$backendLog' -Append -Encoding utf8 }"
 
-$frontendCommand = "& { `$env:NO_COLOR='1'; `$env:FORCE_COLOR='0'; `$env:VITE_UI_API_BASE_URL='$apiBaseUrl'; Set-Location -LiteralPath '$frontendDir'; if (-not (Test-Path 'node_modules')) { & '$npmCmd' install 2>&1 | Out-File -LiteralPath '$frontendLog' -Append -Encoding utf8 }; & '$npmCmd' run dev -- --host 127.0.0.1 --port $FrontendPort 2>&1 | Out-File -LiteralPath '$frontendLog' -Append -Encoding utf8 }"
+$frontendCommand = "& { `$env:NO_COLOR='1'; `$env:FORCE_COLOR='0'; `$env:VITE_UI_API_BASE_URL='$apiBaseUrl'; Set-Location -LiteralPath '$frontendDir'; if (-not (Test-Path 'node_modules')) { & '$npmCmd' install 2>&1 | Out-File -LiteralPath '$frontendLog' -Append -Encoding utf8 }; & '$npmCmd' run dev -- --host 127.0.0.1 --port $FrontendPort --strictPort 2>&1 | Out-File -LiteralPath '$frontendLog' -Append -Encoding utf8 }"
 
 $backendProcess = Start-Process `
     -FilePath 'powershell.exe' `
