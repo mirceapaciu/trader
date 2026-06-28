@@ -17,6 +17,7 @@ from .filter_quality_runner import FilterQualityRunCoordinator
 from .models import (
     AliasDiscoveryResponse,
     BacklogResponse,
+    BacktestCardsResponse,
     BacktestEquityResponse,
     BacktestRunDetailResponse,
     BacktestRunsResponse,
@@ -380,6 +381,13 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         return _run_with_infrastructure_mapping(
             lambda: service.get_backtest_equity(run_id=run_id),
             detail="backtest equity unavailable",
+        )
+
+    @app.get("/api/backtests/{run_id}/cards", response_model=BacktestCardsResponse)
+    def list_backtest_cards(run_id: str) -> BacktestCardsResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.list_backtest_cards(run_id=run_id),
+            detail="backtest cards unavailable",
         )
 
     @app.post(

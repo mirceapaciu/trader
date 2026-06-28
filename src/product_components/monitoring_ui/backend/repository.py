@@ -801,6 +801,21 @@ class PostgresRedisMonitoringDataSource:
         rows = self._fetch_backtest_rows(sql, (run_id,))
         return [_backtest_equity_row(row) for row in rows]
 
+    def list_backtest_cards(self, *, run_id: str) -> list["BacktestCardRow"]:
+        sql = (
+            f"SELECT cs.thesis_card_id, cs.ticker, cs.exchange_code, cs.direction, cs.strategy, "
+            f"cs.time_horizon, cs.confidence, cs.decision_state, cs.card_created_at, cs.card_expires_at, "
+            f"t.trade_id, t.entry_timing_scenario, t.entry_at, t.entry_price, "
+            f"t.exit_at, t.exit_price, t.net_pnl, t.return_pct, t.exit_reason, t.risk_block_rule "
+            f"FROM {self._backtester_schema}.t_backtest_card_snapshots cs "
+            f"LEFT JOIN {self._backtester_schema}.t_backtest_trades t "
+            f"ON t.run_id = cs.run_id AND t.thesis_card_id = cs.thesis_card_id "
+            f"WHERE cs.run_id = %s "
+            f"ORDER BY cs.card_created_at, cs.thesis_card_id, t.entry_timing_scenario"
+        )
+        rows = self._fetch_backtest_rows(sql, (run_id,))
+        return _group_backtest_cards(rows)
+
     def _backtest_trade_filters(
         self,
         *,
@@ -1504,6 +1519,35 @@ class BacktestEquityRow:
     open_positions: int
 
 
+@dataclass(frozen=True)
+class BacktestCardTradeRow:
+    trade_id: str
+    entry_timing_scenario: str
+    entry_at: datetime | None
+    entry_price: float | None
+    exit_at: datetime | None
+    exit_price: float | None
+    net_pnl: float | None
+    return_pct: float | None
+    exit_reason: str | None
+    risk_block_rule: str | None
+
+
+@dataclass(frozen=True)
+class BacktestCardRow:
+    thesis_card_id: str
+    ticker: str
+    exchange_code: str
+    direction: str
+    strategy: str
+    time_horizon: str | None
+    confidence: float | None
+    decision_state: str
+    card_created_at: datetime
+    card_expires_at: datetime | None
+    trades: list[BacktestCardTradeRow]
+
+
 def _backtest_run_row(row: dict[str, Any]) -> BacktestRunRow:
     strategies = row.get("strategies_requested")
     return BacktestRunRow(
@@ -1594,3 +1638,54 @@ def _backtest_equity_row(row: dict[str, Any]) -> BacktestEquityRow:
         equity=float(row["equity"]),
         open_positions=int(row.get("open_positions") or 0),
     )
+
+
+def _group_backtest_cards(rows: list[dict[str, Any]]) -> list[BacktestCardRow]:
+    seen: dict[str, BacktestCardRow] = {}
+    order: list[str] = []
+    for row in rows:
+        cid = str(row["thesis_card_id"])
+        if cid not in seen:
+            seen[cid] = BacktestCardRow(
+                thesis_card_id=cid,
+                ticker=str(row["ticker"]),
+                exchange_code=str(row["exchange_code"]),
+                direction=str(row["direction"]),
+                strategy=str(row["strategy"]),
+                time_horizon=str(row["time_horizon"]) if row.get("time_horizon") else None,
+                confidence=_optional_float(row.get("confidence")),
+                decision_state=str(row["decision_state"]),
+                card_created_at=_to_utc(row["card_created_at"]),
+                card_expires_at=_to_utc(row["card_expires_at"]) if row.get("card_expires_at") else None,
+                trades=[],
+            )
+            order.append(cid)
+        if row.get("trade_id") is not None:
+            trade = BacktestCardTradeRow(
+                trade_id=str(row["trade_id"]),
+                entry_timing_scenario=str(row["entry_timing_scenario"]),
+                entry_at=_to_utc(row["entry_at"]) if row.get("entry_at") else None,
+                entry_price=_optional_float(row.get("entry_price")),
+                exit_at=_to_utc(row["exit_at"]) if row.get("exit_at") else None,
+                exit_price=_optional_float(row.get("exit_price")),
+                net_pnl=_optional_float(row.get("net_pnl")),
+                return_pct=_optional_float(row.get("return_pct")),
+                exit_reason=str(row["exit_reason"]) if row.get("exit_reason") else None,
+                risk_block_rule=row.get("risk_block_rule"),
+            )
+            # BacktestCardRow is frozen so we rebuild with the appended trade
+            existing = seen[cid]
+            seen[cid] = BacktestCardRow(
+                thesis_card_id=existing.thesis_card_id,
+                ticker=existing.ticker,
+                exchange_code=existing.exchange_code,
+                direction=existing.direction,
+                strategy=existing.strategy,
+                time_horizon=existing.time_horizon,
+                confidence=existing.confidence,
+                decision_state=existing.decision_state,
+                card_created_at=existing.card_created_at,
+                card_expires_at=existing.card_expires_at,
+                trades=[*existing.trades, trade],
+            )
+    return [seen[cid] for cid in order]

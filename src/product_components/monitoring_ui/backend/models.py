@@ -657,6 +657,47 @@ class BacktestEquityResponse(BaseModel):
     generated_at: datetime
 
 
+class BacktestCardTrade(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    trade_id: str
+    entry_timing_scenario: str
+    entry_at: datetime | None = None
+    entry_price: float | None = None
+    exit_at: datetime | None = None
+    exit_price: float | None = None
+    net_pnl: float | None = None
+    return_pct: float | None = None
+    exit_reason: str | None = None
+    risk_block_rule: str | None = None
+
+
+class BacktestCard(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    thesis_card_id: str
+    ticker: str
+    exchange_code: str
+    direction: str
+    strategy: str
+    time_horizon: str | None = None
+    confidence: float | None = None
+    decision_state: str
+    card_created_at: datetime
+    card_expires_at: datetime | None = None
+    trades: list[BacktestCardTrade] = Field(default_factory=list)
+
+
+class BacktestCardsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    run_id: str
+    cards: list[BacktestCard] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class BacktestStartRunRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 

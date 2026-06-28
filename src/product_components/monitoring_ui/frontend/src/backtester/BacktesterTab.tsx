@@ -4,12 +4,15 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 
 import {
   ApiError,
+  fetchBacktestCards,
   fetchBacktestDetail,
   fetchBacktestEquity,
   fetchBacktestTrades,
   fetchBacktests,
   startBacktest,
+  type BacktestCard,
   type BacktestCardStatusBucket,
+  type BacktestCardsResponse,
   type BacktestDelays,
   type BacktestDetailResponse,
   type BacktestEquityResponse,
@@ -452,6 +455,7 @@ function RunDetail({ runId }: { runId: string }) {
       <CardStatusPanel rows={data.card_status_breakdown} />
       <DelaysPanel delays={data.delays} />
       <GapPanel run={data.run} gap={data.gap} isBoth={isBoth} />
+      <CardsPanel runId={runId} />
       <TradesPanel runId={runId} />
     </>
   );
@@ -739,6 +743,109 @@ function GapPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function CardsPanel({ runId }: { runId: string }) {
+  const cards = useQuery({
+    queryKey: ["backtests", "cards", runId],
+    queryFn: () => fetchBacktestCards(runId)
+  });
+  const data = cards.data as BacktestCardsResponse | undefined;
+  const rows = data?.cards ?? [];
+
+  return (
+    <section className="panel panel-large">
+      <div className="panel-heading">
+        <div>
+          <h2>Cards</h2>
+          <span>{rows.length} card{rows.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+      {cards.isError && <div className="inline-error">{cards.error.message}</div>}
+      {data && !data.available ? (
+        <div className="inline-warning compact">{data.message ?? "Card data unavailable."}</div>
+      ) : null}
+      {rows.length === 0 ? (
+        <div className="empty">{cards.isLoading ? "Loading cards…" : "No cards for this run."}</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Instrument</th>
+                <th>Strategy</th>
+                <th>Direction</th>
+                <th>Confidence</th>
+                <th>Decision</th>
+                <th>Created</th>
+                <th>Expires</th>
+                <th>Timing</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>Net P&amp;L</th>
+                <th>Return</th>
+                <th>Exit reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((card) => (
+                <CardRows key={card.thesis_card_id} card={card} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CardRows({ card }: { card: BacktestCard }) {
+  const tradeCount = card.trades.length;
+  const cardCells = (
+    <>
+      <td>
+        <strong>{card.ticker}</strong>
+        <span className="table-subtext">{card.exchange_code}</span>
+      </td>
+      <td>{formatToken(card.strategy)}</td>
+      <td>{formatToken(card.direction)}</td>
+      <td>{card.confidence != null ? `${(card.confidence * 100).toFixed(0)}%` : "—"}</td>
+      <td>{formatToken(card.decision_state)}</td>
+      <td>{formatDate(card.card_created_at)}</td>
+      <td>{card.card_expires_at ? formatDate(card.card_expires_at) : "—"}</td>
+    </>
+  );
+
+  if (tradeCount === 0) {
+    return (
+      <tr>
+        {cardCells}
+        <td colSpan={6} className="table-subtext">No trades</td>
+      </tr>
+    );
+  }
+
+  return (
+    <>
+      {card.trades.map((trade, index) => (
+        <tr key={trade.trade_id}>
+          {index === 0 ? cardCells : <td colSpan={7} />}
+          <td>{formatToken(trade.entry_timing_scenario)}</td>
+          <td>
+            {formatDate(trade.entry_at)}
+            <span className="table-subtext">{formatNumber(trade.entry_price)}</span>
+          </td>
+          <td>
+            {formatDate(trade.exit_at)}
+            <span className="table-subtext">{formatNumber(trade.exit_price)}</span>
+          </td>
+          <td>{formatCurrency(trade.net_pnl)}</td>
+          <td>{formatPercent(trade.return_pct)}</td>
+          <td>{trade.exit_reason ? formatToken(trade.exit_reason) : "—"}</td>
+        </tr>
+      ))}
+    </>
   );
 }
 

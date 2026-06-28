@@ -18,7 +18,10 @@ from .backtest_run_request import BacktestRunRequest
 from .models import (
     AliasDiscoveryResponse,
     BacklogResponse,
+    BacktestCard,
     BacktestCardStatusMetrics,
+    BacktestCardTrade,
+    BacktestCardsResponse,
     BacktestDelayAggregates,
     BacktestEquityPoint,
     BacktestEquityResponse,
@@ -58,6 +61,7 @@ from .models import (
     WindowArticlesResponse,
 )
 from .repository import (
+    BacktestCardRow,
     BacktestEquityRow,
     BacktestRunRow,
     BacktestTradeRow,
@@ -153,6 +157,8 @@ class MonitoringDataSource(Protocol):
     ) -> int: ...
 
     def list_backtest_equity_points(self, *, run_id: str) -> list[BacktestEquityRow]: ...
+
+    def list_backtest_cards(self, *, run_id: str) -> list[BacktestCardRow]: ...
 
 
 class FilterQualityRunner(Protocol):
@@ -768,6 +774,52 @@ class MonitoringService:
         return BacktestEquityResponse(
             run_id=run_id,
             series=_project_equity_series(points),
+            generated_at=_utc_now(),
+        )
+
+    def list_backtest_cards(self, *, run_id: str) -> BacktestCardsResponse:
+        try:
+            cards = self._data_source.list_backtest_cards(run_id=run_id)
+        except BacktesterTablesUnavailable:
+            return BacktestCardsResponse(
+                available=False,
+                message="Backtester data unavailable.",
+                run_id=run_id,
+                cards=[],
+                generated_at=_utc_now(),
+            )
+        return BacktestCardsResponse(
+            run_id=run_id,
+            cards=[
+                BacktestCard(
+                    thesis_card_id=card.thesis_card_id,
+                    ticker=card.ticker,
+                    exchange_code=card.exchange_code,
+                    direction=card.direction,
+                    strategy=card.strategy,
+                    time_horizon=card.time_horizon,
+                    confidence=card.confidence,
+                    decision_state=card.decision_state,
+                    card_created_at=card.card_created_at,
+                    card_expires_at=card.card_expires_at,
+                    trades=[
+                        BacktestCardTrade(
+                            trade_id=t.trade_id,
+                            entry_timing_scenario=t.entry_timing_scenario,
+                            entry_at=t.entry_at,
+                            entry_price=t.entry_price,
+                            exit_at=t.exit_at,
+                            exit_price=t.exit_price,
+                            net_pnl=t.net_pnl,
+                            return_pct=t.return_pct,
+                            exit_reason=t.exit_reason,
+                            risk_block_rule=t.risk_block_rule,
+                        )
+                        for t in card.trades
+                    ],
+                )
+                for card in cards
+            ],
             generated_at=_utc_now(),
         )
 

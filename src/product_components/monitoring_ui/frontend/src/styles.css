@@ -610,6 +610,10 @@ h2 {
   background: #eef8f4;
 }
 
+tr[data-selectable].selected {
+  background: #eef8f4;
+}
+
 .expired-row td {
   color: var(--color-muted, #64726c);
 }

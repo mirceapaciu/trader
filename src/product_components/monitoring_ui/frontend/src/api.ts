@@ -582,6 +582,41 @@ export type BacktestEquityResponse = {
   generated_at: string;
 };
 
+export type BacktestCardTrade = {
+  trade_id: string;
+  entry_timing_scenario: string;
+  entry_at: string | null;
+  entry_price: number | null;
+  exit_at: string | null;
+  exit_price: number | null;
+  net_pnl: number | null;
+  return_pct: number | null;
+  exit_reason: string | null;
+  risk_block_rule: string | null;
+};
+
+export type BacktestCard = {
+  thesis_card_id: string;
+  ticker: string;
+  exchange_code: string;
+  direction: string;
+  strategy: string;
+  time_horizon: string | null;
+  confidence: number | null;
+  decision_state: string;
+  card_created_at: string;
+  card_expires_at: string | null;
+  trades: BacktestCardTrade[];
+};
+
+export type BacktestCardsResponse = {
+  available: boolean;
+  message?: string | null;
+  run_id: string;
+  cards: BacktestCard[];
+  generated_at: string;
+};
+
 export type StartBacktestRequest = {
   window_start_at: string;
   window_end_at: string;
@@ -859,6 +894,10 @@ export function fetchBacktestTrades(
 
 export function fetchBacktestEquity(runId: string): Promise<BacktestEquityResponse> {
   return getJson<BacktestEquityResponse>(`/api/backtests/${encodeURIComponent(runId)}/equity`);
+}
+
+export function fetchBacktestCards(runId: string): Promise<BacktestCardsResponse> {
+  return getJson<BacktestCardsResponse>(`/api/backtests/${encodeURIComponent(runId)}/cards`);
 }
 
 export function startBacktest(request: StartBacktestRequest): Promise<StartBacktestResponse> {
