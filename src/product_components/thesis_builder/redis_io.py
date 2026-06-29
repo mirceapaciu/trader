@@ -142,7 +142,7 @@ class RedisThesisBuilderIo:
             consumername=self._consumer_name,
             streams={self._reprocess_command_queue: ">"},
             count=count,
-            block=block_ms,
+            block=_block_arg(block_ms),
         )
         return _reprocess_commands(response)
 
@@ -167,7 +167,7 @@ class RedisThesisBuilderIo:
             consumername=self._consumer_name,
             streams={self._news_raw_queue: ">"},
             count=count,
-            block=block_ms,
+            block=_block_arg(block_ms),
         )
         return _messages(response)
 
@@ -252,6 +252,16 @@ class RedisThesisBuilderIo:
                 raise
             marker_id = self._client.xadd(stream_name, {"bootstrap": "thesis_builder"})
             self._client.xdel(stream_name, marker_id)
+
+
+def _block_arg(block_ms: int) -> int | None:
+    """Translate a poll interval into a redis XREADGROUP ``block`` argument.
+
+    Redis treats ``BLOCK 0`` as "block forever", which is the opposite of the
+    non-blocking poll the callers intend when they pass ``block_ms=0``. Returning
+    ``None`` omits the BLOCK clause entirely so the read returns immediately.
+    """
+    return block_ms if block_ms > 0 else None
 
 
 def _message(message_id: str, fields: dict[str, str]) -> NewsStreamMessage:
