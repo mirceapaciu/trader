@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,6 +33,18 @@ from .service import BacktestRunAlreadyActive
 LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class BacktestProgress:
+    """In-process progress of the active run, surfaced through the active_run payload."""
+
+    run_id: str
+    phase: str  # "prewarming" | "simulating"
+    done: int
+    total: int
+    current_ticker: str | None
+    updated_at: datetime
+
+
 class BacktestRunCoordinator:
     """Runs a backtester in-process, one at a time, mirroring backtester/main.py wiring."""
 
@@ -49,6 +62,34 @@ class BacktestRunCoordinator:
         self._now_factory = now_factory or _utc_now
         self._lock = threading.Lock()
         self._active_run_id: str | None = None
+        self._progress: BacktestProgress | None = None
+
+    def report_progress(
+        self,
+        *,
+        run_id: str,
+        phase: str,
+        done: int,
+        total: int,
+        ticker: str | None,
+    ) -> None:
+        with self._lock:
+            if self._active_run_id != run_id:
+                return
+            self._progress = BacktestProgress(
+                run_id=run_id,
+                phase=phase,
+                done=done,
+                total=total,
+                current_ticker=ticker,
+                updated_at=self._now_factory(),
+            )
+
+    def current_progress(self, run_id: str) -> BacktestProgress | None:
+        with self._lock:
+            if self._progress is not None and self._progress.run_id == run_id:
+                return self._progress
+            return None
 
     def start_run(self, request: BacktestRunRequest) -> str:
         params = self._build_params(request)
@@ -56,6 +97,14 @@ class BacktestRunCoordinator:
             if self._active_run_id is not None:
                 raise BacktestRunAlreadyActive(self._active_run_id)
             self._active_run_id = params.run_id
+            self._progress = BacktestProgress(
+                run_id=params.run_id,
+                phase="prewarming",
+                done=0,
+                total=0,
+                current_ticker=None,
+                updated_at=self._now_factory(),
+            )
 
         thread = threading.Thread(
             target=self._run_in_background,
@@ -129,11 +178,21 @@ class BacktestRunCoordinator:
                 shared_schema=settings.shared_db_schema,
             )
             repository.bootstrap_schema(repo_root=_repo_root())
+            def _progress(phase: str, done: int, total: int, ticker: str | None) -> None:
+                self.report_progress(
+                    run_id=params.run_id,
+                    phase=phase,
+                    done=done,
+                    total=total,
+                    ticker=ticker,
+                )
+
             BacktesterService(
                 settings=settings,
                 repository=repository,
                 cards_provider=cards_provider,
                 bars_provider=bars_provider,
+                progress=_progress,
             ).run(params)
         except Exception:
             LOGGER.exception("backtester run failed run_id=%s", params.run_id)
@@ -141,6 +200,7 @@ class BacktestRunCoordinator:
             with self._lock:
                 if self._active_run_id == params.run_id:
                     self._active_run_id = None
+                    self._progress = None
 
 
 def _utc_now() -> datetime:

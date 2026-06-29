@@ -494,6 +494,16 @@ class ThesisReprocessStatusResponse(BaseModel):
 BacktestRunStatus = Literal["running", "completed", "failed"]
 
 
+class BacktestRunProgress(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    phase: str  # "prewarming" | "simulating"
+    done: int
+    total: int
+    current_ticker: str | None = None
+    updated_at: datetime
+
+
 class BacktestRunSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -515,6 +525,7 @@ class BacktestRunSummary(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     error_code: str | None = None
+    progress: BacktestRunProgress | None = None
 
 
 class BacktestRunsResponse(BaseModel):

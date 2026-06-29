@@ -28,6 +28,7 @@ from .models import (
     BacktestEquitySeries,
     BacktestGapMetrics,
     BacktestRunDetailResponse,
+    BacktestRunProgress,
     BacktestRunSummary,
     BacktestRunsResponse,
     BacktestScalarMetrics,
@@ -177,8 +178,18 @@ class FilterQualityRunner(Protocol):
     def start_last_24h_run_with_snapshot(self, snapshot: dict) -> str: ...
 
 
+class BacktestProgressLike(Protocol):
+    phase: str
+    done: int
+    total: int
+    current_ticker: str | None
+    updated_at: datetime
+
+
 class BacktestRunner(Protocol):
     def start_run(self, request: BacktestRunRequest) -> str: ...
+
+    def current_progress(self, run_id: str) -> BacktestProgressLike | None: ...
 
 
 class FilterQualityRunAlreadyActive(RuntimeError):
@@ -681,11 +692,31 @@ class MonitoringService:
                 active_run=None,
                 generated_at=_utc_now(),
             )
+        active_summary = None
+        if active is not None:
+            active_summary = _backtest_run_summary(
+                active, progress=self._active_run_progress(active.run_id)
+            )
         return BacktestRunsResponse(
             window=selected_window,
             runs=[_backtest_run_summary(row) for row in runs],
-            active_run=_backtest_run_summary(active) if active is not None else None,
+            active_run=active_summary,
             generated_at=_utc_now(),
+        )
+
+    def _active_run_progress(self, run_id: str) -> BacktestRunProgress | None:
+        """Live, in-process progress of the active run, if the coordinator is tracking it."""
+        if self._backtest_runner is None:
+            return None
+        current = self._backtest_runner.current_progress(run_id)
+        if current is None:
+            return None
+        return BacktestRunProgress(
+            phase=current.phase,
+            done=current.done,
+            total=current.total,
+            current_ticker=current.current_ticker,
+            updated_at=current.updated_at,
         )
 
     def get_backtest_detail(self, *, run_id: str) -> BacktestRunDetailResponse | None:
@@ -986,8 +1017,11 @@ _CARD_STATUS_BUCKETS = (
 )
 
 
-def _backtest_run_summary(row: BacktestRunRow) -> BacktestRunSummary:
+def _backtest_run_summary(
+    row: BacktestRunRow, *, progress: BacktestRunProgress | None = None
+) -> BacktestRunSummary:
     return BacktestRunSummary(
+        progress=progress,
         run_id=row.run_id,
         status=row.status,
         window_start_at=row.window_start_at,

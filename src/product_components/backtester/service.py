@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 
 from .clients import BarsProvider, CardsProvider
 from .engine import BacktesterEngine
@@ -10,6 +11,10 @@ from .repository import BacktesterRepository, dataset_snapshot_hash
 from .settings import BacktesterSettings
 
 LOGGER = logging.getLogger("backtester")
+
+# Reports run progress to an external observer: (phase, done, total, ticker) where phase is
+# "prewarming" | "simulating".
+ProgressSink = Callable[[str, int, int, "str | None"], None]
 
 
 def new_run_id() -> str:
@@ -24,11 +29,13 @@ class BacktesterService:
         repository: BacktesterRepository,
         cards_provider: CardsProvider,
         bars_provider: BarsProvider,
+        progress: ProgressSink | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._cards = cards_provider
         self._bars = bars_provider
+        self._progress = progress
 
     def run(self, params: BacktestRunParams) -> None:
         self._validate_params(params)
@@ -41,6 +48,7 @@ class BacktesterService:
 
         self._prefetch_market_data(cards, params)
 
+        self._report_progress("simulating", 0, 0, None)
         try:
             result = BacktesterEngine(
                 params=params,
@@ -90,8 +98,12 @@ class BacktesterService:
             interval,
         )
 
+        total = len(instruments)
+        self._report_progress("prewarming", 0, total, None)
+
         def _progress(done: int, total: int, ticker: str, status: str) -> None:
             LOGGER.info("market data %s %d/%d %s", status, done, total, ticker)
+            self._report_progress("prewarming", done, total, ticker)
 
         warm(
             instruments,
@@ -101,6 +113,10 @@ class BacktesterService:
             progress=_progress,
         )
         LOGGER.info("prefetch complete run_id=%s", params.run_id)
+
+    def _report_progress(self, phase: str, done: int, total: int, ticker: str | None) -> None:
+        if self._progress is not None:
+            self._progress(phase, done, total, ticker)
 
     def _validate_params(self, params: BacktestRunParams) -> None:
         if params.window_start_at >= params.window_end_at:

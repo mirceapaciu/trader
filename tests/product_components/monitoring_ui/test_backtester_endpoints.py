@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.product_components.monitoring_ui.backend.app import create_app
 from src.product_components.monitoring_ui.backend.backtest_run_request import BacktestRunRequest
+from src.product_components.monitoring_ui.backend.backtest_runner import BacktestProgress
 from src.product_components.monitoring_ui.backend.repository import (
     BacktestEquityRow,
     BacktestRunRow,
@@ -160,12 +161,18 @@ class FakeBacktestRunner:
     def __init__(self) -> None:
         self.last_request: BacktestRunRequest | None = None
         self.raise_already_active = False
+        self.progress: BacktestProgress | None = None
 
     def start_run(self, request: BacktestRunRequest) -> str:
         if self.raise_already_active:
             raise BacktestRunAlreadyActive("bt_active")
         self.last_request = request
         return "bt_new"
+
+    def current_progress(self, run_id: str) -> BacktestProgress | None:
+        if self.progress is not None and self.progress.run_id == run_id:
+            return self.progress
+        return None
 
 
 def _settings() -> MonitoringUiSettings:
@@ -223,6 +230,51 @@ def test_get_backtests_returns_runs_and_active_run() -> None:
     assert [r.run_id for r in result.runs] == ["bt_1", "bt_2"]
     assert result.active_run is not None
     assert result.active_run.run_id == "bt_2"
+
+
+def test_get_backtests_attaches_live_progress_to_active_run() -> None:
+    ds = FakeBacktestDataSource()
+    ds.runs = [_run_row(run_id="bt_2", status="running")]
+    ds.active = _run_row(run_id="bt_2", status="running")
+    runner = FakeBacktestRunner()
+    runner.progress = BacktestProgress(
+        run_id="bt_2",
+        phase="prewarming",
+        done=12,
+        total=50,
+        current_ticker="AAPL",
+        updated_at=datetime(2026, 6, 27, 11, 5, tzinfo=timezone.utc),
+    )
+
+    result = _service(ds, runner).get_backtests(window="7d")
+
+    assert result.active_run is not None
+    assert result.active_run.progress is not None
+    assert result.active_run.progress.phase == "prewarming"
+    assert result.active_run.progress.done == 12
+    assert result.active_run.progress.total == 50
+    assert result.active_run.progress.current_ticker == "AAPL"
+    # Non-active runs in the list carry no live progress.
+    assert all(run.progress is None for run in result.runs)
+
+
+def test_get_backtests_omits_progress_for_mismatched_run() -> None:
+    ds = FakeBacktestDataSource()
+    ds.active = _run_row(run_id="bt_2", status="running")
+    runner = FakeBacktestRunner()
+    runner.progress = BacktestProgress(
+        run_id="some_other_run",
+        phase="simulating",
+        done=0,
+        total=0,
+        current_ticker=None,
+        updated_at=datetime(2026, 6, 27, 11, 5, tzinfo=timezone.utc),
+    )
+
+    result = _service(ds, runner).get_backtests(window="7d")
+
+    assert result.active_run is not None
+    assert result.active_run.progress is None
 
 
 def test_get_backtests_rejects_invalid_window() -> None:

@@ -44,6 +44,20 @@ const CARD_BUCKET_LABELS: Record<string, string> = {
   card_unexpired_at_entry: "Live-executable"
 };
 
+function runningBannerText(activeRunId: string, activeRun: BacktestRunSummary | null): string {
+  const progress = activeRun?.progress ?? null;
+  if (progress) {
+    if (progress.phase === "prewarming") {
+      const ticker = progress.current_ticker ? ` (${progress.current_ticker})` : "";
+      return `Pre-warming market data ${progress.done}/${progress.total}${ticker}…`;
+    }
+    if (progress.phase === "simulating") {
+      return "Running simulation…";
+    }
+  }
+  return `Run ${activeRunId.slice(0, 8)}… is running. Wait for it to finish.`;
+}
+
 export function BacktesterTab() {
   const queryClient = useQueryClient();
   const [window, setWindow] = useState<ThroughputPresetWindow>("1d");
@@ -53,7 +67,8 @@ export function BacktesterTab() {
   const backtests = useQuery({
     queryKey: ["backtests", window],
     queryFn: () => fetchBacktests(window),
-    refetchInterval: 15000
+    // Poll faster while a run is active so pre-warming/simulation progress stays current.
+    refetchInterval: (query) => (query.state.data?.active_run ? 5000 : 15000)
   });
   const data = backtests.data;
   const runs = data?.runs ?? [];
@@ -299,9 +314,7 @@ function TriggerPanel({
             {isSubmitting ? "Starting…" : activeRunId ? "Running…" : "Run backtest"}
           </button>
           {activeRunId !== null && !isSubmitting && (
-            <span className="muted">
-              Run <strong>{activeRunId.slice(0, 8)}…</strong> is running. Wait for it to finish.
-            </span>
+            <span className="muted">{runningBannerText(activeRunId, activeRun)}</span>
           )}
           {!busy && (windowStart === "" || windowEnd === "") && (
             <span className="muted">

@@ -432,6 +432,14 @@ export type BacktestTimingScenario = "ideal" | "actual" | "both";
 
 export type BacktestCardPopulation = "all" | "approved_only" | "rejected_only";
 
+export type BacktestRunProgress = {
+  phase: "prewarming" | "simulating" | string;
+  done: number;
+  total: number;
+  current_ticker?: string | null;
+  updated_at: string;
+};
+
 export type BacktestRunSummary = {
   run_id: string;
   status: BacktestRunStatus;
@@ -451,6 +459,7 @@ export type BacktestRunSummary = {
   started_at?: string | null;
   finished_at?: string | null;
   error_code?: string | null;
+  progress?: BacktestRunProgress | null;
 };
 
 export type BacktestsResponse = {

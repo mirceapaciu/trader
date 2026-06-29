@@ -243,6 +243,50 @@ describe("BacktesterTab", () => {
     expect(screen.getByText(/is running/)).toBeInTheDocument();
   });
 
+  it("shows pre-warming progress in the active-run banner", () => {
+    installQueryRouter({
+      backtests: backtestsResult([], {
+        active_run: makeRun({
+          run_id: "active-222",
+          status: "running",
+          progress: {
+            phase: "prewarming",
+            done: 12,
+            total: 50,
+            current_ticker: "AAPL",
+            updated_at: "2026-06-16T08:01:00Z"
+          }
+        })
+      }),
+      detail: emptyResult
+    });
+    render(<BacktesterTab />);
+
+    expect(screen.getByText(/Pre-warming market data 12\/50 \(AAPL\)/)).toBeInTheDocument();
+  });
+
+  it("shows the simulation phase in the active-run banner", () => {
+    installQueryRouter({
+      backtests: backtestsResult([], {
+        active_run: makeRun({
+          run_id: "active-333",
+          status: "running",
+          progress: {
+            phase: "simulating",
+            done: 0,
+            total: 0,
+            current_ticker: null,
+            updated_at: "2026-06-16T08:05:00Z"
+          }
+        })
+      }),
+      detail: emptyResult
+    });
+    render(<BacktesterTab />);
+
+    expect(screen.getByText(/Running simulation…/)).toBeInTheDocument();
+  });
+
   it("shows a busy state when the trigger returns 409", () => {
     useMutation.mockReturnValue({
       ...defaultMutation,
