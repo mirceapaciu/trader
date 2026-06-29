@@ -171,6 +171,33 @@ class WindowArticlesResponse(BaseModel):
     generated_at: datetime
 
 
+class FetchedArticle(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    article_id: str
+    source: str
+    source_key: str
+    headline: str
+    summary: str | None = None
+    url: str
+    tickers: list[str] = Field(default_factory=list)
+    published_at: datetime
+    fetched_at: datetime
+    filter_outcome: str | None = None        # 'accepted' | 'rejected' | None (not yet filtered)
+    rejection_reason_code: str | None = None
+    matched_article_id: str | None = None    # set when rejected as a duplicate
+
+
+class FetchedArticlesResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    window: str | None = None
+    items: list[FetchedArticle] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class NewsAnalysisItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 

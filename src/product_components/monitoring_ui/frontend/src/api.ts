@@ -345,6 +345,29 @@ export type NewsAnalysesResponse = {
   generated_at: string;
 };
 
+export type FetchedArticle = {
+  article_id: string;
+  source: string;
+  source_key: string;
+  headline: string;
+  summary?: string | null;
+  url: string;
+  tickers: string[];
+  published_at: string;
+  fetched_at: string;
+  filter_outcome?: string | null;
+  rejection_reason_code?: string | null;
+  matched_article_id?: string | null;
+};
+
+export type FetchedArticlesResponse = {
+  available: boolean;
+  message?: string | null;
+  window?: string | null;
+  items: FetchedArticle[];
+  generated_at: string;
+};
+
 export type FilterQualityIncorrectlyAcceptedItem = {
   assessment_id: string;
   run_id: string;
@@ -834,6 +857,12 @@ export function fetchNewsAnalyses(params: { window: ThroughputPresetWindow; limi
   const p = new URLSearchParams({ window: params.window });
   if (params.limit != null) p.set("limit", String(params.limit));
   return getJson<NewsAnalysesResponse>(`/api/thesis-builder/analyses?${p.toString()}`);
+}
+
+export function fetchFetchedArticles(params: { window: ThroughputPresetWindow; limit?: number }): Promise<FetchedArticlesResponse> {
+  const p = new URLSearchParams({ window: params.window });
+  if (params.limit != null) p.set("limit", String(params.limit));
+  return getJson<FetchedArticlesResponse>(`/api/news-fetcher/fetched-articles?${p.toString()}`);
 }
 
 export function fetchThesisCardArticles(cardId: string): Promise<WindowArticlesResponse> {

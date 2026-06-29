@@ -25,6 +25,7 @@ from .models import (
     BacktestStartRunResponse,
     BacktestTradesResponse,
     DeadLetterResponse,
+    FetchedArticlesResponse,
     FilterConfigSimulationStartResponse,
     FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedResponse,
@@ -268,6 +269,19 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
             lambda: service.list_dead_letters(limit=limit, offset=offset),
             detail="dead-letter data unavailable",
         )
+
+    @app.get("/api/news-fetcher/fetched-articles", response_model=FetchedArticlesResponse)
+    def list_fetched_articles(
+        window: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=500),
+    ) -> FetchedArticlesResponse:
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.list_fetched_articles(window=window, limit=limit),
+                detail="fetched articles unavailable",
+            )
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     @app.get("/api/filter-quality", response_model=FilterQualityStatusResponse)
     def get_filter_quality() -> FilterQualityStatusResponse:

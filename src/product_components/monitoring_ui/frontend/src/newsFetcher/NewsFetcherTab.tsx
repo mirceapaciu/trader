@@ -5,6 +5,7 @@ import {
   ApiError,
   fetchBacklog,
   fetchDeadLetters,
+  fetchFetchedArticles,
   fetchFilterQualityIncorrectlyAccepted,
   fetchFilterQualityIncorrectlyRejected,
   fetchHealth,
@@ -17,6 +18,7 @@ import {
   runTestFilterSimulation,
   saveTestFilterConfig,
   startFilterQualityRun,
+  type FetchedArticle,
   type FilterQualityIncorrectlyAcceptedItem,
   type FilterQualityIncorrectlyRejectedItem,
   type FilterQualityRunSummary,
@@ -53,6 +55,7 @@ export function NewsFetcherTab() {
     window: "1d",
     endDate: ""
   });
+  const [fetchedWindow, setFetchedWindow] = useState<ThroughputPresetWindow>("1d");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set([RSS_BATCH_GROUP]));
   function toggleProviderGroup(group: string) {
     setCollapsedGroups(prev => {
@@ -67,6 +70,11 @@ export function NewsFetcherTab() {
   const throughput = useQuery({
     queryKey: ["throughput", throughputRequest],
     queryFn: () => fetchThroughput(throughputRequest)
+  });
+  const fetchedArticles = useQuery({
+    queryKey: ["fetched-articles", fetchedWindow],
+    queryFn: () => fetchFetchedArticles({ window: fetchedWindow }),
+    refetchInterval: 15000
   });
   const backlog = useQuery({ queryKey: ["backlog"], queryFn: fetchBacklog, refetchInterval: 20000 });
   const deadLetters = useQuery({ queryKey: ["dead-letter"], queryFn: fetchDeadLetters, refetchInterval: 20000 });
@@ -420,6 +428,32 @@ export function NewsFetcherTab() {
             <EmptyState text={!providers.data?.available ? "Provider telemetry unavailable" : "No provider telemetry yet"} />
           )}
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Fetched Articles</h2>
+          <div className="window-toggle-group" aria-label="Fetched articles time window">
+            {THROUGHPUT_PRESETS.map((preset) => (
+              <button
+                type="button"
+                key={preset.window}
+                className={fetchedWindow === preset.window ? "window-toggle active" : "window-toggle"}
+                onClick={() => setFetchedWindow(preset.window)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {fetchedArticles.data && !fetchedArticles.data.available ? (
+          <DataSourceNotice text={fetchedArticles.data.message ?? "Fetched articles unavailable."} compact />
+        ) : null}
+        <FetchedArticlesTable
+          items={fetchedArticles.data?.items ?? []}
+          loading={!fetchedArticles.data && fetchedArticles.isFetching}
+          error={fetchedArticles.isError}
+        />
       </section>
 
       <section className="layout">
@@ -1243,6 +1277,118 @@ function IncorrectlyAcceptedReviewPanel({
   );
 }
 
+function FetchedArticlesTable({
+  items,
+  loading,
+  error
+}: {
+  items: FetchedArticle[];
+  loading: boolean;
+  error: boolean;
+}) {
+  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(items[0]?.article_id ?? null);
+
+  useEffect(() => {
+    if (!items.length) {
+      setSelectedArticleId(null);
+      return;
+    }
+    if (!selectedArticleId || !items.some((item) => item.article_id === selectedArticleId)) {
+      setSelectedArticleId(items[0].article_id);
+    }
+  }, [items, selectedArticleId]);
+
+  const selectedItem = items.find((item) => item.article_id === selectedArticleId) ?? items[0];
+
+  if (loading) {
+    return <EmptyState text="Loading fetched articles" />;
+  }
+  if (error) {
+    return <EmptyState text="Fetched articles unavailable" />;
+  }
+  if (!items.length) {
+    return <EmptyState text="No fetched articles in this window" />;
+  }
+
+  return (
+    <div className="quality-details">
+      <div className="quality-details-header">
+        <strong>Articles persisted by the fetcher</strong>
+        <span>{items.length} articles</span>
+      </div>
+      <div className="review-layout">
+        <div className="table-wrap review-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Article</th>
+                <th>Published</th>
+                <th>Fetched</th>
+                <th>Tickers</th>
+                <th>Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr
+                  key={item.article_id}
+                  className={item.article_id === selectedItem?.article_id ? "review-row selected" : "review-row"}
+                  onClick={() => setSelectedArticleId(item.article_id)}
+                >
+                  <td className="article-cell">
+                    <a href={item.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                      {item.headline}
+                    </a>
+                    <small>{item.source}</small>
+                  </td>
+                  <td>{formatDate(item.published_at)}</td>
+                  <td>{formatDate(item.fetched_at)}</td>
+                  <td>{item.tickers.length ? item.tickers.join(", ") : "n/a"}</td>
+                  <td>{formatOutcome(item)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <FetchedArticleReviewPanel item={selectedItem} />
+      </div>
+    </div>
+  );
+}
+
+function FetchedArticleReviewPanel({ item }: { item?: FetchedArticle }) {
+  if (!item) {
+    return <aside className="review-panel"><EmptyState text="Select an article to review" /></aside>;
+  }
+  return (
+    <aside className="review-panel" aria-label="Selected fetched article review">
+      <div className="review-panel-heading">
+        <span>{item.source}</span>
+        <strong>{formatDate(item.published_at)}</strong>
+      </div>
+      <div className="review-title">{item.headline}</div>
+      <div className="review-links">
+        <a href={item.url} target="_blank" rel="noreferrer">
+          Open article
+        </a>
+      </div>
+      <div className="review-meta">
+        <span>{formatOutcome(item)}</span>
+        {item.rejection_reason_code && <span>{item.rejection_reason_code}</span>}
+        <span>Fetched {formatDate(item.fetched_at)}</span>
+      </div>
+      <section className="review-section">
+        <h3>Summary</h3>
+        <p className="summary-text">{item.summary || "No article summary available."}</p>
+      </section>
+      <section className="review-section">
+        <h3>Tickers</h3>
+        <p className="summary-text">{item.tickers.length ? item.tickers.join(", ") : "No tickers tagged."}</p>
+      </section>
+    </aside>
+  );
+}
+
 function FilterConfigEditor({
   config,
   saveTestFilter,
@@ -1742,6 +1888,16 @@ function formatCause(value?: string | null) {
     return "n/a";
   }
   return value.replaceAll("_", " ");
+}
+
+function formatOutcome(item: FetchedArticle) {
+  if (item.filter_outcome === "rejected") {
+    return item.matched_article_id ? "duplicate" : "rejected";
+  }
+  if (item.filter_outcome === "accepted") {
+    return "accepted";
+  }
+  return "pending";
 }
 
 function aggregateThroughputRows(response?: ThroughputResponse) {

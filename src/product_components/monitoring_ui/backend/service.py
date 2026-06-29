@@ -39,6 +39,7 @@ from .models import (
     BacktestTradesResponse,
     DeadLetterResponse,
     DependencyHealth,
+    FetchedArticlesResponse,
     FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityStartRunRequest,
@@ -129,6 +130,13 @@ class MonitoringDataSource(Protocol):
         *,
         run_id: str,
     ) -> FilterQualityIncorrectlyAcceptedResponse: ...
+
+    def list_fetched_articles(
+        self,
+        *,
+        fetched_since: datetime,
+        limit: int,
+    ) -> FetchedArticlesResponse: ...
 
     def get_production_filter_config(self) -> NewsFilterConfigPayload: ...
 
@@ -502,6 +510,24 @@ class MonitoringService:
 
     def list_filter_quality_incorrectly_accepted(self, *, run_id: str) -> FilterQualityIncorrectlyAcceptedResponse:
         return self._data_source.list_filter_quality_incorrectly_accepted(run_id=run_id)
+
+    def list_fetched_articles(self, *, window: str | None, limit: int) -> FetchedArticlesResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported fetched-articles window: {selected_window}")
+        fetched_since = _utc_now() - _window_duration(selected_window)
+        try:
+            response = self._data_source.list_fetched_articles(fetched_since=fetched_since, limit=limit)
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("fetched articles unavailable for window %s", selected_window)
+            return FetchedArticlesResponse(
+                available=False,
+                message="Fetched articles unavailable.",
+                window=selected_window,
+                items=[],
+                generated_at=_utc_now(),
+            )
+        return response.model_copy(update={"window": selected_window})
 
     def get_production_filter_config(self) -> NewsFilterConfigPayload:
         return self._data_source.get_production_filter_config()

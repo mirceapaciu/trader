@@ -10,6 +10,8 @@ from src.product_components.monitoring_ui.backend.models import (
     BacklogResponse,
     DeadLetterResponse,
     DependencyHealth,
+    FetchedArticle,
+    FetchedArticlesResponse,
     FilterQualityIncorrectlyAcceptedItem,
     FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedItem,
@@ -73,6 +75,8 @@ class FakeDataSource:
         self.throughput_end_at: datetime | None = None
         self.thesis_builder_window: str | None = None
         self.thesis_builder_evidence_collection_max_minutes: int | None = None
+        self.fetched_articles_since: datetime | None = None
+        self.fetched_articles_limit: int | None = None
         self.test_filter = _filter_config("test_cfg", "test")
         self.production_filter = _filter_config("prod_cfg", "production")
 
@@ -245,6 +249,34 @@ class FakeDataSource:
             generated_at=_now(),
         )
 
+    def list_fetched_articles(
+        self,
+        *,
+        fetched_since: datetime,
+        limit: int,
+    ) -> FetchedArticlesResponse:
+        self.fetched_articles_since = fetched_since
+        self.fetched_articles_limit = limit
+        return FetchedArticlesResponse(
+            items=[
+                FetchedArticle(
+                    article_id="article_1",
+                    source="finnhub",
+                    source_key="finnhub:company_news",
+                    headline="Revenue outlook improves",
+                    summary="The company raised its revenue outlook.",
+                    url="https://example.test/article",
+                    tickers=["AAPL"],
+                    published_at=_now(),
+                    fetched_at=_now(),
+                    filter_outcome="accepted",
+                    rejection_reason_code=None,
+                    matched_article_id=None,
+                )
+            ],
+            generated_at=_now(),
+        )
+
     def get_running_filter_quality_run(self) -> FilterQualityRunSummary | None:
         return self.running_filter_quality_run
 
@@ -282,6 +314,16 @@ class FailingThroughputDataSource(FakeDataSource):
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> ThroughputResponse:
+        raise psycopg.OperationalError("database unavailable")
+
+
+class FailingFetchedArticlesDataSource(FakeDataSource):
+    def list_fetched_articles(
+        self,
+        *,
+        fetched_since: datetime,
+        limit: int,
+    ) -> FetchedArticlesResponse:
         raise psycopg.OperationalError("database unavailable")
 
 
@@ -690,6 +732,47 @@ def test_get_throughput_accepts_custom_range() -> None:
     assert data_source.throughput_end_at == end_at
     assert response.window == "custom"
     assert response.granularity == "hour"
+
+
+def test_list_fetched_articles_forwards_window_cutoff_and_limit() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    before = _now()
+    response = service.list_fetched_articles(window="1h", limit=50)
+
+    assert data_source.fetched_articles_limit == 50
+    assert data_source.fetched_articles_since is not None
+    # 1h window => cutoff is roughly one hour before now.
+    delta = before - data_source.fetched_articles_since
+    assert timedelta(minutes=55) <= delta <= timedelta(minutes=65)
+    assert response.window == "1h"
+    assert response.items[0].article_id == "article_1"
+    assert response.items[0].filter_outcome == "accepted"
+
+
+def test_list_fetched_articles_rejects_invalid_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    try:
+        service.list_fetched_articles(window="13m", limit=50)
+    except InvalidThroughputWindow:
+        pass
+    else:
+        raise AssertionError("expected InvalidThroughputWindow")
+
+
+def test_list_fetched_articles_returns_unavailable_on_infrastructure_error() -> None:
+    data_source = FailingFetchedArticlesDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.list_fetched_articles(window="1d", limit=50)
+
+    assert response.available is False
+    assert response.message == "Fetched articles unavailable."
+    assert response.window == "1d"
+    assert response.items == []
 
 
 def test_throughput_granularity_matches_window_defaults() -> None:

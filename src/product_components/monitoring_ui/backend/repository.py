@@ -27,6 +27,8 @@ from .models import (
     DeadLetterItem,
     DeadLetterResponse,
     DependencyHealth,
+    FetchedArticle,
+    FetchedArticlesResponse,
     FilterQualityIncorrectlyAcceptedItem,
     FilterQualityIncorrectlyAcceptedResponse,
     FilterQualityIncorrectlyRejectedItem,
@@ -659,6 +661,40 @@ class PostgresRedisMonitoringDataSource:
         return FilterQualityIncorrectlyAcceptedResponse(
             run_id=run_id,
             items=[_incorrectly_accepted_item(row) for row in rows],
+            generated_at=_utc_now(),
+        )
+
+    def list_fetched_articles(
+        self,
+        *,
+        fetched_since: datetime,
+        limit: int,
+    ) -> FetchedArticlesResponse:
+        sql = (
+            f"SELECT article_id, source, source_key, headline, summary, url, tickers, "
+            f"published_at, fetched_at, filter_outcome, rejection_reason_code, matched_article_id "
+            f"FROM ("
+            f"SELECT DISTINCT ON (a.id) a.id AS article_id, a.source, a.source_key, a.headline, "
+            f"a.summary, a.url, a.tickers, a.published_at, a.fetched_at, "
+            f"r.filter_outcome, r.rejection_reason_code, r.matched_article_id "
+            f"FROM {self._news_schema}.t_input_news_articles a "
+            f"LEFT JOIN {self._news_schema}.t_news_filter_runs fr ON fr.run_mode = 'production' "
+            f"LEFT JOIN {self._news_schema}.t_news_filter_results r "
+            f"ON r.article_id = a.id AND r.filter_run_id = fr.filter_run_id "
+            f"WHERE a.fetched_at >= %s "
+            f"ORDER BY a.id, r.created_at DESC NULLS LAST"
+            f") latest "
+            f"ORDER BY fetched_at DESC "
+            f"LIMIT %s"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            try:
+                cur.execute(sql, (fetched_since, limit))
+            except (errors.InvalidSchemaName, errors.UndefinedTable):
+                return FetchedArticlesResponse(items=[], generated_at=_utc_now())
+            rows = cur.fetchall()
+        return FetchedArticlesResponse(
+            items=[_fetched_article(row) for row in rows],
             generated_at=_utc_now(),
         )
 
@@ -1448,6 +1484,25 @@ def _incorrectly_rejected_item(row: dict[str, Any]) -> FilterQualityIncorrectlyR
         suggestion_json=suggestion_json,
         recommended_include_keywords=normalize_keywords(_string_list(suggestion_json.get("recommended_include_keywords"))),
         evaluated_at=_to_utc(row["evaluated_at"]),
+    )
+
+
+def _fetched_article(row: dict[str, Any]) -> FetchedArticle:
+    return FetchedArticle(
+        article_id=str(row["article_id"]),
+        source=str(row["source"]),
+        source_key=str(row["source_key"]),
+        headline=str(row["headline"]),
+        summary=row["summary"],
+        url=str(row["url"]),
+        tickers=_string_list(row["tickers"]),
+        published_at=_to_utc(row["published_at"]),
+        fetched_at=_to_utc(row["fetched_at"]),
+        filter_outcome=row.get("filter_outcome"),
+        rejection_reason_code=row.get("rejection_reason_code"),
+        matched_article_id=(
+            str(row["matched_article_id"]) if row.get("matched_article_id") else None
+        ),
     )
 
 
