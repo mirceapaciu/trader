@@ -149,7 +149,7 @@ The ThesisBuilder tab displays KPI tiles for:
 - Number of articles included into thesis cards.
 - Number of articles too old to be included into valid cards.
 - Number of created thesis cards.
-- Number of currently pending thesis cards.
+- Number of currently open evidence windows (thesis cards that were not yet created).
 - Number of ThesisBuilder dead-lettered consumer failures.
 - Oldest and average pending thesis-card age.
 - Minimum and average time remaining before pending evidence windows expire.

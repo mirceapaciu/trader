@@ -133,7 +133,7 @@ function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[
     <section className="panel panel-large">
       <div className="panel-heading">
         <div>
-          <h2>Pending Thesis Cards</h2>
+          <h2>Evidence windows</h2>
           <span>Collecting evidence windows</span>
         </div>
       </div>
