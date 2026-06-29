@@ -16,7 +16,11 @@ from src.product_components.shared.adapters import (
     SharedWatchlistEntryInput,
 )
 from src.product_components.thesis_builder.llm_client import ThesisAnalyzer
-from src.product_components.thesis_builder.models import ThesisStrategy, TradeDirection
+from src.product_components.thesis_builder.models import (
+    ContentType,
+    ThesisStrategy,
+    TradeDirection,
+)
 from src.product_components.thesis_builder.redis_io import RedisThesisBuilderIo
 from src.product_components.thesis_builder.repository import PostgresThesisBuilderRepository
 from src.product_components.thesis_builder.service import ThesisBuilderRunner
@@ -126,6 +130,32 @@ def test_off_topic_analysis_is_rejected_by_relevance_gate() -> None:
     assert redis_client.xlen(settings.signal_queue) == 0
 
 
+def test_opinion_is_retained_for_analyst_without_card() -> None:
+    # A valuation opinion (e.g. "near 52-week low, undervalued") that is genuinely about
+    # the instrument and reads bullishly must NOT produce a thesis, but must be retained
+    # and queryable for the future stock-analyst component.
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+    _seed_watchlist(settings)
+    _publish_news(redis_client, settings.news_raw_queue, ["article-1", "article-2", "article-3"])
+
+    runner = _runner(
+        settings,
+        llm_client=_FakeLlmClient(overrides={"content_type": ContentType.OPINION.value}),
+    )
+    runner.bootstrap()
+    runner.run_once()
+
+    assert _count(settings, "t_news_analyses") == 3
+    assert _rejection_reason_codes(settings) == ["routed_to_analyst"] * 3
+    assert _content_types(settings) == [ContentType.OPINION.value] * 3
+    assert _count(settings, "t_evidence_windows") == 0
+    assert _count(settings, "t_thesis_cards") == 0
+    assert redis_client.xlen(settings.signal_queue) == 0
+
+
 def _runner(
     settings: ThesisBuilderSettings, *, llm_client: "_FakeLlmClient | None" = None
 ) -> ThesisBuilderRunner:
@@ -186,6 +216,7 @@ class _FakeLlmClient:
             "reasoning": f"{payload['article']['headline']} supports a bullish event-driven thesis.",
             "is_market_moving": True,
             "instrument_is_subject": True,
+            "content_type": ContentType.NEWS_CATALYST.value,
             "event_type": "guidance",
             "price_impact_magnitude": "medium",
             "evidence_bullet_candidates": [payload["article"]["headline"]],
@@ -343,6 +374,16 @@ def _rejection_reason_codes(settings: ThesisBuilderSettings) -> list[str]:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT rejection_reason_code FROM {settings.thesis_builder_db_schema}.t_news_analyses "
+                f"ORDER BY analyzed_at"
+            )
+            return [row[0] for row in cur.fetchall()]
+
+
+def _content_types(settings: ThesisBuilderSettings) -> list[str]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT content_type FROM {settings.thesis_builder_db_schema}.t_news_analyses "
                 f"ORDER BY analyzed_at"
             )
             return [row[0] for row in cur.fetchall()]

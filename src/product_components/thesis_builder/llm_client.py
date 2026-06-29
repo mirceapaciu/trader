@@ -5,7 +5,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .models import LlmAnalysisResult, ThesisStrategy, TradeDirection
+from .models import ContentType, LlmAnalysisResult, ThesisStrategy, TradeDirection
 
 
 class TokenBudgetExhausted(RuntimeError):
@@ -137,6 +137,7 @@ def parse_analysis_result(
         reasoning=str(raw.get("reasoning") or ""),
         is_market_moving=bool(raw.get("is_market_moving", direction is not TradeDirection.HOLD)),
         instrument_is_subject=bool(raw.get("instrument_is_subject", False)),
+        content_type=_parse_content_type(raw.get("content_type")),
         event_type=str(raw["event_type"]) if raw.get("event_type") else None,
         price_impact_magnitude=(
             str(raw["price_impact_magnitude"]) if raw.get("price_impact_magnitude") else None
@@ -155,12 +156,26 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "merely listed among many names or matched incidentally). If the instrument "
                 "is not a clear subject, set instrument_is_subject=false, set relevance low, "
                 "and do NOT fabricate a thesis from generic market commentary, broad "
-                "'best stocks to buy' listicles, or unrelated news."
+                "'best stocks to buy' listicles, or unrelated news. Also classify the "
+                "article via content_type FOR THIS INSTRUMENT: only a news_catalyst may drive a thesis."
             ),
             "instrument_grounding_rules": [
                 "instrument_is_subject must be true only when the article is materially about this instrument.",
                 "Generic listicles, sector roundups, or articles where the instrument is not named are NOT about it.",
                 "When unsure, prefer instrument_is_subject=false and low relevance.",
+            ],
+            "content_type_rules": [
+                "content_type is judged for the SPECIFIED instrument, not the article as a whole.",
+                "content_type=news_catalyst only when the article reports a concrete, datable event about "
+                "THIS instrument likely to move ITS price (e.g. its earnings, guidance change, M&A, "
+                "regulatory action, product/contract news).",
+                "content_type=opinion for everything else about this instrument: valuation/opinion pieces, "
+                "listicles, 'best stocks to buy', price-target commentary, or analysis with no new event.",
+                "If the article's event concerns a DIFFERENT company and this instrument is only discussed by "
+                "comparison or commentary, that is content_type=opinion (not news_catalyst). Do NOT let another "
+                "company's catalyst justify a thesis for this instrument.",
+                "An opinion or valuation piece with no catalyst for this instrument must be opinion even if it "
+                "reads bullishly. Do NOT label it news_catalyst.",
             ],
             "strategy_scope_v1": ["event_driven", "sentiment_momentum"],
             "unsupported_strategies_must_still_be_labeled_if_best_fit": [
@@ -193,12 +208,22 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "reasoning",
                 "is_market_moving",
                 "instrument_is_subject",
+                "content_type",
                 "evidence_bullet_candidates",
                 "estimated_tokens",
             ],
         },
         sort_keys=True,
     )
+
+
+def _parse_content_type(value: Any) -> ContentType:
+    try:
+        return ContentType(str(value))
+    except ValueError:
+        # Default to the conservative class so unrecognized/missing values
+        # never produce a thesis card.
+        return ContentType.OPINION
 
 
 def _float_in_range(value: Any, *, minimum: float, maximum: float, field: str) -> float:
@@ -249,6 +274,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "reasoning",
             "is_market_moving",
             "instrument_is_subject",
+            "content_type",
             "event_type",
             "price_impact_magnitude",
             "evidence_bullet_candidates",
@@ -276,6 +302,10 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "reasoning": {"type": "string"},
             "is_market_moving": {"type": "boolean"},
             "instrument_is_subject": {"type": "boolean"},
+            "content_type": {
+                "type": "string",
+                "enum": ["news_catalyst", "opinion"],
+            },
             "event_type": {"type": ["string", "null"]},
             "price_impact_magnitude": {"type": ["string", "null"], "enum": ["low", "medium", "high", None]},
             "evidence_bullet_candidates": {"type": "array", "items": {"type": "string"}},

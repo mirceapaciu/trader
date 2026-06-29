@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from .models import (
+    ContentType,
     InstrumentIdentity,
     LlmAnalysisResult,
     NewsArticle,
@@ -180,8 +181,8 @@ class PostgresThesisBuilderRepository:
             f"(article_id, ticker, exchange_code, sentiment, relevance, urgency, suggested_action, "
             f"strategy, direction, event_type, price_impact_magnitude, reasoning, confidence, article_snapshot, "
             f"market_context_status, market_context_as_of, market_context_snapshot, is_market_moving, "
-            f"validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"content_type, validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING id"
         )
         with conn.cursor() as cur:
@@ -206,6 +207,7 @@ class PostgresThesisBuilderRepository:
                     market_as_of,
                     Json(market_context_snapshot) if market_context_snapshot is not None else None,
                     result.is_market_moving,
+                    result.content_type.value,
                     validation_status.value,
                     Json(validation_errors),
                     rejection_reason_code,
@@ -576,10 +578,19 @@ def _reprocess_run(row: dict[str, Any]) -> ReprocessRunRecord:
 def _analysis_rejection(
     result: LlmAnalysisResult, *, min_confidence: float, min_relevance: float = 0.0
 ) -> str | None:
-    if result.candidate_strategy not in _SUPPORTED_EXECUTABLE_STRATEGIES:
-        return f"unsupported_strategy_{result.candidate_strategy.value}"
+    # Discard articles that are not genuinely about this instrument first, so incidental
+    # name-drops (e.g. a comparison mention in another company's story) are dropped as noise
+    # rather than retained for the analyst.
     if not result.instrument_is_subject:
         return "instrument_not_subject"
+    # Only news-catalyst articles may drive a thesis. Opinion articles that ARE about this
+    # instrument never enter the evidence window; they are retained (validation_status=
+    # 'rejected', but queryable via content_type) for a future stock-analyst component, which
+    # will do the finer-grained grounded/ungrounded classification using the full article text.
+    if result.content_type is ContentType.OPINION:
+        return "routed_to_analyst"
+    if result.candidate_strategy not in _SUPPORTED_EXECUTABLE_STRATEGIES:
+        return f"unsupported_strategy_{result.candidate_strategy.value}"
     if result.relevance < min_relevance:
         return "below_min_relevance"
     if result.direction is TradeDirection.HOLD:

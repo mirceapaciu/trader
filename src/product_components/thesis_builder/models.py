@@ -25,6 +25,11 @@ class ValidationStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ContentType(StrEnum):
+    NEWS_CATALYST = "news_catalyst"
+    OPINION = "opinion"
+
+
 @dataclass(frozen=True)
 class NewsArticle:
     id: str
@@ -58,6 +63,7 @@ class LlmAnalysisResult:
     reasoning: str
     is_market_moving: bool
     instrument_is_subject: bool = False
+    content_type: ContentType = ContentType.OPINION
     event_type: str | None = None
     price_impact_magnitude: str | None = None
     evidence_bullet_candidates: list[str] = field(default_factory=list)
