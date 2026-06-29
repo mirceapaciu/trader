@@ -99,7 +99,11 @@ class ThesisBuilderRunner:
         self._reprocess_active = False
         self._reprocess_thread: threading.Thread | None = None
         self._analyzer = analyzer or ThesisAnalyzer(
-            client=OpenAIThesisClient(api_key=settings.openai_api_key),
+            client=OpenAIThesisClient(
+                api_key=settings.openai_api_key,
+                request_timeout_seconds=settings.llm_request_timeout_seconds,
+                max_retries=settings.llm_max_retries,
+            ),
             model=settings.llm_model,
             max_tokens_per_run=settings.llm_daily_token_budget,
             max_tokens_per_item=settings.llm_max_output_tokens,

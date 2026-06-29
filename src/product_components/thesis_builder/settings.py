@@ -40,6 +40,8 @@ class ThesisBuilderSettings:
     llm_model: str
     llm_daily_token_budget: int
     llm_max_output_tokens: int
+    llm_request_timeout_seconds: float
+    llm_max_retries: int
     openai_api_key: str
 
     log_level: str = "INFO"
@@ -89,6 +91,8 @@ class ThesisBuilderSettings:
             llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
             llm_daily_token_budget=_int_env("LLM_DAILY_TOKEN_BUDGET", 500000),
             llm_max_output_tokens=_int_env("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", 1200),
+            llm_request_timeout_seconds=_float_env("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", 60.0),
+            llm_max_retries=_int_env("THESIS_BUILDER_LLM_MAX_RETRIES", 2),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             log_level=os.getenv("THESIS_BUILDER_LOG_LEVEL") or os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("THESIS_BUILDER_LOG_FILE", "logs/thesis-builder.log"),

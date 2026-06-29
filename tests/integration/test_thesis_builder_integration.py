@@ -254,6 +254,8 @@ def _settings() -> ThesisBuilderSettings:
         llm_model="test-model",
         llm_daily_token_budget=100000,
         llm_max_output_tokens=500,
+        llm_request_timeout_seconds=60.0,
+        llm_max_retries=2,
         openai_api_key="test-key",
     )
 

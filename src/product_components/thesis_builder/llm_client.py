@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .models import ContentType, LlmAnalysisResult, ThesisStrategy, TradeDirection
@@ -19,14 +19,34 @@ class ThesisLlmClient(Protocol):
 
 @dataclass
 class OpenAIThesisClient:
-    """Thin OpenAI Responses API adapter for ThesisBuilder."""
+    """Thin OpenAI Responses API adapter for ThesisBuilder.
+
+    A per-request ``timeout`` is mandatory: the ThesisBuilder consumer is
+    single-threaded, so a stalled HTTP request without a timeout silently
+    blocks the entire news loop indefinitely. With a timeout, a stuck request
+    raises and the message flows through the normal retry/DLQ path instead.
+    """
 
     api_key: str
+    request_timeout_seconds: float = 60.0
+    max_retries: int = 2
+    _client: Any = field(default=None, init=False, repr=False)
+
+    def _get_client(self) -> Any:
+        # Reuse a single client (and its connection pool) across calls instead
+        # of constructing a new one per request, which leaks connections.
+        if self._client is None:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                api_key=self.api_key,
+                timeout=self.request_timeout_seconds,
+                max_retries=self.max_retries,
+            )
+        return self._client
 
     def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=self.api_key)
+        client = self._get_client()
         response = client.responses.create(
             model=model,
             input=prompt,
