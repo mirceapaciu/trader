@@ -23,6 +23,7 @@ from src.product_components.monitoring_ui.backend.models import (
     ProvidersResponse,
     ProviderStatus,
     ThesisBuilderActionableCard,
+    ThesisBuilderConsumerHealth,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThesisBuilderEvidenceWindow,
@@ -45,6 +46,7 @@ from src.product_components.monitoring_ui.backend.service import (
     FilterQualityRunAlreadyActive,
     InvalidThroughputWindow,
     MonitoringService,
+    _evaluate_consumer_stall,
 )
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 from src.product_components.shared.adapters import SharedWatchlistEntryInput, SharedWatchlistRecord
@@ -75,6 +77,20 @@ class FakeDataSource:
         self.throughput_end_at: datetime | None = None
         self.thesis_builder_window: str | None = None
         self.thesis_builder_evidence_collection_max_minutes: int | None = None
+        self.consumer_health_group: str | None = None
+        self.consumer_health = ThesisBuilderConsumerHealth(
+            available=True,
+            group_present=True,
+            consumer_group="thesis_builder_group",
+            stream_length=10,
+            consumer_lag=0,
+            pending_count=0,
+            consumer_count=1,
+            min_consumer_idle_seconds=1.0,
+            oldest_consumer_idle_seconds=1.0,
+            last_analysis_age_seconds=5.0,
+            generated_at=_now(),
+        )
         self.fetched_articles_since: datetime | None = None
         self.fetched_articles_limit: int | None = None
         self.test_filter = _filter_config("test_cfg", "test")
@@ -114,6 +130,12 @@ class FakeDataSource:
         self.thesis_builder_window = window
         self.thesis_builder_evidence_collection_max_minutes = evidence_collection_max_minutes
         return _thesis_builder_metrics(window=window)
+
+    def get_thesis_builder_consumer_health(
+        self, *, consumer_group: str
+    ) -> ThesisBuilderConsumerHealth:
+        self.consumer_health_group = consumer_group
+        return self.consumer_health
 
     def fetch_thesis_cards(
         self,
@@ -832,6 +854,81 @@ def test_get_thesis_builder_metrics_forwards_supported_window() -> None:
     assert response.actionable_cards[0].direction == "buy"
 
 
+def test_get_thesis_builder_metrics_attaches_consumer_health() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_builder_metrics(window="1d")
+
+    assert data_source.consumer_health_group == "thesis_builder_group"
+    assert response.consumer_health is not None
+    assert response.consumer_health.stalled is False
+
+
+def test_get_thesis_builder_metrics_flags_stalled_consumer() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    data_source.consumer_health = data_source.consumer_health.model_copy(
+        update={
+            "consumer_lag": 386,
+            "pending_count": 11,
+            "min_consumer_idle_seconds": 9000.0,
+            "oldest_consumer_idle_seconds": 90000.0,
+            "last_analysis_age_seconds": 8600.0,
+        }
+    )
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_builder_metrics(window="1d")
+
+    assert response.consumer_health is not None
+    assert response.consumer_health.stalled is True
+    assert len(response.consumer_health.stall_reasons) == 2
+
+
+def test_evaluate_consumer_stall_ignores_empty_backlog() -> None:
+    health = ThesisBuilderConsumerHealth(
+        available=True,
+        group_present=True,
+        consumer_lag=0,
+        pending_count=0,
+        consumer_count=1,
+        min_consumer_idle_seconds=9000.0,
+        last_analysis_age_seconds=9000.0,
+        generated_at=_now(),
+    )
+
+    evaluated = _evaluate_consumer_stall(health, threshold_seconds=600)
+
+    # Stale signals but nothing queued to process -> not a stall.
+    assert evaluated.stalled is False
+    assert evaluated.stall_reasons == []
+
+
+def test_evaluate_consumer_stall_flags_dead_consumer_with_backlog() -> None:
+    health = ThesisBuilderConsumerHealth(
+        available=True,
+        group_present=True,
+        consumer_lag=5,
+        pending_count=0,
+        consumer_count=0,
+        last_analysis_age_seconds=10.0,
+        generated_at=_now(),
+    )
+
+    evaluated = _evaluate_consumer_stall(health, threshold_seconds=600)
+
+    assert evaluated.stalled is True
+    assert any("No ThesisBuilder consumer is connected" in r for r in evaluated.stall_reasons)
+
+
+def test_evaluate_consumer_stall_skips_when_unavailable() -> None:
+    health = ThesisBuilderConsumerHealth(available=False, generated_at=_now())
+
+    evaluated = _evaluate_consumer_stall(health, threshold_seconds=600)
+
+    assert evaluated.stalled is False
+
+
 def test_get_thesis_cards_forwards_window_and_returns_all_statuses() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)
@@ -958,7 +1055,7 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         repository,
-        "_fetch_pending_thesis_windows",
+        "_fetch_evidence_windows",
         lambda **_kwargs: [
             ThesisBuilderEvidenceWindow(
                 window_id=9,
@@ -1327,6 +1424,8 @@ def _settings() -> MonitoringUiSettings:
         shared_db_schema="shared",
         watchlist_table="t_watchlist_tickers",
         thesis_builder_evidence_collection_max_minutes=120,
+        thesis_builder_consumer_group="thesis_builder_group",
+        thesis_builder_stall_threshold_seconds=600,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",

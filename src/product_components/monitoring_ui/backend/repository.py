@@ -41,6 +41,7 @@ from .models import (
     ProvidersResponse,
     ProviderStatus,
     ThesisBuilderActionableCard,
+    ThesisBuilderConsumerHealth,
     ThesisBuilderMetricsResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderEvidenceWindow,
@@ -400,6 +401,77 @@ class PostgresRedisMonitoringDataSource:
             recent_dead_letters=recent_dead_letters,
             pending_windows=pending_windows,
             actionable_cards=actionable_cards,
+            generated_at=generated_at,
+        )
+
+    def get_thesis_builder_consumer_health(
+        self, *, consumer_group: str
+    ) -> ThesisBuilderConsumerHealth:
+        """Gather raw liveness signals for the ThesisBuilder queue consumer.
+
+        Combines the freshness of ``t_news_analyses`` (work coming out) with the
+        Redis consumer-group lag, pending count and per-consumer idle times (work
+        going in). The ``stalled`` verdict is left to the service, which applies
+        the configured threshold.
+        """
+        generated_at = _utc_now()
+
+        last_analysis_age_seconds: float | None = None
+        try:
+            age_row = self._fetch_one(
+                (
+                    f"SELECT EXTRACT(EPOCH FROM (NOW() - MAX(analyzed_at))) AS age "
+                    f"FROM {self._thesis_builder_schema}.t_news_analyses"
+                ),
+                (),
+            )
+            last_analysis_age_seconds = _optional_float(age_row.get("age"))
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            last_analysis_age_seconds = None
+
+        stream = self._news_raw_queue
+        try:
+            stream_length = int(self._redis.xlen(stream))
+            groups = self._redis.xinfo_groups(stream)
+        except redis.RedisError as exc:
+            return ThesisBuilderConsumerHealth(
+                available=False,
+                message=f"ThesisBuilder consumer telemetry unavailable: {exc}",
+                consumer_group=consumer_group,
+                last_analysis_age_seconds=last_analysis_age_seconds,
+                generated_at=generated_at,
+            )
+
+        group = next((g for g in groups if g.get("name") == consumer_group), None)
+        if group is None:
+            return ThesisBuilderConsumerHealth(
+                available=True,
+                consumer_group=consumer_group,
+                group_present=False,
+                stream_length=stream_length,
+                last_analysis_age_seconds=last_analysis_age_seconds,
+                generated_at=generated_at,
+            )
+
+        try:
+            consumers = self._redis.xinfo_consumers(stream, consumer_group)
+        except redis.RedisError:
+            consumers = []
+        idle_seconds = [
+            c["idle"] / 1000.0 for c in consumers if c.get("idle") is not None
+        ]
+
+        return ThesisBuilderConsumerHealth(
+            available=True,
+            consumer_group=consumer_group,
+            group_present=True,
+            stream_length=stream_length,
+            consumer_lag=_optional_int(group.get("lag")),
+            pending_count=_optional_int(group.get("pending")),
+            consumer_count=len(consumers),
+            min_consumer_idle_seconds=min(idle_seconds) if idle_seconds else None,
+            oldest_consumer_idle_seconds=max(idle_seconds) if idle_seconds else None,
+            last_analysis_age_seconds=last_analysis_age_seconds,
             generated_at=generated_at,
         )
 
@@ -1281,6 +1353,10 @@ def _utc_now() -> datetime:
 
 def _optional_float(value: Any) -> float | None:
     return None if value is None else float(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
 
 
 def _json_object(value: Any) -> dict[str, Any]:

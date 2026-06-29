@@ -172,6 +172,23 @@ export type ThesisReprocessStatusResponse = {
   finished_at?: string | null;
 };
 
+export type ThesisBuilderConsumerHealth = {
+  available: boolean;
+  message?: string | null;
+  stalled: boolean;
+  stall_reasons: string[];
+  consumer_group?: string | null;
+  group_present: boolean;
+  stream_length?: number | null;
+  consumer_lag?: number | null;
+  pending_count?: number | null;
+  consumer_count?: number | null;
+  min_consumer_idle_seconds?: number | null;
+  oldest_consumer_idle_seconds?: number | null;
+  last_analysis_age_seconds?: number | null;
+  generated_at: string;
+};
+
 export type ThesisBuilderMetricsResponse = {
   available: boolean;
   message?: string | null;
@@ -196,6 +213,7 @@ export type ThesisBuilderMetricsResponse = {
   recent_dead_letters: ThesisBuilderDeadLetterItem[];
   pending_windows: ThesisBuilderEvidenceWindow[];
   actionable_cards: ThesisBuilderActionableCard[];
+  consumer_health?: ThesisBuilderConsumerHealth | null;
   generated_at: string;
 };
 

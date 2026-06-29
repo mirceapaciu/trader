@@ -50,6 +50,7 @@ from .models import (
     NewsFilterConfigPayload,
     NewsAnalysesResponse,
     ProvidersResponse,
+    ThesisBuilderConsumerHealth,
     ThesisBuilderMetricsResponse,
     ThesisCardListResponse,
     ThesisCardSummary,
@@ -98,6 +99,10 @@ class MonitoringDataSource(Protocol):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse: ...
+
+    def get_thesis_builder_consumer_health(
+        self, *, consumer_group: str
+    ) -> ThesisBuilderConsumerHealth: ...
 
     def fetch_thesis_cards(
         self,
@@ -357,14 +362,14 @@ class MonitoringService:
         if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
             raise InvalidThroughputWindow(f"Unsupported thesis-builder metrics window: {selected_window}")
         try:
-            return self._data_source.get_thesis_builder_metrics(
+            metrics = self._data_source.get_thesis_builder_metrics(
                 window=selected_window,
                 evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
             )
         except _INFRASTRUCTURE_ERRORS:
             logger.warning("thesis builder metrics unavailable for window %s", selected_window)
             now = _utc_now()
-            return ThesisBuilderMetricsResponse(
+            metrics = ThesisBuilderMetricsResponse(
                 available=False,
                 message="ThesisBuilder telemetry unavailable.",
                 window=selected_window,
@@ -381,6 +386,23 @@ class MonitoringService:
                 recent_dead_letters=[],
                 generated_at=now,
             )
+        consumer_health = self._thesis_builder_consumer_health()
+        if consumer_health is not None:
+            metrics = metrics.model_copy(update={"consumer_health": consumer_health})
+        return metrics
+
+    def _thesis_builder_consumer_health(self) -> ThesisBuilderConsumerHealth | None:
+        try:
+            health = self._data_source.get_thesis_builder_consumer_health(
+                consumer_group=self._settings.thesis_builder_consumer_group,
+            )
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("thesis builder consumer health unavailable")
+            return None
+        return _evaluate_consumer_stall(
+            health,
+            threshold_seconds=self._settings.thesis_builder_stall_threshold_seconds,
+        )
 
     def get_thesis_cards(self, *, window: str | None) -> ThesisCardListResponse:
         selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
@@ -975,6 +997,60 @@ class MonitoringService:
 
 def _dependency_healthy(dependencies: list[DependencyHealth], kind: str) -> bool:
     return any(dependency.kind == kind and dependency.state == "healthy" for dependency in dependencies)
+
+
+def _evaluate_consumer_stall(
+    health: ThesisBuilderConsumerHealth, *, threshold_seconds: int
+) -> ThesisBuilderConsumerHealth:
+    """Decide whether the ThesisBuilder consumer is stalled from raw signals.
+
+    A stall is only flagged when there is a backlog to drain — otherwise a quiet
+    period with nothing to process would read as a false alarm. Given a backlog,
+    the consumer is stalled if no consumer has read the queue recently or no
+    analyses have come out within the threshold.
+    """
+    if not health.available or not health.group_present:
+        return health
+
+    backlog_size = (health.consumer_lag or 0) + (health.pending_count or 0)
+    if backlog_size <= 0:
+        return health.model_copy(update={"stalled": False, "stall_reasons": []})
+
+    reasons: list[str] = []
+
+    if (health.consumer_count or 0) == 0:
+        reasons.append("No ThesisBuilder consumer is connected to the queue.")
+    elif (
+        health.min_consumer_idle_seconds is not None
+        and health.min_consumer_idle_seconds > threshold_seconds
+    ):
+        reasons.append(
+            f"No consumer has read the queue in {_format_duration(health.min_consumer_idle_seconds)} "
+            f"(threshold {_format_duration(threshold_seconds)})."
+        )
+
+    if health.last_analysis_age_seconds is None:
+        reasons.append(
+            f"No analyses have ever been produced while {backlog_size} message(s) await processing."
+        )
+    elif health.last_analysis_age_seconds > threshold_seconds:
+        reasons.append(
+            f"No analyses produced in {_format_duration(health.last_analysis_age_seconds)} "
+            f"while {backlog_size} message(s) await processing."
+        )
+
+    return health.model_copy(update={"stalled": bool(reasons), "stall_reasons": reasons})
+
+
+def _format_duration(seconds: float) -> str:
+    total = int(max(0, round(seconds)))
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m" if secs == 0 else f"{minutes}m {secs}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
 
 def _utc_now() -> datetime:

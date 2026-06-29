@@ -239,6 +239,32 @@ class ThesisBuilderDeadLetterItem(BaseModel):
     failed_at: datetime
 
 
+class ThesisBuilderConsumerHealth(BaseModel):
+    """Liveness of the ThesisBuilder Redis consumer (the queue-draining side).
+
+    Surfaces a stall where articles are published to the news stream but no
+    analyses come out the other end. ``stalled`` is decided by the service from
+    the raw signals below against a configurable threshold.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    stalled: bool = False
+    stall_reasons: list[str] = Field(default_factory=list)
+    consumer_group: str | None = None
+    group_present: bool = False
+    stream_length: int | None = None
+    consumer_lag: int | None = None
+    pending_count: int | None = None
+    consumer_count: int | None = None
+    min_consumer_idle_seconds: float | None = None
+    oldest_consumer_idle_seconds: float | None = None
+    last_analysis_age_seconds: float | None = None
+    generated_at: datetime
+
+
 class ThesisBuilderMetricsResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -265,6 +291,7 @@ class ThesisBuilderMetricsResponse(BaseModel):
     recent_dead_letters: list[ThesisBuilderDeadLetterItem] = Field(default_factory=list)
     pending_windows: list[ThesisBuilderEvidenceWindow] = Field(default_factory=list)
     actionable_cards: list[ThesisBuilderActionableCard] = Field(default_factory=list)
+    consumer_health: ThesisBuilderConsumerHealth | None = None
     generated_at: datetime
 
 

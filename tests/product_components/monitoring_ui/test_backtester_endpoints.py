@@ -194,6 +194,8 @@ def _settings() -> MonitoringUiSettings:
         shared_db_schema="shared",
         watchlist_table="t_watchlist_tickers",
         thesis_builder_evidence_collection_max_minutes=120,
+        thesis_builder_consumer_group="thesis_builder_group",
+        thesis_builder_stall_threshold_seconds=600,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",

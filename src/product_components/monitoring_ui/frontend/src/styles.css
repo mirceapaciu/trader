@@ -489,6 +489,15 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.consumer-stall-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
 .inline-warning-stack {
   display: grid;
   gap: 10px;

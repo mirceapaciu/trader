@@ -12,6 +12,7 @@ from src.product_components.monitoring_ui.backend.models import (
     FilterQualityIncorrectlyAcceptedResponse,
     ProvidersResponse,
     ProviderStatus,
+    ThesisBuilderConsumerHealth,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThroughputResponse,
@@ -106,6 +107,23 @@ class FakeMonitoringDataSource:
                     failed_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
                 )
             ],
+            generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+        )
+
+    def get_thesis_builder_consumer_health(
+        self, *, consumer_group: str
+    ) -> ThesisBuilderConsumerHealth:
+        return ThesisBuilderConsumerHealth(
+            available=True,
+            group_present=True,
+            consumer_group=consumer_group,
+            stream_length=10,
+            consumer_lag=0,
+            pending_count=0,
+            consumer_count=1,
+            min_consumer_idle_seconds=1.0,
+            oldest_consumer_idle_seconds=1.0,
+            last_analysis_age_seconds=5.0,
             generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
         )
 
@@ -350,6 +368,7 @@ def test_thesis_builder_metrics_endpoint_returns_metrics(monkeypatch) -> None:
     assert payload["missed_stale_thesis_cards_count"] == 1
     assert payload["dead_letter_count"] == 1
     assert payload["recent_dead_letters"][0]["error_code"] == "missing_article_payload"
+    assert payload["consumer_health"]["stalled"] is False
     assert data_source.window == "1h"
 
 
@@ -673,6 +692,8 @@ def _settings() -> MonitoringUiSettings:
         shared_db_schema="shared",
         watchlist_table="t_watchlist_tickers",
         thesis_builder_evidence_collection_max_minutes=120,
+        thesis_builder_consumer_group="thesis_builder_group",
+        thesis_builder_stall_threshold_seconds=600,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",

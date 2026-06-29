@@ -26,6 +26,8 @@ class MonitoringUiSettings:
     shared_db_schema: str
     watchlist_table: str
     thesis_builder_evidence_collection_max_minutes: int
+    thesis_builder_consumer_group: str
+    thesis_builder_stall_threshold_seconds: int
     filter_quality_run_timeout_seconds: int
     queue_url: str
     news_raw_queue: str
@@ -74,6 +76,13 @@ class MonitoringUiSettings:
             thesis_builder_evidence_collection_max_minutes=_int_env(
                 "THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES",
                 120,
+            ),
+            thesis_builder_consumer_group=os.getenv(
+                "THESIS_BUILDER_CONSUMER_GROUP", "thesis_builder_group"
+            ),
+            thesis_builder_stall_threshold_seconds=_int_env(
+                "THESIS_BUILDER_STALL_THRESHOLD_SECONDS",
+                600,
             ),
             filter_quality_run_timeout_seconds=_int_env("FILTER_QUALITY_RUN_TIMEOUT_SECONDS", 1800),
             queue_url=_queue_url_from_env(),

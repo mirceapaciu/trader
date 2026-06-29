@@ -10,6 +10,7 @@ import {
   fetchWindowArticles,
   reprocessThesisBuilder,
   type NewsAnalysisItem,
+  type ThesisBuilderConsumerHealth,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderEvidenceWindow,
@@ -92,6 +93,7 @@ export function ThesisBuilderTab() {
 
       {metrics.isError && <div className="inline-error">{metrics.error.message}</div>}
       {data && !data.available && <div className="inline-error">{data.message ?? "ThesisBuilder telemetry unavailable."}</div>}
+      <ConsumerHealthBanner health={data?.consumer_health} />
 
       <section className="thesis-kpi-grid">
         <MetricTile label="Articles processed" value={formatInteger(data?.articles_processed_count)} />
@@ -125,6 +127,28 @@ export function ThesisBuilderTab() {
         error={reprocess.error ?? reprocessStatus.error}
       />
     </main>
+  );
+}
+
+function ConsumerHealthBanner({ health }: { health?: ThesisBuilderConsumerHealth | null }) {
+  if (!health || !health.available || !health.stalled) {
+    return null;
+  }
+  return (
+    <div className="inline-error consumer-stall-banner" role="alert">
+      <strong>ThesisBuilder consumer stalled.</strong>
+      <ul style={{ margin: "6px 0 8px", paddingLeft: "1.2rem" }}>
+        {health.stall_reasons.map((reason) => (
+          <li key={reason}>{reason}</li>
+        ))}
+      </ul>
+      <div className="consumer-stall-stats">
+        <span>Backlog: {formatInteger((health.consumer_lag ?? 0) + (health.pending_count ?? 0))}</span>
+        <span>Stream depth: {formatInteger(health.stream_length)}</span>
+        <span>Consumers: {formatInteger(health.consumer_count)}</span>
+        <span>Last analysis: {formatDuration(health.last_analysis_age_seconds)} ago</span>
+      </div>
+    </div>
   );
 }
 
