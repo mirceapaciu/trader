@@ -10,7 +10,7 @@ import {
   reprocessThesisBuilder,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
-  type ThesisBuilderPendingWindow,
+  type ThesisBuilderEvidenceWindow,
   type ThesisCardSummary,
   type ThesisReprocessStatusResponse,
   type ThroughputPresetWindow,
@@ -98,7 +98,7 @@ export function ThesisBuilderTab() {
         <MetricTile label="Too old" value={formatInteger(data?.stale_articles_count)} />
         <MetricTile label="Created cards" value={formatInteger(data?.created_thesis_cards_count)} />
         <MetricTile label="Actionable cards" value={formatInteger(data?.actionable_cards?.length)} />
-        <MetricTile label="Pending cards" value={formatInteger(data?.pending_thesis_cards_count)} />
+        <MetricTile label="Evidence windows" value={formatInteger(data?.pending_thesis_cards_count)} />
         <MetricTile label="Dead letters" value={formatInteger(data?.dead_letter_count)} />
         <MetricTile label="Oldest pending age" value={formatDuration(data?.oldest_pending_age_seconds)} />
         <MetricTile label="Avg pending age" value={formatDuration(data?.average_pending_age_seconds)} />
@@ -107,7 +107,7 @@ export function ThesisBuilderTab() {
       </section>
 
       <ThesisCardsPanel window={window} />
-      <PendingWindowsPanel windows={data?.pending_windows ?? []} />
+      <EvidenceWindowsPanel windows={data?.pending_windows ?? []} />
       <section className="layout thesis-layout">
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
@@ -125,7 +125,7 @@ export function ThesisBuilderTab() {
   );
 }
 
-function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[] }) {
+function EvidenceWindowsPanel({ windows }: { windows: ThesisBuilderEvidenceWindow[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selectedWindow = windows.find((w) => w.window_id === selectedId) ?? null;
 
@@ -138,7 +138,7 @@ function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[
         </div>
       </div>
       {windows.length === 0 ? (
-        <div className="empty">No pending thesis-card windows.</div>
+        <div className="empty">No evidence windows.</div>
       ) : (
         <div className="pending-windows-layout">
           <div className="pending-list-wrap">
@@ -188,7 +188,7 @@ function PendingWindowsPanel({ windows }: { windows: ThesisBuilderPendingWindow[
   );
 }
 
-function WindowDetail({ window: w }: { window: ThesisBuilderPendingWindow }) {
+function WindowDetail({ window: w }: { window: ThesisBuilderEvidenceWindow }) {
   const [articlesOpen, setArticlesOpen] = useState(false);
   return (
     <div className="pending-detail-grid">

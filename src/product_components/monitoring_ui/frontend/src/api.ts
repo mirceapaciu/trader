@@ -65,7 +65,7 @@ export type ThroughputRequest =
   | { window: ThroughputPresetWindow }
   | { window: ThroughputPresetWindow; startAt: string; endAt: string };
 
-export type ThesisBuilderPendingWindow = {
+export type ThesisBuilderEvidenceWindow = {
   window_id: number;
   ticker: string;
   exchange_code: string;
@@ -194,7 +194,7 @@ export type ThesisBuilderMetricsResponse = {
   stale_evidence_exceeded_max_seconds?: number | null;
   dead_letter_count: number;
   recent_dead_letters: ThesisBuilderDeadLetterItem[];
-  pending_windows: ThesisBuilderPendingWindow[];
+  pending_windows: ThesisBuilderEvidenceWindow[];
   actionable_cards: ThesisBuilderActionableCard[];
   generated_at: string;
 };

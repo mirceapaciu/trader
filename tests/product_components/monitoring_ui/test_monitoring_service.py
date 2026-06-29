@@ -23,7 +23,7 @@ from src.product_components.monitoring_ui.backend.models import (
     ThesisBuilderActionableCard,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
-    ThesisBuilderPendingWindow,
+    ThesisBuilderEvidenceWindow,
     ThesisCardListResponse,
     ThesisCardSummary,
     ThroughputResponse,
@@ -877,7 +877,7 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
         repository,
         "_fetch_pending_thesis_windows",
         lambda **_kwargs: [
-            ThesisBuilderPendingWindow(
+            ThesisBuilderEvidenceWindow(
                 window_id=9,
                 ticker="AAPL",
                 exchange_code="XNAS",
@@ -1358,7 +1358,7 @@ def _thesis_builder_metrics(window: str = "1d") -> ThesisBuilderMetricsResponse:
             )
         ],
         pending_windows=[
-            ThesisBuilderPendingWindow(
+            ThesisBuilderEvidenceWindow(
                 window_id=1,
                 ticker="AAPL",
                 exchange_code="XNAS",

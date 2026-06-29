@@ -81,7 +81,7 @@ class ThroughputResponse(BaseModel):
     generated_at: datetime
 
 
-class ThesisBuilderPendingWindow(BaseModel):
+class ThesisBuilderEvidenceWindow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     window_id: int
@@ -204,7 +204,7 @@ class ThesisBuilderMetricsResponse(BaseModel):
     stale_evidence_exceeded_max_seconds: float | None = None
     dead_letter_count: int = 0
     recent_dead_letters: list[ThesisBuilderDeadLetterItem] = Field(default_factory=list)
-    pending_windows: list[ThesisBuilderPendingWindow] = Field(default_factory=list)
+    pending_windows: list[ThesisBuilderEvidenceWindow] = Field(default_factory=list)
     actionable_cards: list[ThesisBuilderActionableCard] = Field(default_factory=list)
     generated_at: datetime
 

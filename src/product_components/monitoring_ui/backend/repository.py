@@ -39,7 +39,7 @@ from .models import (
     ThesisBuilderActionableCard,
     ThesisBuilderMetricsResponse,
     ThesisBuilderDeadLetterItem,
-    ThesisBuilderPendingWindow,
+    ThesisBuilderEvidenceWindow,
     ThesisCardSummary,
     ThroughputBucket,
     ThroughputResponse,
@@ -349,7 +349,7 @@ class PostgresRedisMonitoringDataSource:
                 ),
                 (evidence_collection_max_minutes, evidence_collection_max_minutes, evidence_collection_max_minutes),
             )
-            pending_windows = self._fetch_pending_thesis_windows(
+            pending_windows = self._fetch_evidence_windows(
                 evidence_collection_max_minutes=evidence_collection_max_minutes,
             )
             actionable_cards = self._fetch_actionable_thesis_cards(
@@ -876,11 +876,11 @@ class PostgresRedisMonitoringDataSource:
             row = cur.fetchone()
         return dict(row or {})
 
-    def _fetch_pending_thesis_windows(
+    def _fetch_evidence_windows(
         self,
         *,
         evidence_collection_max_minutes: int,
-    ) -> list[ThesisBuilderPendingWindow]:
+    ) -> list[ThesisBuilderEvidenceWindow]:
         sql = (
             f"SELECT id, ticker, exchange_code, strategy, direction, window_started_at, last_evidence_at, "
             f"EXTRACT(EPOCH FROM (NOW() - window_started_at)) AS pending_age_seconds, "
@@ -897,7 +897,7 @@ class PostgresRedisMonitoringDataSource:
             cur.execute(sql, (evidence_collection_max_minutes, evidence_collection_max_minutes))
             rows = cur.fetchall()
         return [
-            ThesisBuilderPendingWindow(
+            ThesisBuilderEvidenceWindow(
                 window_id=int(row["id"]),
                 ticker=str(row["ticker"]),
                 exchange_code=str(row["exchange_code"]),
