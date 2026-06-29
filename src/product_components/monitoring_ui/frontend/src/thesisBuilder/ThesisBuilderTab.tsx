@@ -252,7 +252,7 @@ function NewsAnalysesPanel({ window }: { window: ThroughputPresetWindow }) {
           Ticker
           <input
             type="text"
-            aria-label="Filter by ticker"
+            aria-label="Filter analyses by ticker"
             value={tickerFilter}
             placeholder="e.g. AAPL"
             onChange={(e) => setTickerFilter(e.target.value)}

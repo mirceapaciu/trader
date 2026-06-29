@@ -29,6 +29,9 @@ describe("ThesisBuilderTab", () => {
       if (options?.queryKey?.includes("cards")) {
         return cardsQueryResult;
       }
+      if (options?.queryKey?.includes("analyses")) {
+        return analysesQueryResult;
+      }
       return metricsQueryResult;
     });
   });
@@ -128,6 +131,19 @@ describe("ThesisBuilderTab", () => {
           rejection_reason_code: "stale_evidence",
         },
       ],
+      generated_at: "2026-06-16T10:00:00Z",
+    },
+    isError: false,
+    isLoading: false,
+    error: null,
+  };
+
+  const analysesQueryResult = {
+    data: {
+      available: true,
+      message: null,
+      items: [],
+      has_more: false,
       generated_at: "2026-06-16T10:00:00Z",
     },
     isError: false,
@@ -239,6 +255,9 @@ describe("ThesisBuilderTab", () => {
       }
       if (options?.queryKey?.includes("cards")) {
         return cardsQueryResult;
+      }
+      if (options?.queryKey?.includes("analyses")) {
+        return analysesQueryResult;
       }
       return unavailableResult;
     });
