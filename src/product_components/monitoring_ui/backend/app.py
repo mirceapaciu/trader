@@ -32,6 +32,7 @@ from .models import (
     FilterQualityStartRunResponse,
     FilterQualityStatusResponse,
     HealthResponse,
+    NewsAnalysesResponse,
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
@@ -227,6 +228,19 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
             lambda: service.get_window_articles(window_id=window_id),
             detail="window articles unavailable",
         )
+
+    @app.get("/api/thesis-builder/analyses", response_model=NewsAnalysesResponse)
+    def get_news_analyses(
+        window: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=500),
+    ) -> NewsAnalysesResponse:
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.get_news_analyses(window=window, limit=limit),
+                detail="thesis-builder analyses unavailable",
+            )
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     @app.get(
         "/api/thesis-builder/cards/{card_id}/articles",

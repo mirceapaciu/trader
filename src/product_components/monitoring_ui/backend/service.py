@@ -47,6 +47,7 @@ from .models import (
     FilterConfigSimulationStartResponse,
     HealthResponse,
     NewsFilterConfigPayload,
+    NewsAnalysesResponse,
     ProvidersResponse,
     ThesisBuilderMetricsResponse,
     ThesisCardListResponse,
@@ -108,6 +109,8 @@ class MonitoringDataSource(Protocol):
     def get_window_articles(self, *, window_id: int) -> WindowArticlesResponse: ...
 
     def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse: ...
+
+    def get_news_analyses(self, *, window_start_at: datetime, window_end_at: datetime, limit: int) -> NewsAnalysesResponse: ...
 
     def get_backlog(self) -> BacklogResponse: ...
 
@@ -425,6 +428,27 @@ class MonitoringService:
                 card_id=card_id,
                 articles=[],
                 generated_at=_utc_now(),
+            )
+
+    def get_news_analyses(self, *, window: str | None, limit: int) -> NewsAnalysesResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported analyses window: {selected_window}")
+        bounded_limit = max(1, min(limit, 500))
+        now = _utc_now()
+        window_start_at = now - _window_duration(selected_window)
+        try:
+            return self._data_source.get_news_analyses(
+                window_start_at=window_start_at,
+                window_end_at=now,
+                limit=bounded_limit,
+            )
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("news analyses unavailable for window %s", selected_window)
+            return NewsAnalysesResponse(
+                available=False,
+                message="ThesisBuilder telemetry unavailable.",
+                generated_at=now,
             )
 
     def get_backlog(self) -> BacklogResponse:

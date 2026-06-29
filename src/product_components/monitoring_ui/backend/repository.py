@@ -33,6 +33,8 @@ from .models import (
     FilterQualityIncorrectlyRejectedResponse,
     FilterQualityRunSummary,
     FilterQualityStatusResponse,
+    NewsAnalysesResponse,
+    NewsAnalysisItem,
     NewsFilterConfigPayload,
     ProvidersResponse,
     ProviderStatus,
@@ -466,6 +468,64 @@ class PostgresRedisMonitoringDataSource:
             available=True,
             card_id=card_id,
             articles=articles,
+            generated_at=generated_at,
+        )
+
+    def get_news_analyses(
+        self, *, window_start_at: datetime, window_end_at: datetime, limit: int
+    ) -> NewsAnalysesResponse:
+        schema = self._thesis_builder_schema
+        generated_at = _utc_now()
+        sql = (
+            f"SELECT id, article_id, ticker, exchange_code, analyzed_at, "
+            f"content_type, validation_status, rejection_reason_code, "
+            f"confidence, is_market_moving, direction, strategy, reasoning, "
+            f"article_snapshot->>'headline' AS headline, "
+            f"article_snapshot->>'summary' AS summary, "
+            f"article_snapshot->>'url' AS url, "
+            f"article_snapshot->>'source' AS source "
+            f"FROM {schema}.t_news_analyses "
+            f"WHERE analyzed_at >= %s AND analyzed_at < %s "
+            f"ORDER BY analyzed_at DESC, id DESC "
+            f"LIMIT %s"
+        )
+        try:
+            with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (window_start_at, window_end_at, limit + 1))
+                rows = cur.fetchall()
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return NewsAnalysesResponse(
+                available=False,
+                message="ThesisBuilder telemetry is unavailable.",
+                generated_at=generated_at,
+            )
+        has_more = len(rows) > limit
+        items = [
+            NewsAnalysisItem(
+                id=int(row["id"]),
+                article_id=str(row["article_id"]),
+                ticker=str(row["ticker"]),
+                exchange_code=str(row["exchange_code"]),
+                analyzed_at=_to_utc(row["analyzed_at"]),
+                content_type=str(row["content_type"]) if row.get("content_type") else None,
+                validation_status=str(row["validation_status"]),
+                rejection_reason_code=str(row["rejection_reason_code"]) if row.get("rejection_reason_code") else None,
+                confidence=float(row["confidence"]),
+                is_market_moving=bool(row["is_market_moving"]),
+                direction=str(row["direction"]) if row.get("direction") else None,
+                strategy=str(row["strategy"]) if row.get("strategy") else None,
+                reasoning=str(row["reasoning"]) if row.get("reasoning") else None,
+                headline=str(row["headline"]) if row.get("headline") else None,
+                summary=str(row["summary"]) if row.get("summary") else None,
+                url=str(row["url"]) if row.get("url") else None,
+                source=str(row["source"]) if row.get("source") else None,
+            )
+            for row in rows[:limit]
+        ]
+        return NewsAnalysesResponse(
+            available=True,
+            items=items,
+            has_more=has_more,
             generated_at=generated_at,
         )
 

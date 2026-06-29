@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
+  fetchNewsAnalyses,
   fetchReprocessStatus,
   fetchThesisBuilderMetrics,
   fetchThesisCardArticles,
   fetchThesisCards,
   fetchWindowArticles,
   reprocessThesisBuilder,
+  type NewsAnalysisItem,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderEvidenceWindow,
@@ -108,6 +110,7 @@ export function ThesisBuilderTab() {
 
       <ThesisCardsPanel window={window} />
       <EvidenceWindowsPanel windows={data?.pending_windows ?? []} />
+      <NewsAnalysesPanel window={window} />
       <section className="layout thesis-layout">
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
@@ -185,6 +188,250 @@ function EvidenceWindowsPanel({ windows }: { windows: ThesisBuilderEvidenceWindo
         </div>
       )}
     </section>
+  );
+}
+
+type AnalysisStatusFilter = "all" | "valid" | "rejected";
+type AnalysisTypeFilter = "all" | "news_catalyst" | "opinion";
+
+function NewsAnalysesPanel({ window }: { window: ThroughputPresetWindow }) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [tickerFilter, setTickerFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<AnalysisStatusFilter>("all");
+  const [typeFilter, setTypeFilter] = useState<AnalysisTypeFilter>("all");
+
+  const query = useQuery({
+    queryKey: ["thesis-builder", "analyses", window],
+    queryFn: () => fetchNewsAnalyses({ window, limit: 200 }),
+    refetchInterval: 15000,
+  });
+
+  const allItems = query.data?.items ?? [];
+  const visible = allItems.filter((item) => {
+    if (tickerFilter && !item.ticker.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
+    if (statusFilter !== "all" && item.validation_status !== statusFilter) return false;
+    if (typeFilter !== "all" && item.content_type !== typeFilter) return false;
+    return true;
+  });
+  const selectedItem = allItems.find((item) => item.id === selectedId) ?? null;
+
+  return (
+    <section className="panel panel-large" style={{ marginBottom: 20 }}>
+      <div className="panel-heading">
+        <div>
+          <h2>LLM Analyses</h2>
+          <span>Recent analyses from the thesis builder, newest first</span>
+        </div>
+      </div>
+      <div className="thesis-card-filters">
+        <label>
+          Ticker
+          <input
+            type="text"
+            aria-label="Filter by ticker"
+            value={tickerFilter}
+            placeholder="e.g. AAPL"
+            onChange={(e) => setTickerFilter(e.target.value)}
+          />
+        </label>
+        <label>
+          Status
+          <select
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as AnalysisStatusFilter)}
+          >
+            <option value="all">All</option>
+            <option value="valid">Valid</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </label>
+        <label>
+          Type
+          <select
+            aria-label="Filter by content type"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as AnalysisTypeFilter)}
+          >
+            <option value="all">All</option>
+            <option value="news_catalyst">News catalyst</option>
+            <option value="opinion">Opinion</option>
+          </select>
+        </label>
+      </div>
+      {query.isError && <div className="inline-error">{query.error.message}</div>}
+      {query.data && !query.data.available && (
+        <div className="inline-error">{query.data.message ?? "Analyses unavailable."}</div>
+      )}
+      {visible.length === 0 ? (
+        <div className="empty">{query.isLoading ? "Loading analyses…" : "No analyses match the current filters."}</div>
+      ) : (
+        <div className="pending-windows-layout">
+          <div className="pending-list-wrap analyses-list-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Instrument</th>
+                  <th>Type</th>
+                  <th>Status / Reason</th>
+                  <th>Dir</th>
+                  <th>Conf</th>
+                  <th>Headline</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((item) => (
+                  <tr
+                    key={item.id}
+                    data-selectable
+                    className={item.id === selectedId ? "selected" : undefined}
+                    onClick={() => setSelectedId(item.id === selectedId ? null : item.id)}
+                  >
+                    <td style={{ whiteSpace: "nowrap" }}>{formatDate(item.analyzed_at)}</td>
+                    <td>
+                      <strong>{item.ticker}</strong>
+                      <span className="table-subtext">{item.exchange_code}</span>
+                    </td>
+                    <td>
+                      {item.content_type ? (
+                        <span className={item.content_type === "news_catalyst" ? "chip" : "chip warning"}>
+                          {formatToken(item.content_type)}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#64726c" }}>—</span>
+                      )}
+                    </td>
+                    <td>
+                      {item.validation_status === "valid" ? (
+                        <span className="chip">valid</span>
+                      ) : (
+                        <span className="chip warning">{formatToken(item.rejection_reason_code ?? "rejected")}</span>
+                      )}
+                    </td>
+                    <td>{item.direction ? formatToken(item.direction) : "—"}</td>
+                    <td>{item.confidence.toFixed(2)}</td>
+                    <td className="analysis-headline-cell">
+                      {item.url ? (
+                        <a href={item.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                          {item.headline ?? item.article_id}
+                        </a>
+                      ) : (
+                        <span>{item.headline ?? item.article_id}</span>
+                      )}
+                      {item.source && <span className="table-subtext">{item.source}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {query.data?.has_more && (
+              <div style={{ padding: "10px 14px", color: "#64726c", fontSize: "0.85rem" }}>
+                Showing 200 most recent — narrow the window to see fewer results.
+              </div>
+            )}
+          </div>
+          <div className="pending-detail">
+            {selectedItem ? (
+              <AnalysisDetail item={selectedItem} />
+            ) : (
+              <div className="empty">Select a row to see reasoning.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AnalysisDetail({ item }: { item: NewsAnalysisItem }) {
+  return (
+    <div className="pending-detail-grid">
+      <div className="pending-detail-row">
+        <span>Analysis ID</span>
+        <strong style={{ fontSize: "0.82rem", fontVariantNumeric: "tabular-nums" }}>{item.id}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Article ID</span>
+        <strong style={{ fontSize: "0.82rem", wordBreak: "break-all" }}>{item.article_id}</strong>
+      </div>
+      {item.headline && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>Title</span>
+          {item.url ? (
+            <a href={item.url} target="_blank" rel="noreferrer" className="quality-link">
+              {item.headline}
+            </a>
+          ) : (
+            <p>{item.headline}</p>
+          )}
+        </div>
+      )}
+      {item.summary && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>Summary</span>
+          <p>{item.summary}</p>
+        </div>
+      )}
+      {item.url && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>URL</span>
+          <a href={item.url} target="_blank" rel="noreferrer" className="quality-link" style={{ fontSize: "0.82rem" }}>
+            {item.url}
+          </a>
+        </div>
+      )}
+      <div className="pending-detail-row">
+        <span>Instrument</span>
+        <strong>{item.ticker} <small style={{ fontWeight: 400, color: "#64726c" }}>{item.exchange_code}</small></strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Analyzed at</span>
+        <strong>{formatDate(item.analyzed_at)}</strong>
+      </div>
+      {item.content_type && (
+        <div className="pending-detail-row">
+          <span>Content type</span>
+          <strong>{formatToken(item.content_type)}</strong>
+        </div>
+      )}
+      <div className="pending-detail-row">
+        <span>Status</span>
+        <strong>{formatToken(item.validation_status)}</strong>
+      </div>
+      {item.rejection_reason_code && (
+        <div className="pending-detail-row">
+          <span>Rejection reason</span>
+          <strong>{formatToken(item.rejection_reason_code)}</strong>
+        </div>
+      )}
+      {item.strategy && (
+        <div className="pending-detail-row">
+          <span>Strategy</span>
+          <strong>{formatToken(item.strategy)}</strong>
+        </div>
+      )}
+      {item.direction && (
+        <div className="pending-detail-row">
+          <span>Direction</span>
+          <strong>{formatToken(item.direction)}</strong>
+        </div>
+      )}
+      <div className="pending-detail-row">
+        <span>Confidence</span>
+        <strong>{item.confidence.toFixed(2)}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Market moving</span>
+        <strong>{item.is_market_moving ? "yes" : "no"}</strong>
+      </div>
+      {item.reasoning && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>Reasoning</span>
+          <p>{item.reasoning}</p>
+        </div>
+      )}
+    </div>
   );
 }
 

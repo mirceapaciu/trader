@@ -317,6 +317,34 @@ export type FilterQualityIncorrectlyRejectedResponse = {
   generated_at: string;
 };
 
+export type NewsAnalysisItem = {
+  id: number;
+  article_id: string;
+  ticker: string;
+  exchange_code: string;
+  analyzed_at: string;
+  content_type?: string | null;
+  validation_status: string;
+  rejection_reason_code?: string | null;
+  confidence: number;
+  is_market_moving: boolean;
+  direction?: string | null;
+  strategy?: string | null;
+  reasoning?: string | null;
+  headline?: string | null;
+  summary?: string | null;
+  url?: string | null;
+  source?: string | null;
+};
+
+export type NewsAnalysesResponse = {
+  available: boolean;
+  message?: string | null;
+  items: NewsAnalysisItem[];
+  has_more: boolean;
+  generated_at: string;
+};
+
 export type FilterQualityIncorrectlyAcceptedItem = {
   assessment_id: string;
   run_id: string;
@@ -800,6 +828,12 @@ export function fetchWindowArticles(windowId: number): Promise<WindowArticlesRes
   return getJson<WindowArticlesResponse>(
     `/api/thesis-builder/windows/${encodeURIComponent(windowId)}/articles`
   );
+}
+
+export function fetchNewsAnalyses(params: { window: ThroughputPresetWindow; limit?: number }): Promise<NewsAnalysesResponse> {
+  const p = new URLSearchParams({ window: params.window });
+  if (params.limit != null) p.set("limit", String(params.limit));
+  return getJson<NewsAnalysesResponse>(`/api/thesis-builder/analyses?${p.toString()}`);
 }
 
 export function fetchThesisCardArticles(cardId: string): Promise<WindowArticlesResponse> {

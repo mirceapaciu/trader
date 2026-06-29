@@ -171,6 +171,38 @@ class WindowArticlesResponse(BaseModel):
     generated_at: datetime
 
 
+class NewsAnalysisItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    article_id: str
+    ticker: str
+    exchange_code: str
+    analyzed_at: datetime
+    content_type: str | None = None
+    validation_status: str
+    rejection_reason_code: str | None = None
+    confidence: float
+    is_market_moving: bool
+    direction: str | None = None
+    strategy: str | None = None
+    reasoning: str | None = None
+    headline: str | None = None
+    summary: str | None = None
+    url: str | None = None
+    source: str | None = None
+
+
+class NewsAnalysesResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    items: list[NewsAnalysisItem] = Field(default_factory=list)
+    has_more: bool = False
+    generated_at: datetime
+
+
 class ThesisBuilderDeadLetterItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 

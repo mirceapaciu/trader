@@ -634,6 +634,35 @@ h2 {
   max-height: 600px;
 }
 
+.analyses-list-wrap {
+  flex: 0 0 62%;
+  max-height: 480px;
+}
+
+.analysis-headline-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-headline-cell a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.analysis-reasoning p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  color: #26342f;
+}
+
 .cards-list-wrap thead th {
   position: sticky;
   top: 0;
