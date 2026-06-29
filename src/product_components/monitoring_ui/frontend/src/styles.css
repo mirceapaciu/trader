@@ -657,6 +657,26 @@ tr[data-selectable].selected {
   background: #eef8f4;
 }
 
+.provider-group-header {
+  cursor: pointer;
+  background: #f4f8f5;
+}
+
+.provider-group-header:hover {
+  background: #e8f2ec;
+}
+
+.provider-group-chevron {
+  margin-right: 6px;
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.provider-group-child td:first-child {
+  padding-left: 24px;
+  color: #64726c;
+}
+
 .expired-row td {
   color: var(--color-muted, #64726c);
 }

@@ -40,6 +40,9 @@ type ThroughputSelection = {
   endDate: string;
 };
 
+const RSS_BATCH_PATTERN = /^rss:yahoo_finance:batch:/;
+const RSS_BATCH_GROUP = "rss:yahoo_finance:batch";
+
 export function NewsFetcherTab() {
   const queryClient = useQueryClient();
   const [qualityDetailView, setQualityDetailView] = useState<"incorrectly-rejected" | "incorrectly-accepted" | null>(null);
@@ -50,6 +53,14 @@ export function NewsFetcherTab() {
     window: "1d",
     endDate: ""
   });
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set([RSS_BATCH_GROUP]));
+  function toggleProviderGroup(group: string) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group); else next.add(group);
+      return next;
+    });
+  }
   const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
   const providers = useQuery({ queryKey: ["providers"], queryFn: fetchProviders, refetchInterval: 10000 });
   const throughputRequest = toThroughputRequest(throughputSelection);
@@ -352,16 +363,57 @@ export function NewsFetcherTab() {
               </tr>
             </thead>
             <tbody>
-              {(providers.data?.providers ?? []).map((provider) => (
-                <tr key={provider.source_key}>
-                  <td>{provider.source_key}</td>
-                  <td>{formatDate(provider.last_cycle_end_at)}</td>
-                  <td>{formatDate(provider.last_fetch_attempt_at)}</td>
-                  <td>{formatDate(provider.last_non_zero_fetch_at)}</td>
-                  <td>{provider.publish_success_count}</td>
-                  <td>{provider.last_error_code ?? provider.fetch_error_count}</td>
-                </tr>
-              ))}
+              {(() => {
+                const allProviders = providers.data?.providers ?? [];
+                const batchProviders = allProviders.filter(p => RSS_BATCH_PATTERN.test(p.source_key));
+                const otherProviders = allProviders.filter(p => !RSS_BATCH_PATTERN.test(p.source_key));
+                const isBatchCollapsed = collapsedGroups.has(RSS_BATCH_GROUP);
+                const rows: ReactNode[] = otherProviders.map(provider => (
+                  <tr key={provider.source_key}>
+                    <td>{provider.source_key}</td>
+                    <td>{formatDate(provider.last_cycle_end_at)}</td>
+                    <td>{formatDate(provider.last_fetch_attempt_at)}</td>
+                    <td>{formatDate(provider.last_non_zero_fetch_at)}</td>
+                    <td>{provider.publish_success_count}</td>
+                    <td>{provider.last_error_code ?? provider.fetch_error_count}</td>
+                  </tr>
+                ));
+                if (batchProviders.length > 0) {
+                  const latestCycleEnd = batchProviders.map(p => p.last_cycle_end_at).filter(Boolean).sort().at(-1);
+                  const latestAttempt = batchProviders.map(p => p.last_fetch_attempt_at).filter(Boolean).sort().at(-1);
+                  const latestNonZero = batchProviders.map(p => p.last_non_zero_fetch_at).filter(Boolean).sort().at(-1);
+                  const totalPublished = batchProviders.reduce((sum, p) => sum + p.publish_success_count, 0);
+                  const totalErrors = batchProviders.reduce((sum, p) => sum + p.fetch_error_count, 0);
+                  rows.push(
+                    <tr key={RSS_BATCH_GROUP} className="provider-group-header" onClick={() => toggleProviderGroup(RSS_BATCH_GROUP)}>
+                      <td>
+                        <span className="provider-group-chevron">{isBatchCollapsed ? "▶" : "▼"}</span>
+                        {RSS_BATCH_GROUP}:* ({batchProviders.length})
+                      </td>
+                      <td>{formatDate(latestCycleEnd)}</td>
+                      <td>{formatDate(latestAttempt)}</td>
+                      <td>{formatDate(latestNonZero)}</td>
+                      <td>{totalPublished}</td>
+                      <td>{totalErrors}</td>
+                    </tr>
+                  );
+                  if (!isBatchCollapsed) {
+                    batchProviders.forEach(provider => {
+                      rows.push(
+                        <tr key={provider.source_key} className="provider-group-child">
+                          <td>{provider.source_key}</td>
+                          <td>{formatDate(provider.last_cycle_end_at)}</td>
+                          <td>{formatDate(provider.last_fetch_attempt_at)}</td>
+                          <td>{formatDate(provider.last_non_zero_fetch_at)}</td>
+                          <td>{provider.publish_success_count}</td>
+                          <td>{provider.last_error_code ?? provider.fetch_error_count}</td>
+                        </tr>
+                      );
+                    });
+                  }
+                }
+                return rows;
+              })()}
             </tbody>
           </table>
           {!providers.data?.providers.length && (
