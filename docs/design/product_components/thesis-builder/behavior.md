@@ -177,6 +177,23 @@ Freshness policy:
 - If evidence would otherwise create a thesis card but exceeds the freshness limit, ThesisBuilder persists a non-executable audit card with `validation_status=rejected` and `rejection_reason_code=stale_evidence`. The operator-facing UI label for this status is `stale`.
 - Stale audit cards must not receive shared review rows and must not be published to `signal_queue`.
 
+### 5.1 Regime Posture (informative)
+
+The default `swing_1d_5d` horizon and the evidence/freshness requirements above
+target multi-day, news-confirmed theses — not sub-minute breaking-news spikes.
+This is intentional: ingestion cadence, the multi-source confirmation rule, and
+the LLM analysis step put a hard floor on reaction time, so the initial jump on
+clean fast news is structurally unreachable. ThesisBuilder should fail closed on
+already-priced moves rather than chase them. See "Target Regime & Latency
+Posture" in `docs/design/overview.md` §1.4 for the full rationale.
+
+**Implementation status:** the already-priced suppression implied here and in
+§3.2 is **not yet enforced**. Market context is fetched, passed to the LLM, and
+persisted, but no deterministic gate or prompt instruction suppresses a card
+whose move is already spent — such a card can still be emitted as `valid`. Until
+this gap is closed, the regime posture is documented intent, not enforced
+behavior.
+
 ## 6. Strategy Policy
 
 Initial strategy priority:

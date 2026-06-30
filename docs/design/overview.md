@@ -65,6 +65,76 @@ Every trade candidate must be represented as one thesis card with a fixed shape 
 
 The canonical contract, validation rules, and acceptance criteria are defined in `docs/design/shared/product-constraint.md`.
 
+### 1.4 Target Regime & Latency Posture
+
+This system targets **multi-day, news-confirmed swing theses**, not sub-minute
+breaking-news spikes. The default holding horizon is `swing_1d_5d` (1–5 trading
+days), with an optional `trend_follow` extension for durable trends. This is a
+deliberate strategic choice, not an accident of implementation.
+
+**What we deliberately do NOT play.** We do not compete for the initial price
+jump on clean, unambiguous, liquid news (M&A, spinoffs, clear earnings beats,
+macro prints). For that kind of news, price discovery is largely complete within
+seconds to minutes and is owned by latency-sensitive participants (co-located
+HFT, wire-reading quant desks). We cannot and will not win there, because three
+structural facts put a hard floor on our reaction time:
+
+1. **Ingestion cadence.** News enters via polled feeds (RSS / provider APIs),
+   not a millisecond wire. The article often exists in our system minutes after
+   publication.
+2. **Confirmation requirement.** "No Thesis Card, No Trade" requires
+   `THESIS_CARD_REQUIRED_EVIDENCE_COUNT` independent, LLM-analyzed sources for
+   the same instrument/direction/strategy before a card can exist. By design we
+   wait for corroboration.
+3. **Analysis step.** Each article is analyzed by an LLM before it counts as
+   evidence.
+
+These are features (evidence-first, fail-closed, low cost), not bugs to be
+optimized away. Chasing the fast regime would require abandoning all three and
+buying infrastructure outside our ≤100 EUR/month budget. We accept that a
+breaking 20%-in-20-minutes move will usually be over before a valid card can
+exist — entering then means buying the top, so we **fail closed instead.**
+
+**Where our edge actually is.** Returns we *can* capture live in the slower
+regime, where careful, confirmed analysis beats speed:
+
+- **Post-event drift.** Prices continue adjusting for hours-to-days after the
+  initial pop (e.g. post-earnings-announcement drift).
+- **Ambiguous / complex news.** When the implication is not obvious from the
+  headline, the market re-prices gradually as it is digested — the regime where
+  multi-source LLM reasoning has the most leverage.
+- **Slower information diffusion.** Less-liquid names and corroboration-building
+  narratives move over hours rather than seconds.
+
+**Reconciling "fast enough to act."** "Fast enough to act" (one-pager North
+Star) is defined **relative to the swing horizon**, not in absolute latency
+terms. Concretely, "fast enough" means producing a validated, fresh card while
+the thesis is still actionable — within the evidence-collection ceiling
+(`THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES`) and freshness limit
+(`THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`), i.e. minutes-to-hours. Our edge comes
+from **correct, confirmed, risk-bounded selection over a multi-day hold**, not
+from latency arbitrage. Latency still matters (a fresher entry on a multi-day
+thesis is a better entry), but it is a margin to optimize, never the source of
+the edge.
+
+**Implications (guardrails this posture requires).**
+
+- **Suppress already-priced moves — KNOWN GAP, not yet implemented.**
+  `event_driven` cards should use market context to avoid entering after the move
+  is spent (see thesis-builder behavior §3.2 / §5.1). As of this writing this is
+  *not* enforced: market context is provided to the LLM and persisted, but no
+  deterministic gate or prompt instruction suppresses already-priced moves, so a
+  card on a spent spike can still be emitted as `valid`. Closing this gap is
+  required for the posture to hold in practice.
+- **Regime-fit, not just speed, in the backtester.** The backtester's
+  `ideal_pnl − actual_pnl` "cost of latency" is a **regime-fit diagnostic**: a
+  large, irrecoverable gap signals a fast-regime event we should not have been
+  trading, not merely that we were "too slow." Persistent large gaps mean we are
+  selecting the wrong kind of news.
+- **Selection over reaction.** Success depends on preferentially generating cards
+  for slow-regime opportunities. Systematically firing on clean fast-regime
+  headlines is a strategy failure even when individual cards look valid.
+
 ---
 
 ## 2. Budget Plan

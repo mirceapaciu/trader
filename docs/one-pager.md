@@ -30,6 +30,16 @@ That means:
 - Approval (the approve/reject decision) can be done either automatically via explicit policy rules or manually in UI.
 - The system must stay under a target monthly external API budget of **100 EUR or less**.
 
+## Target Regime & Latency Posture
+
+We target **multi-day, news-confirmed swing theses** (`swing_1d_5d` default,
+`trend_follow` for durable trends), not sub-minute breaking-news spikes. Our
+ingestion cadence, multi-source confirmation rule, and LLM analysis step put a
+hard floor on reaction time, so we deliberately cede the initial jump on fast,
+clean news and fail closed rather than buy a spent move. "Fast enough to act"
+means fresh within the swing horizon, not latency arbitrage. Full rationale:
+`docs/design/overview.md` §1.4.
+
 ## Product Principles
 
 - **Evidence first.** Decisions come from recent, traceable news evidence, not free-form speculation.
