@@ -7,8 +7,10 @@ from src.product_components.thesis_builder.redis_io import (
 class _RecordingClient:
     """Minimal redis stub that records the ``block`` arg of XREADGROUP reads."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, claim_result=None) -> None:
         self.block_args: list[object] = []
+        self.autoclaim_calls: list[dict] = []
+        self._claim_result = claim_result or ("0-0", [], [])
 
     def xreadgroup(self, *, groupname, consumername, streams, count, block):
         # Only the new-message read (id ">") carries the caller's poll interval;
@@ -16,6 +18,17 @@ class _RecordingClient:
         if ">" in streams.values():
             self.block_args.append(block)
         return []
+
+    def xautoclaim(self, *, name, groupname, consumername, min_idle_time, start_id, count):
+        self.autoclaim_calls.append(
+            {
+                "name": name,
+                "min_idle_time": min_idle_time,
+                "start_id": start_id,
+                "count": count,
+            }
+        )
+        return self._claim_result
 
 
 def _build_io(client: _RecordingClient) -> RedisThesisBuilderIo:
@@ -28,6 +41,8 @@ def _build_io(client: _RecordingClient) -> RedisThesisBuilderIo:
     io._consumer_name = "consumer"
     io._reprocess_command_queue = "reprocess_command_queue"
     io._reprocess_group = "thesis_builder_group_reprocess"
+    io._claim_min_idle_ms = 300_000
+    io._claim_cursor = "0-0"
     return io
 
 
@@ -54,3 +69,49 @@ def test_read_passes_through_positive_block_interval() -> None:
     io.read(count=10, block_ms=5000)
 
     assert client.block_args == [5000]
+
+
+def test_read_reclaims_orphaned_pending_before_new_messages() -> None:
+    # An entry left pending by a dead consumer is surfaced via XAUTOCLAIM and
+    # returned so the normal processing/ack path can drain it. Because the claim
+    # produced work, the blocking new-message read must be skipped this cycle.
+    fields = {"event_id": "evt-1", "event_type": "news", "dedupe_key": "dk-1", "payload_json": "{}"}
+    client = _RecordingClient(claim_result=("0-0", [("1700000000000-0", fields)], []))
+    io = _build_io(client)
+
+    messages = io.read(count=10, block_ms=5000)
+
+    assert [m.message_id for m in messages] == ["1700000000000-0"]
+    assert client.autoclaim_calls and client.autoclaim_calls[0]["min_idle_time"] == 300_000
+    assert client.block_args == []  # new-message read skipped because a claim hit
+
+
+def test_read_skips_claim_when_disabled() -> None:
+    client = _RecordingClient()
+    io = _build_io(client)
+    io._claim_min_idle_ms = 0
+
+    io.read(count=10, block_ms=5000)
+
+    assert client.autoclaim_calls == []
+    assert client.block_args == [5000]
+
+
+def test_claim_advances_cursor_for_next_scan() -> None:
+    client = _RecordingClient(claim_result=("1700000000005-0", [], []))
+    io = _build_io(client)
+
+    io.read(count=10, block_ms=0)
+
+    assert io._claim_cursor == "1700000000005-0"
+
+
+def test_claim_drops_trimmed_entries_without_fields() -> None:
+    # XAUTOCLAIM can surface an entry whose stream data was trimmed; redis-py
+    # reports it with empty fields. It carries no article, so it is filtered out.
+    client = _RecordingClient(claim_result=("0-0", [("1700000000000-0", None)], []))
+    io = _build_io(client)
+
+    messages = io.read(count=10, block_ms=0)
+
+    assert messages == []

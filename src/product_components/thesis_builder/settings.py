@@ -27,6 +27,7 @@ class ThesisBuilderSettings:
     heartbeat_interval_seconds: int
     batch_size: int
     block_ms: int
+    claim_min_idle_seconds: int
     max_delivery_attempts: int
     evidence_collection_max_minutes: int
     max_evidence_age_minutes: int
@@ -78,6 +79,7 @@ class ThesisBuilderSettings:
             heartbeat_interval_seconds=_int_env("THESIS_BUILDER_HEARTBEAT_INTERVAL_SECONDS", 60),
             batch_size=_int_env("THESIS_BUILDER_BATCH_SIZE", 10),
             block_ms=_int_env("THESIS_BUILDER_BLOCK_MS", 5000),
+            claim_min_idle_seconds=_int_env("THESIS_BUILDER_CLAIM_MIN_IDLE_SECONDS", 300),
             max_delivery_attempts=_int_env("THESIS_BUILDER_MAX_DELIVERY_ATTEMPTS", 3),
             evidence_collection_max_minutes=_int_env("THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES", 120),
             max_evidence_age_minutes=_int_env("THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES", 180),
@@ -126,8 +128,13 @@ def _optional_path(value: str, repo_root: Path) -> Path | None:
 
 
 def _default_consumer_name() -> str:
+    # Deliberately stable across restarts (no PID): a single-instance consumer
+    # reuses the same name so a restart reclaims its own pending entries via the
+    # id="0" read, and we stop leaking a new consumer row in the group on every
+    # restart. Orphaned entries from earlier PID-based names are recovered by the
+    # XAUTOCLAIM reclaim in RedisThesisBuilderIo.read.
     hostname = os.getenv("COMPUTERNAME") or os.getenv("HOSTNAME") or "local"
-    return f"thesis_builder_{hostname}_{os.getpid()}"
+    return f"thesis_builder_{hostname}"
 
 
 def _queue_url_from_env() -> str:

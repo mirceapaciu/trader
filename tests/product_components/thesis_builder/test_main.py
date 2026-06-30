@@ -24,6 +24,7 @@ def _settings() -> ThesisBuilderSettings:
         heartbeat_interval_seconds=60,
         batch_size=10,
         block_ms=5000,
+        claim_min_idle_seconds=300,
         max_delivery_attempts=3,
         evidence_collection_max_minutes=120,
         max_evidence_age_minutes=180,

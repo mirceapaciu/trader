@@ -93,6 +93,7 @@ class ThesisBuilderRunner:
             consumer_group=settings.consumer_group,
             consumer_name=settings.consumer_name,
             reprocess_command_queue=settings.reprocess_command_queue,
+            claim_min_idle_ms=max(0, settings.claim_min_idle_seconds) * 1000,
         )
         self._reprocessor_factory = reprocessor_factory
         self._reprocess_lock = threading.Lock()

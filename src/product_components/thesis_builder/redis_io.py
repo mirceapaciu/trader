@@ -91,6 +91,7 @@ class RedisThesisBuilderIo:
         consumer_group: str,
         consumer_name: str,
         reprocess_command_queue: str | None = None,
+        claim_min_idle_ms: int = 300_000,
     ) -> None:
         self._client = redis.from_url(queue_url, decode_responses=True)
         self._news_raw_queue = news_raw_queue
@@ -100,6 +101,8 @@ class RedisThesisBuilderIo:
         self._consumer_name = consumer_name
         self._reprocess_command_queue = reprocess_command_queue
         self._reprocess_group = f"{consumer_group}_reprocess"
+        self._claim_min_idle_ms = claim_min_idle_ms
+        self._claim_cursor = "0-0"
 
     def ping(self) -> bool:
         return bool(self._client.ping())
@@ -162,6 +165,9 @@ class RedisThesisBuilderIo:
         pending_messages = _messages(pending_response)
         if pending_messages:
             return pending_messages
+        claimed = self._claim_stale(count=count)
+        if claimed:
+            return claimed
         response = self._client.xreadgroup(
             groupname=self._consumer_group,
             consumername=self._consumer_name,
@@ -170,6 +176,39 @@ class RedisThesisBuilderIo:
             block=_block_arg(block_ms),
         )
         return _messages(response)
+
+    def _claim_stale(self, *, count: int) -> list[NewsStreamMessage]:
+        """Reclaim pending entries left behind by dead consumers.
+
+        ``read``'s id="0" read only sees *this* consumer's pending entries, so a
+        message delivered to a consumer that then crashed (or, before the stable
+        consumer name, a previous PID-based name) would stay pending forever and
+        keep ``pending_count`` pinned, tripping the stall alarm. XAUTOCLAIM
+        transfers entries idle longer than ``claim_min_idle_ms`` from any consumer
+        to us so the normal processing/ack path can drain them. Entries already
+        trimmed out of the stream are dropped from the PEL by XAUTOCLAIM itself.
+        """
+        if self._claim_min_idle_ms <= 0:
+            return []
+        try:
+            result = self._client.xautoclaim(
+                name=self._news_raw_queue,
+                groupname=self._consumer_group,
+                consumername=self._consumer_name,
+                min_idle_time=self._claim_min_idle_ms,
+                start_id=self._claim_cursor,
+                count=count,
+            )
+        except redis.exceptions.ResponseError as exc:
+            if "nogroup" in str(exc).lower():
+                return []
+            raise
+        # redis-py 7 returns (next_cursor, claimed_entries, deleted_ids); older
+        # builds omit the deleted list. A "0-0" cursor means the scan wrapped.
+        next_cursor = result[0] if result else "0-0"
+        entries = result[1] if len(result) > 1 else []
+        self._claim_cursor = next_cursor or "0-0"
+        return _messages([(self._news_raw_queue, entries)])
 
     def ack(self, message_id: str) -> None:
         self._client.xack(self._news_raw_queue, self._consumer_group, message_id)
@@ -286,6 +325,11 @@ def _messages(response) -> list[NewsStreamMessage]:
     messages: list[NewsStreamMessage] = []
     for _stream_name, entries in response:
         for message_id, fields in entries:
+            # XAUTOCLAIM may surface entries whose stream data was trimmed away;
+            # redis-py reports these with no fields. They carry no article, so
+            # skip them here and let the PEL cleanup handled by XAUTOCLAIM stand.
+            if not fields:
+                continue
             messages.append(_message(message_id, fields))
     return messages
 

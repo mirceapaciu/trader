@@ -16,6 +16,7 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.min_relevance == 0.5
     assert settings.batch_size == 10
     assert settings.block_ms == 5000
+    assert settings.claim_min_idle_seconds == 300
     assert settings.max_delivery_attempts == 3
     assert settings.llm_max_output_tokens == 1200
     assert settings.llm_request_timeout_seconds == 60.0
@@ -31,6 +32,7 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_MIN_CONFIDENCE", "0.7")
     monkeypatch.setenv("THESIS_BUILDER_BATCH_SIZE", "5")
     monkeypatch.setenv("THESIS_BUILDER_BLOCK_MS", "250")
+    monkeypatch.setenv("THESIS_BUILDER_CLAIM_MIN_IDLE_SECONDS", "45")
     monkeypatch.setenv("THESIS_BUILDER_MAX_DELIVERY_ATTEMPTS", "7")
     monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", "900")
     monkeypatch.setenv("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", "30")
@@ -46,6 +48,7 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.min_confidence == 0.7
     assert settings.batch_size == 5
     assert settings.block_ms == 250
+    assert settings.claim_min_idle_seconds == 45
     assert settings.max_delivery_attempts == 7
     assert settings.llm_max_output_tokens == 900
     assert settings.llm_request_timeout_seconds == 30.0
