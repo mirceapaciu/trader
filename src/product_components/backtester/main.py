@@ -16,6 +16,7 @@ from src.product_components.shared.adapters import (
     PostgresSharedInstrumentRegistry,
 )
 from src.product_components.thesis_builder.export import ThesisCardHistoryExporter
+from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
 from .clients import MarketDataBarsProvider
 from .models import (
@@ -26,6 +27,7 @@ from .models import (
     RiskModel,
     TimingScenario,
 )
+from .regeneration import ThesisRegenerationProvider
 from .repository import BacktesterRepository
 from .service import BacktesterService, new_run_id
 from .settings import BacktesterSettings
@@ -81,6 +83,14 @@ def main() -> None:
         dsn=settings.postgres_dsn,
         thesis_schema=settings.thesis_builder_db_schema,
     )
+    thesis_settings = ThesisBuilderSettings.from_env()
+    regeneration_provider = ThesisRegenerationProvider(
+        dsn=settings.postgres_dsn,
+        thesis_settings=thesis_settings,
+        instrument_registry=instrument_registry,
+        market_data_service=market_data_service,
+        quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
+    )
     repository = BacktesterRepository(
         dsn=settings.postgres_dsn,
         backtester_schema=settings.db_schema,
@@ -121,6 +131,12 @@ def main() -> None:
         risk_model=_risk_model_from_settings(settings),
         risk_free_rate_per_period=_risk_free_per_period(settings),
         run_note=args.run_note,
+        llm_model=(args.llm_model or settings.llm_model),
+        llm_max_tokens_per_run=(
+            args.llm_max_tokens_per_run
+            if args.llm_max_tokens_per_run is not None
+            else settings.llm_max_tokens_per_run
+        ),
     )
     LOGGER.info("starting backtester run_id=%s", params.run_id)
     BacktesterService(
@@ -128,6 +144,8 @@ def main() -> None:
         repository=repository,
         cards_provider=cards_provider,
         bars_provider=bars_provider,
+        regeneration_provider=regeneration_provider,
+        repo_root=repo_root,
     ).run(params)
     print(json.dumps({"run_id": params.run_id, "status": "completed"}, sort_keys=True))
 
@@ -175,6 +193,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-capital", type=float)
     parser.add_argument("--ideal-fetch-delay-seconds", type=int)
     parser.add_argument("--ideal-thesis-delay-seconds", type=int)
+    parser.add_argument(
+        "--llm-model",
+        help="Regeneration mode only: OpenAI model to re-run ThesisBuilder analysis. "
+        "Defaults to the production model (BACKTESTER_LLM_MODEL).",
+    )
+    parser.add_argument("--llm-max-tokens-per-run", type=int)
     parser.add_argument("--run-note")
     return parser.parse_args()
 

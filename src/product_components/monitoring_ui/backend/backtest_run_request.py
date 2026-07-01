@@ -16,3 +16,6 @@ class BacktestRunRequest:
     strategies: list[str] | None = None
     initial_capital: float | None = None
     run_note: str | None = None
+    # Regeneration mode only: which OpenAI model to re-run analysis with. None ->
+    # the coordinator falls back to the production default model.
+    llm_model: str | None = None

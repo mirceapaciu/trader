@@ -60,14 +60,22 @@ class BacktesterRepository:
         *,
         params: BacktestRunParams,
         dataset_snapshot_hash: str,
+        thesis_config_snapshot: dict[str, Any] | None = None,
+        llm_token_budget_limit: int | None = None,
+        llm_model: str | None = None,
     ) -> None:
+        # thesis_config_snapshot + llm_token_budget_limit are required for
+        # regeneration runs and must stay NULL for replay runs (enforced by the
+        # ck_backtest_runs_regeneration_requires_config / _replay_no_thesis_config
+        # check constraints).
         sql = (
             f"INSERT INTO {self._backtester_schema}.t_backtest_runs "
             f"(run_id, window_start_at, window_end_at, mode, timing_scenario, "
             f"ideal_fetch_delay_seconds, ideal_thesis_delay_seconds, dataset_snapshot_hash, "
             f"card_population, strategies_requested, initial_capital, "
-            f"execution_model_snapshot_json, risk_model_snapshot_json, run_note, status) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')"
+            f"execution_model_snapshot_json, risk_model_snapshot_json, "
+            f"thesis_config_snapshot_json, llm_token_budget_limit, llm_model, run_note, status) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')"
         )
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -86,6 +94,9 @@ class BacktesterRepository:
                     params.initial_capital,
                     Json(params.execution_model.snapshot()),
                     Json(params.risk_model.snapshot()),
+                    Json(thesis_config_snapshot) if thesis_config_snapshot is not None else None,
+                    llm_token_budget_limit,
+                    llm_model,
                     params.run_note,
                 ),
             )
@@ -286,8 +297,58 @@ class BacktesterRepository:
             cur.execute(sql, (error_code, Json(details or {}), run_id))
             conn.commit()
 
+    def bootstrap_sim_thesis_schema(self, *, repo_root: Path, sim_schema: str) -> None:
+        """Create an isolated copy of the ThesisBuilder tables under ``sim_schema``.
+
+        Regeneration writes regenerated analyses/evidence-windows/cards here instead
+        of the production ``thesis_builder`` schema, so a backtest never mutates
+        production data. The ThesisBuilder schema SQL hardcodes the ``thesis_builder``
+        schema name but is otherwise self-contained (no cross-schema FKs), so we
+        render it against ``sim_schema`` and apply it. Idempotent per schema.
+        """
+        _safe_identifier(sim_schema)
+        schema_sql = render_thesis_schema_sql(repo_root=repo_root, target_schema=sim_schema)
+        with closing(psycopg.connect(self._dsn)) as connection:
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                cursor.execute(schema_sql)
+
+    def drop_sim_thesis_schema(self, *, sim_schema: str) -> None:
+        """Drop a regeneration schema and all its data (used for cleanup/tests)."""
+        _safe_identifier(sim_schema)
+        with closing(psycopg.connect(self._dsn)) as connection:
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                cursor.execute(f"DROP SCHEMA IF EXISTS {sim_schema} CASCADE")
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)
+
+
+def sim_schema_name(run_id: str) -> str:
+    """Deterministic, SQL-safe simulation schema name for a regeneration run.
+
+    Run ids look like ``bt_<hex>``; the hyphen-free hex keeps the schema a valid
+    identifier. Any stray unsafe characters are normalized to underscores.
+    """
+    normalized = re.sub(r"[^A-Za-z0-9_]", "_", run_id)
+    return _safe_identifier(f"sim_{normalized}")
+
+
+def thesis_schema_file(repo_root: Path) -> Path:
+    return repo_root / "src" / "product_components" / "thesis_builder" / "db" / "schema.sql"
+
+
+def render_thesis_schema_sql(*, repo_root: Path, target_schema: str) -> str:
+    """Return the ThesisBuilder schema SQL rebound to ``target_schema``.
+
+    The source SQL references the ``thesis_builder`` schema only as a qualifier
+    (``thesis_builder.<table>`` and ``CREATE SCHEMA IF NOT EXISTS thesis_builder``)
+    with no cross-schema foreign keys, so a whole-word substitution is safe.
+    """
+    _safe_identifier(target_schema)
+    source = thesis_schema_file(repo_root).read_text(encoding="utf-8")
+    return re.sub(r"\bthesis_builder\b", target_schema, source)
 
 
 def backtester_schema_file(repo_root: Path) -> Path:

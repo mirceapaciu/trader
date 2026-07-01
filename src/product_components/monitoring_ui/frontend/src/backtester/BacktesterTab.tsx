@@ -33,6 +33,11 @@ const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> =
   { label: "30d", window: "30d" }
 ];
 
+// Regeneration re-runs ThesisBuilder analysis with a chosen OpenAI model so runs
+// can be compared across models. The default matches the production ThesisBuilder.
+const DEFAULT_LLM_MODEL = "gpt-4o-mini";
+const LLM_MODEL_OPTIONS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o4-mini"];
+
 const RUN_TERMINAL_STATES = new Set(["completed", "failed"]);
 
 const TRADES_PAGE_SIZE = 50;
@@ -182,6 +187,7 @@ function TriggerPanel({
   const [windowStart, setWindowStart] = useState("");
   const [windowEnd, setWindowEnd] = useState("");
   const [mode, setMode] = useState<StartBacktestRequest["mode"]>("replay");
+  const [llmModel, setLlmModel] = useState<string>(DEFAULT_LLM_MODEL);
   const [timingScenario, setTimingScenario] = useState<StartBacktestRequest["timing_scenario"]>("ideal");
   const [cardPopulation, setCardPopulation] = useState<StartBacktestRequest["card_population"]>("all");
   const [strategiesText, setStrategiesText] = useState("");
@@ -209,7 +215,8 @@ function TriggerPanel({
       card_population: cardPopulation,
       strategies: strategies.length > 0 ? strategies : null,
       initial_capital: initialCapital != null && !Number.isNaN(initialCapital) ? initialCapital : null,
-      run_note: null
+      run_note: null,
+      llm_model: mode === "regeneration" ? llmModel : null
     });
   };
 
@@ -252,6 +259,20 @@ function TriggerPanel({
             >
               <option value="replay">replay</option>
               <option value="regeneration">regeneration</option>
+            </select>
+          </label>
+          <label>
+            LLM model (regeneration)
+            <select
+              value={llmModel}
+              onChange={(event) => setLlmModel(event.target.value)}
+              disabled={busy || mode !== "regeneration"}
+            >
+              {LLM_MODEL_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === DEFAULT_LLM_MODEL ? `${option} (default)` : option}
+                </option>
+              ))}
             </select>
           </label>
           <label>
@@ -369,6 +390,7 @@ function RunListPanel({
                 <th>Status</th>
                 <th>Window</th>
                 <th>Mode</th>
+                <th>LLM</th>
                 <th>Timing</th>
                 <th>Population</th>
                 <th>Net P&amp;L</th>
@@ -399,6 +421,7 @@ function RunListPanel({
                     <span className="table-subtext">to {formatDate(run.window_end_at)}</span>
                   </td>
                   <td>{formatToken(run.mode)}</td>
+                  <td>{run.llm_model ?? "—"}</td>
                   <td>{formatToken(run.timing_scenario)}</td>
                   <td>{formatToken(run.card_population)}</td>
                   <td>{formatCurrency(run.net_pnl)}</td>

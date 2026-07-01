@@ -64,6 +64,7 @@ def _run_row(*, run_id: str = "bt_1", status: str = "completed", timing_scenario
         trades_opened=6,
         trades_closed=5,
         trades_risk_blocked=1,
+        llm_model=None,
         avg_news_fetch_delay_seconds=12.0,
         p95_news_fetch_delay_seconds=30.0,
         max_news_fetch_delay_seconds=45.0,

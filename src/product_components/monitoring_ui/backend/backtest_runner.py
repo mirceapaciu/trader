@@ -14,6 +14,7 @@ from src.product_components.backtester.models import (
     CardPopulation,
     TimingScenario,
 )
+from src.product_components.backtester.regeneration import ThesisRegenerationProvider
 from src.product_components.backtester.repository import BacktesterRepository
 from src.product_components.backtester.service import BacktesterService, new_run_id
 from src.product_components.backtester.settings import BacktesterSettings
@@ -26,6 +27,7 @@ from src.product_components.shared.adapters import (
     PostgresSharedInstrumentRegistry,
 )
 from src.product_components.thesis_builder.export import ThesisCardHistoryExporter
+from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
 from .backtest_run_request import BacktestRunRequest
 from .service import BacktestRunAlreadyActive
@@ -138,6 +140,8 @@ class BacktestRunCoordinator:
             ideal_fetch_delay_seconds=settings.ideal_fetch_delay_seconds,
             ideal_thesis_delay_seconds=settings.ideal_thesis_delay_seconds,
             run_note=request.run_note,
+            llm_model=(request.llm_model or settings.llm_model),
+            llm_max_tokens_per_run=settings.llm_max_tokens_per_run,
         )
 
     def _run_in_background(self, params: BacktestRunParams) -> None:
@@ -170,6 +174,14 @@ class BacktestRunCoordinator:
                 dsn=settings.postgres_dsn,
                 thesis_schema=settings.thesis_builder_db_schema,
             )
+            thesis_settings = ThesisBuilderSettings.from_env()
+            regeneration_provider = ThesisRegenerationProvider(
+                dsn=settings.postgres_dsn,
+                thesis_settings=thesis_settings,
+                instrument_registry=instrument_registry,
+                market_data_service=market_data_service,
+                quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
+            )
             repository = BacktesterRepository(
                 dsn=settings.postgres_dsn,
                 backtester_schema=settings.db_schema,
@@ -192,7 +204,9 @@ class BacktestRunCoordinator:
                 repository=repository,
                 cards_provider=cards_provider,
                 bars_provider=bars_provider,
+                regeneration_provider=regeneration_provider,
                 progress=_progress,
+                repo_root=_repo_root(),
             ).run(params)
         except Exception:
             LOGGER.exception("backtester run failed run_id=%s", params.run_id)

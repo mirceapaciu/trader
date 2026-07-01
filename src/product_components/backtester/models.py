@@ -104,6 +104,10 @@ class BacktestRunParams:
     risk_model: RiskModel = field(default_factory=RiskModel)
     risk_free_rate_per_period: float = 0.0
     run_note: str | None = None
+    # Regeneration mode only: the OpenAI model used to re-run ThesisBuilder
+    # analysis. Ignored in replay mode. Defaults to the production model.
+    llm_model: str = "gpt-4o-mini"
+    llm_max_tokens_per_run: int = 500000
 
 
 @dataclass(frozen=True)

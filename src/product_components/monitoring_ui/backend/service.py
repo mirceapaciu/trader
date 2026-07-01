@@ -982,6 +982,7 @@ class MonitoringService:
             strategies=list(payload.strategies) if payload.strategies else None,
             initial_capital=payload.initial_capital,
             run_note=payload.run_note,
+            llm_model=payload.llm_model,
         )
         try:
             run_id = self._backtest_runner.start_run(request)
@@ -1157,6 +1158,7 @@ def _backtest_run_summary(
         card_population=row.card_population,
         strategies_requested=row.strategies_requested,
         initial_capital=row.initial_capital,
+        llm_model=row.llm_model,
         net_pnl=row.net_pnl,
         total_return=row.total_return,
         win_rate=row.win_rate,

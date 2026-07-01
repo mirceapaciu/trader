@@ -602,6 +602,7 @@ class BacktestRunSummary(BaseModel):
     card_population: str
     strategies_requested: list[str] | None = None
     initial_capital: float
+    llm_model: str | None = None
     net_pnl: float | None = None
     total_return: float | None = None
     win_rate: float | None = None
@@ -837,6 +838,8 @@ class BacktestStartRunRequest(BaseModel):
     strategies: list[str] | None = None
     initial_capital: float | None = None
     run_note: str | None = None
+    # Regeneration mode only: which OpenAI model to re-run analysis with.
+    llm_model: str | None = None
 
 
 class BacktestStartRunResponse(BaseModel):

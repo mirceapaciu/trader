@@ -519,6 +519,7 @@ export type BacktestRunSummary = {
   card_population: string;
   strategies_requested?: string[] | null;
   initial_capital: number;
+  llm_model?: string | null;
   net_pnl?: number | null;
   total_return?: number | null;
   win_rate?: number | null;
@@ -731,6 +732,7 @@ export type StartBacktestRequest = {
   strategies?: string[] | null;
   initial_capital?: number | null;
   run_note?: string | null;
+  llm_model?: string | null;
 };
 
 export type StartBacktestResponse = {

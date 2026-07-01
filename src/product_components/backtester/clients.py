@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.core_components.backtest_engine import Bar
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.thesis_builder.export import ExportedThesisCard
+
+if TYPE_CHECKING:
+    from src.product_components.thesis_builder.regeneration import RegenerationResult
 
 WarmProgress = Callable[[int, int, str, str], None]
 
@@ -44,6 +47,39 @@ class CardsProvider(Protocol):
         validation_status: str | None = None,
         strategy: str | None = None,
     ) -> list[ExportedThesisCard]: ...
+
+
+# Reporting hook for regeneration: (done, total, ticker).
+RegenerationProgress = Callable[[int, int, str], None]
+
+
+@runtime_checkable
+class RegenerationProvider(Protocol):
+    """Drives ThesisBuilder regeneration into an isolated simulation schema.
+
+    Concrete implementations re-run the production analysis workflow (LLM analysis
+    + card creation) over a historical window and write the resulting cards into
+    ``sim_schema`` without touching production data or queues. The Backtester then
+    reads those cards back through ``cards_provider`` and simulates them with the
+    existing replay engine.
+    """
+
+    def thesis_config_snapshot(self, *, llm_model: str) -> dict: ...
+
+    def regenerate(
+        self,
+        *,
+        run_id: str,
+        sim_schema: str,
+        window_start_at: datetime,
+        window_end_at: datetime,
+        llm_model: str,
+        token_budget: int,
+        card_delay_seconds: int,
+        progress: RegenerationProgress | None = None,
+    ) -> "RegenerationResult": ...
+
+    def cards_provider(self, *, sim_schema: str) -> CardsProvider: ...
 
 
 class MarketDataBarsProvider:

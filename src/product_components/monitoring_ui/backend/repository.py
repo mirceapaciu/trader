@@ -67,7 +67,7 @@ _BACKTEST_RUN_COLUMNS = (
     "avg_news_fetch_delay_seconds, p95_news_fetch_delay_seconds, max_news_fetch_delay_seconds, "
     "avg_thesis_build_delay_seconds, p95_thesis_build_delay_seconds, max_thesis_build_delay_seconds, "
     "avg_total_pipeline_delay_seconds, p95_total_pipeline_delay_seconds, max_total_pipeline_delay_seconds, "
-    "pnl_gap, win_rate_gap, trades_flipped_by_delay, summary_json"
+    "pnl_gap, win_rate_gap, trades_flipped_by_delay, llm_model, summary_json"
 )
 
 
@@ -1722,6 +1722,7 @@ class BacktestRunRow:
     pnl_gap: float | None
     win_rate_gap: float | None
     trades_flipped_by_delay: int | None
+    llm_model: str | None
     summary_json: dict[str, Any]
 
 
@@ -1840,6 +1841,7 @@ def _backtest_run_row(row: dict[str, Any]) -> BacktestRunRow:
             if row.get("trades_flipped_by_delay") is not None
             else None
         ),
+        llm_model=row.get("llm_model"),
         summary_json=dict(row.get("summary_json") or {}),
     )
 

@@ -136,6 +136,11 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_runs (
         )
 );
 
+-- Regeneration mode records which LLM produced the cards so runs can be compared
+-- across models. NULL for replay runs (which reuse existing production cards).
+ALTER TABLE backtester.t_backtest_runs
+    ADD COLUMN IF NOT EXISTS llm_model TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_status_created
     ON backtester.t_backtest_runs (status, created_at DESC, run_id);
 
