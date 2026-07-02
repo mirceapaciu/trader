@@ -615,6 +615,16 @@ export type BacktestGap = {
   trades_flipped_by_delay?: number | null;
 };
 
+export type BacktestRegenerationStats = {
+  articles_found?: number | null;
+  articles_relevant?: number | null;
+  articles_analyzed?: number | null;
+  analyses_created?: number | null;
+  cards_created?: number | null;
+  evidence_windows_created?: number | null;
+  budget_exhausted?: boolean | null;
+};
+
 export type BacktestDetailResponse = {
   available: boolean;
   message?: string | null;
@@ -624,6 +634,7 @@ export type BacktestDetailResponse = {
   card_status_breakdown: BacktestCardStatusBucket[];
   delays: BacktestDelays;
   gap?: BacktestGap | null;
+  regeneration?: BacktestRegenerationStats | null;
   generated_at: string;
 };
 

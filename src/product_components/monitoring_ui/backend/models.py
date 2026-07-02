@@ -710,6 +710,18 @@ class BacktestGapMetrics(BaseModel):
     trades_flipped_by_delay: int | None = None
 
 
+class BacktestRegenerationStats(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    articles_found: int | None = None
+    articles_relevant: int | None = None
+    articles_analyzed: int | None = None
+    analyses_created: int | None = None
+    cards_created: int | None = None
+    evidence_windows_created: int | None = None
+    budget_exhausted: bool | None = None
+
+
 class BacktestRunDetailResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -721,6 +733,7 @@ class BacktestRunDetailResponse(BaseModel):
     card_status_breakdown: list[BacktestCardStatusMetrics] = Field(default_factory=list)
     delays: BacktestDelayAggregates
     gap: BacktestGapMetrics | None = None
+    regeneration: BacktestRegenerationStats | None = None
     generated_at: datetime
 
 

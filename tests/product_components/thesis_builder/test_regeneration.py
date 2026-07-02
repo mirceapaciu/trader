@@ -131,6 +131,8 @@ def test_regeneration_analyzes_articles_and_creates_cards(monkeypatch):
     result = runner.run(window_start_at=_WINDOW_START, window_end_at=_WINDOW_END)
 
     assert result.articles_found == 2
+    assert result.articles_relevant == 2
+    assert result.articles_analyzed == 2
     assert result.analyses_created == 2
     assert result.cards_created == 1
     assert not result.budget_exhausted
@@ -149,6 +151,8 @@ def test_regeneration_stops_on_token_budget_exhaustion(monkeypatch):
 
     assert result.budget_exhausted is True
     assert result.analyses_created == 1
+    assert result.articles_relevant == 2  # article 1 and 2 matched; 3rd never reached
+    assert result.articles_analyzed == 1  # only article 1 got a persisted analysis
     assert len(repo.persisted) == 1
 
 

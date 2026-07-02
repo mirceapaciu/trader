@@ -27,6 +27,7 @@ from .models import (
     BacktestEquityResponse,
     BacktestEquitySeries,
     BacktestGapMetrics,
+    BacktestRegenerationStats,
     BacktestRunDetailResponse,
     BacktestRunProgress,
     BacktestRunSummary,
@@ -800,6 +801,7 @@ class MonitoringService:
             return None
         per_strategy = _project_per_strategy(run.summary_json)
         card_status = _project_card_status(run.summary_json)
+        regeneration = _project_regeneration(run.summary_json)
         gap = (
             BacktestGapMetrics(
                 pnl_gap=run.pnl_gap,
@@ -850,6 +852,7 @@ class MonitoringService:
                 max_total_pipeline_delay_seconds=run.max_total_pipeline_delay_seconds,
             ),
             gap=gap,
+            regeneration=regeneration,
             generated_at=_utc_now(),
         )
 
@@ -1223,6 +1226,21 @@ def _project_card_status(summary_json: dict) -> list[BacktestCardStatusMetrics]:
             continue
         metrics.append(BacktestCardStatusMetrics(bucket=bucket, **_agg_fields(agg)))
     return metrics
+
+
+def _project_regeneration(summary_json: dict) -> BacktestRegenerationStats | None:
+    regen = summary_json.get("regeneration")
+    if not isinstance(regen, dict):
+        return None
+    return BacktestRegenerationStats(
+        articles_found=regen.get("articles_found"),
+        articles_relevant=regen.get("articles_relevant"),
+        articles_analyzed=regen.get("articles_analyzed"),
+        analyses_created=regen.get("analyses_created"),
+        cards_created=regen.get("cards_created"),
+        evidence_windows_created=regen.get("evidence_windows_created"),
+        budget_exhausted=regen.get("budget_exhausted"),
+    )
 
 
 def _agg_fields(agg: dict) -> dict:

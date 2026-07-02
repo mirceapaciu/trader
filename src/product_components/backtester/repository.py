@@ -313,6 +313,13 @@ class BacktesterRepository:
             with connection.cursor() as cursor:
                 cursor.execute(schema_sql)
 
+    def count_sim_evidence_windows(self, *, sim_schema: str) -> int:
+        """Number of evidence windows the regeneration created in its sim schema."""
+        _safe_identifier(sim_schema)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {sim_schema}.t_evidence_windows")
+            return int(cur.fetchone()[0])
+
     def drop_sim_thesis_schema(self, *, sim_schema: str) -> None:
         """Drop a regeneration schema and all its data (used for cleanup/tests)."""
         _safe_identifier(sim_schema)

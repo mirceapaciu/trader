@@ -44,6 +44,8 @@ class RegenerationThresholds:
 class RegenerationResult:
     run_id: str
     articles_found: int
+    articles_relevant: int
+    articles_analyzed: int
     analyses_created: int
     cards_created: int
     budget_exhausted: bool
@@ -107,6 +109,8 @@ class RegenerationRunner:
 
         analyses_created = 0
         cards_created = 0
+        articles_relevant = 0
+        articles_analyzed = 0
         budget_exhausted = False
 
         for index, article in enumerate(articles, start=1):
@@ -124,7 +128,10 @@ class RegenerationRunner:
             if not instruments:
                 self._report(index, articles_found, None)
                 continue
+            # This article matched at least one watchlisted instrument.
+            articles_relevant += 1
             label = ",".join(sorted({i.ticker for i in instruments}))
+            article_analyzed = False
 
             for instrument in instruments:
                 context_snapshot = self._market_context(
@@ -156,6 +163,7 @@ class RegenerationRunner:
                         validation_errors=[str(exc) or "invalid_llm_response"],
                     )
                     analyses_created += 1
+                    article_analyzed = True
                     continue
                 except Exception:
                     LOGGER.exception(
@@ -181,9 +189,12 @@ class RegenerationRunner:
                     reprocess_run_id=self._run_id,
                 )
                 analyses_created += 1
+                article_analyzed = True
                 if result.signal is not None:
                     cards_created += 1
 
+            if article_analyzed:
+                articles_analyzed += 1
             self._report(index, articles_found, label)
             # Heartbeat so a long run visibly progresses in the logs even when the
             # per-article DEBUG lines are suppressed.
@@ -198,9 +209,11 @@ class RegenerationRunner:
                 )
 
         LOGGER.info(
-            "Regeneration done run_id=%s articles=%d analyses=%d cards=%d budget_exhausted=%s",
+            "Regeneration done run_id=%s articles=%d relevant=%d analyzed=%d analyses=%d cards=%d budget_exhausted=%s",
             self._run_id,
             articles_found,
+            articles_relevant,
+            articles_analyzed,
             analyses_created,
             cards_created,
             budget_exhausted,
@@ -208,6 +221,8 @@ class RegenerationRunner:
         return RegenerationResult(
             run_id=self._run_id,
             articles_found=articles_found,
+            articles_relevant=articles_relevant,
+            articles_analyzed=articles_analyzed,
             analyses_created=analyses_created,
             cards_created=cards_created,
             budget_exhausted=budget_exhausted,

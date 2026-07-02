@@ -159,9 +159,23 @@ class BacktesterService:
             )
             self._prefetch_market_data(cards, params)
 
+            regen_stats = {
+                "articles_found": regen.articles_found,
+                "articles_relevant": regen.articles_relevant,
+                "articles_analyzed": regen.articles_analyzed,
+                "analyses_created": regen.analyses_created,
+                "cards_created": regen.cards_created,
+                "evidence_windows_created": self._repository.count_sim_evidence_windows(
+                    sim_schema=sim_schema
+                ),
+                "budget_exhausted": regen.budget_exhausted,
+            }
+
             self._report_progress("simulating", 0, 0, None)
             LOGGER.info("regeneration simulating run_id=%s", params.run_id)
-            self._run_engine_and_persist(params, sim_cards)
+            self._run_engine_and_persist(
+                params, sim_cards, extra_summary={"regeneration": regen_stats}
+            )
             LOGGER.info("regeneration run completed run_id=%s", params.run_id)
         except Exception as error:
             LOGGER.exception("regeneration run failed run_id=%s", params.run_id)
@@ -175,13 +189,21 @@ class BacktesterService:
     # ----- shared simulation/persistence ---------------------------------
 
     def _run_engine_and_persist(
-        self, params: BacktestRunParams, cards_provider: CardsProvider
+        self,
+        params: BacktestRunParams,
+        cards_provider: CardsProvider,
+        *,
+        extra_summary: dict | None = None,
     ) -> None:
         result = BacktesterEngine(
             params=params,
             cards_provider=cards_provider,
             bars_provider=self._bars,
         ).run()
+
+        if extra_summary:
+            # Merge regeneration counters into the run summary the UI reads.
+            result.metrics.summary_json.update(extra_summary)
 
         if self._settings.persist_card_snapshots:
             self._repository.insert_card_snapshots(

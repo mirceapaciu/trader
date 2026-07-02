@@ -117,6 +117,9 @@ class _RecordingRepo:
     def bootstrap_sim_thesis_schema(self, *, repo_root, sim_schema):
         self.calls.append(f"bootstrap:{sim_schema}")
 
+    def count_sim_evidence_windows(self, *, sim_schema):
+        return 0
+
     def create_run(self, *, params, dataset_snapshot_hash, thesis_config_snapshot=None,
                    llm_token_budget_limit=None, llm_model=None):
         self.create_run_kwargs = {
@@ -138,6 +141,7 @@ class _RecordingRepo:
 
     def finalize_run_success(self, *, run_id, metrics):
         self.finalized_success = True
+        self.finalized_summary_json = dict(metrics.summary_json)
         self.calls.append("finalize_success")
 
     def finalize_run_failure(self, *, run_id, error_code, details=None):
@@ -177,8 +181,8 @@ class _RecordingRegeneration:
         if self._raise is not None:
             raise self._raise
         return RegenerationResult(
-            run_id=run_id, articles_found=1, analyses_created=1, cards_created=len(self._cards),
-            budget_exhausted=False,
+            run_id=run_id, articles_found=1, articles_relevant=1, articles_analyzed=1,
+            analyses_created=1, cards_created=len(self._cards), budget_exhausted=False,
         )
 
     def cards_provider(self, *, sim_schema):
@@ -242,6 +246,12 @@ def test_regeneration_happy_path_populates_sim_and_simulates():
     assert regeneration.regenerate_kwargs["sim_schema"] == "sim_bt_run1"
     # A trade was simulated over the regenerated (sim) cards.
     assert "insert_trades" in repo.calls
+    # Regeneration funnel stats are merged into the run summary the UI reads.
+    regen = repo.finalized_summary_json["regeneration"]
+    assert regen["articles_relevant"] == 1
+    assert regen["articles_analyzed"] == 1
+    assert regen["evidence_windows_created"] == 0
+    assert regen["cards_created"] == 1
 
 
 def test_regeneration_passes_evidence_threshold_overrides():

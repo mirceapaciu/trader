@@ -17,6 +17,7 @@ import {
   type BacktestDetailResponse,
   type BacktestEquityResponse,
   type BacktestMetrics,
+  type BacktestRegenerationStats,
   type BacktestRunSummary,
   type BacktestStrategyMetrics,
   type BacktestTradeFilters,
@@ -525,6 +526,7 @@ function RunDetail({ runId }: { runId: string }) {
   return (
     <>
       <SummaryTilesPanel run={data.run} metrics={data.metrics} />
+      {data.regeneration ? <RegenerationPanel stats={data.regeneration} /> : null}
       <EquityPanel equity={equity.data} loading={equity.isLoading} error={equity.isError} />
       <PerStrategyPanel rows={data.per_strategy} />
       <CardStatusPanel rows={data.card_status_breakdown} />
@@ -565,6 +567,30 @@ function SummaryTilesPanel({
         <MetricTile label="# Trades" value={formatInteger(metrics.trades_closed)} />
         <MetricTile label="Exposure fraction" value={formatPercent(metrics.exposure_fraction)} />
         <MetricTile label="Signal accuracy" value={formatPercent(metrics.signal_accuracy)} />
+      </div>
+    </section>
+  );
+}
+
+function RegenerationPanel({ stats }: { stats: BacktestRegenerationStats }) {
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Regeneration</h2>
+          <span>
+            Article analysis funnel for this run
+            {stats.budget_exhausted ? " · token budget exhausted (window not fully covered)" : ""}
+          </span>
+        </div>
+      </div>
+      <div className="thesis-kpi-grid">
+        <MetricTile label="Articles in window" value={formatInteger(stats.articles_found)} />
+        <MetricTile label="Articles relevant" value={formatInteger(stats.articles_relevant)} />
+        <MetricTile label="Articles analyzed" value={formatInteger(stats.articles_analyzed)} />
+        <MetricTile label="Analyses (LLM calls)" value={formatInteger(stats.analyses_created)} />
+        <MetricTile label="Evidence windows" value={formatInteger(stats.evidence_windows_created)} />
+        <MetricTile label="Cards created" value={formatInteger(stats.cards_created)} />
       </div>
     </section>
   );
