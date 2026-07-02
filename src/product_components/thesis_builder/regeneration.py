@@ -16,13 +16,17 @@ from .service import InstrumentRegistry, _json_ready, _resolve_instruments
 
 LOGGER = logging.getLogger("thesis_builder.regeneration")
 
+# Emit an INFO heartbeat every N processed articles during a long regeneration run.
+_HEARTBEAT_EVERY = 25
+
 # (ticker, exchange_code, as_of) -> a market-context snapshot dataclass (or None).
 # The snapshot is converted to the same JSON shape production uses before being fed
 # to the analyzer, keeping analysis identical to live processing.
 MarketContextProvider = Callable[[str, str, datetime], Any | None]
 
-# Reporting hook: (done, total, ticker) as articles are processed.
-RegenerationProgress = Callable[[int, int, str], None]
+# Reporting hook: (done, total, label) as articles are processed. The label is a
+# short human hint (e.g. the current instrument), or None.
+RegenerationProgress = Callable[[int, int, "str | None"], None]
 
 
 @dataclass(frozen=True)
@@ -118,8 +122,9 @@ class RegenerationRunner:
                 article=article, active_instruments=active_instruments
             )
             if not instruments:
-                self._report(index, articles_found, article)
+                self._report(index, articles_found, None)
                 continue
+            label = ",".join(sorted({i.ticker for i in instruments}))
 
             for instrument in instruments:
                 context_snapshot = self._market_context(
@@ -179,7 +184,18 @@ class RegenerationRunner:
                 if result.signal is not None:
                     cards_created += 1
 
-            self._report(index, articles_found, article)
+            self._report(index, articles_found, label)
+            # Heartbeat so a long run visibly progresses in the logs even when the
+            # per-article DEBUG lines are suppressed.
+            if index % _HEARTBEAT_EVERY == 0 or index == articles_found:
+                LOGGER.info(
+                    "Regeneration progress run_id=%s article=%d/%d analyses=%d cards=%d",
+                    self._run_id,
+                    index,
+                    articles_found,
+                    analyses_created,
+                    cards_created,
+                )
 
         LOGGER.info(
             "Regeneration done run_id=%s articles=%d analyses=%d cards=%d budget_exhausted=%s",
@@ -208,9 +224,9 @@ class RegenerationRunner:
         # Match production: MarketData snapshot dataclass -> JSON-ready dict.
         return _json_ready(asdict(snapshot))
 
-    def _report(self, done: int, total: int, article: NewsArticle) -> None:
+    def _report(self, done: int, total: int, label: str | None) -> None:
         if self._progress is not None:
-            self._progress(done, total, article.id)
+            self._progress(done, total, label)
 
     def _fetch_articles(
         self, *, window_start_at: datetime, window_end_at: datetime

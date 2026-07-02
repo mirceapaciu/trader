@@ -197,6 +197,38 @@ def test_regeneration_passes_reconstructed_context_as_json(monkeypatch):
     assert repo.persisted[0]["ctx"] == ctx
 
 
+def test_regeneration_progress_reports_instrument_label_not_article_id(monkeypatch):
+    articles = [_article(0)]
+    analyzer = _FakeAnalyzer([object()])
+    repo = _FakeRepo()
+    events: list[tuple[int, int, str | None]] = []
+    runner = RegenerationRunner(
+        dsn="postgresql://unused",
+        news_fetcher_schema="news_fetcher",
+        run_id="bt_run1",
+        repository=repo,
+        analyzer=analyzer,
+        instrument_registry=_Registry(),
+        thresholds=_THRESHOLDS,
+        card_delay_seconds=180,
+        progress=lambda done, total, label: events.append((done, total, label)),
+    )
+    monkeypatch.setattr(
+        runner, "_fetch_articles", lambda *, window_start_at, window_end_at: list(articles)
+    )
+    monkeypatch.setattr(
+        regeneration_module,
+        "_resolve_instruments",
+        lambda *, article, active_instruments: [SimpleNamespace(ticker="AAA", exchange_code="XNAS")],
+    )
+
+    runner.run(window_start_at=_WINDOW_START, window_end_at=_WINDOW_END)
+
+    # Progress carries the resolved instrument ticker, never the opaque article id.
+    assert events and events[-1] == (1, 1, "AAA")
+    assert not any(str(label or "").startswith("a-") for _d, _t, label in events)
+
+
 def test_regeneration_without_context_provider_passes_none(monkeypatch):
     articles = [_article(0)]
     analyzer = _FakeAnalyzer([object()])

@@ -215,9 +215,11 @@ def test_regeneration_happy_path_populates_sim_and_simulates():
 
     service.run(_params())
 
-    # Sim schema bootstrapped before the run row is created.
-    assert repo.calls[0] == "bootstrap:sim_bt_run1"
-    assert "create_run" in repo.calls
+    # The run row is created FIRST (so failures are always persisted), then the
+    # isolated sim schema is bootstrapped.
+    assert repo.calls[0] == "create_run"
+    assert "bootstrap:sim_bt_run1" in repo.calls
+    assert repo.calls.index("create_run") < repo.calls.index("bootstrap:sim_bt_run1")
     assert repo.finalized_success is True
     # create_run recorded regeneration config + token budget + model (satisfies DB constraints).
     assert repo.create_run_kwargs["llm_model"] == "gpt-4o"
@@ -233,10 +235,13 @@ def test_regeneration_happy_path_populates_sim_and_simulates():
     assert "insert_trades" in repo.calls
 
 
-def test_regeneration_disabled_raises():
+def test_regeneration_disabled_records_failed_run():
+    # Even when regeneration is disabled, the run must be persisted and marked
+    # failed (so the UI shows an error) rather than left without a DB row.
+    repo = _RecordingRepo()
     service = BacktesterService(
         settings=_settings(regeneration_enabled=False),
-        repository=_RecordingRepo(),
+        repository=repo,
         cards_provider=_FakeCards([]),
         bars_provider=_FakeBars([]),
         regeneration_provider=_RecordingRegeneration([_card()]),
@@ -244,6 +249,9 @@ def test_regeneration_disabled_raises():
     )
     with pytest.raises(RuntimeError, match="regeneration_disabled"):
         service.run(_params())
+    assert "create_run" in repo.calls
+    assert repo.finalized_failure is not None
+    assert repo.finalized_failure["error_code"] == "RuntimeError"
 
 
 def test_regeneration_without_provider_raises():

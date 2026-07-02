@@ -51,7 +51,17 @@
       "Bash(npx vitest *)",
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(xargs grep -l \"source_key\\\\|provider\")",
-      "Bash(grep -vE \"^\\\\s*$\")"
+      "Bash(grep -vE \"^\\\\s*$\")",
+      "Bash(grep -rns \"REGENERATION\" .env.*)",
+      "Bash(ls -la .env.backtester)",
+      "Bash(cat scripts/deployment/monitoring-ui/start.sh)",
+      "Bash(bash scripts/deployment/monitoring-ui/start.sh)",
+      "Bash(curl -s -X POST http://127.0.0.1:8090/api/backtests -H \"Content-Type: application/json\" -d '{\"window_start_at\":\"2026-06-15T00:00:00Z\",\"window_end_at\":\"2026-06-15T03:00:00Z\",\"mode\":\"regeneration\",\"timing_scenario\":\"ideal\",\"card_population\":\"all\",\"initial_capital\":10000,\"llm_model\":\"gpt-4o-mini\"}')",
+      "Bash(curl -s \"http://127.0.0.1:8090/api/backtests?window=7d\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8090/api/backtests -H \"Content-Type: application/json\" -d '{\"window_start_at\":\"2026-06-20T00:00:00Z\",\"window_end_at\":\"2026-06-22T00:00:00Z\",\"mode\":\"regeneration\",\"timing_scenario\":\"ideal\",\"card_population\":\"all\",\"initial_capital\":10000,\"llm_model\":\"gpt-4o-mini\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8090/api/backtests -H \"Content-Type: application/json\" -d '{\"window_start_at\":\"2026-06-15T00:00:00Z\",\"window_end_at\":\"2026-06-26T00:00:00Z\",\"mode\":\"regeneration\",\"timing_scenario\":\"ideal\",\"card_population\":\"all\",\"initial_capital\":10000,\"llm_model\":\"gpt-4o-mini\"}')",
+      "Bash(curl -s \"http://127.0.0.1:8090/api/backtests?window=30d\")",
+      "Bash(curl -s \"http://127.0.0.1:8090/api/backtests/bt_ce37995df711422ab3324d99672e5590\")"
     ]
   }
 }

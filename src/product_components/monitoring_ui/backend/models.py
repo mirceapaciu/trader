@@ -583,7 +583,7 @@ BacktestRunStatus = Literal["running", "completed", "failed"]
 class BacktestRunProgress(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    phase: str  # "prewarming" | "simulating"
+    phase: str  # "prewarming" | "regenerating" | "simulating"
     done: int
     total: int
     current_ticker: str | None = None

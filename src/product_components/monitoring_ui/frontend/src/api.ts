@@ -502,7 +502,7 @@ export type BacktestTimingScenario = "ideal" | "actual" | "both";
 export type BacktestCardPopulation = "all" | "approved_only" | "rejected_only";
 
 export type BacktestRunProgress = {
-  phase: "prewarming" | "simulating" | string;
+  phase: "prewarming" | "regenerating" | "simulating" | string;
   done: number;
   total: number;
   current_ticker?: string | null;

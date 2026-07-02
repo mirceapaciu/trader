@@ -25,6 +25,7 @@ def main() -> None:
             ".env.news-fetcher",
             ".env.filter-quality-evaluator",
             ".env.thesis-builder",
+            ".env.backtester",
             ".env.secrets",
         ),
         override_existing=False,
@@ -73,7 +74,15 @@ def main() -> None:
                 "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
                 "uvicorn.error": {"level": "INFO"},
                 "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+                # Application loggers for in-process work (e.g. the regeneration
+                # backtest) must reach the log file via the root handler; without a
+                # root entry uvicorn's dictConfig leaves these records with nowhere
+                # to go and they are silently dropped.
+                "backtester": {"level": "INFO"},
+                "thesis_builder": {"level": "INFO"},
+                "market_data": {"level": "INFO"},
             },
+            "root": {"handlers": ["default"], "level": "INFO"},
         },
     )
 

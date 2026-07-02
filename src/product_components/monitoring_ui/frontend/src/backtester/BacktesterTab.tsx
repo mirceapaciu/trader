@@ -52,8 +52,12 @@ const CARD_BUCKET_LABELS: Record<string, string> = {
 function runningBannerText(activeRunId: string, activeRun: BacktestRunSummary | null): string {
   const progress = activeRun?.progress ?? null;
   if (progress) {
+    const ticker = progress.current_ticker ? ` (${progress.current_ticker})` : "";
+    if (progress.phase === "regenerating") {
+      const counter = progress.total > 0 ? ` ${progress.done}/${progress.total}` : "";
+      return `Regenerating thesis cards${counter}${ticker}…`;
+    }
     if (progress.phase === "prewarming") {
-      const ticker = progress.current_ticker ? ` (${progress.current_ticker})` : "";
       return `Pre-warming market data ${progress.done}/${progress.total}${ticker}…`;
     }
     if (progress.phase === "simulating") {

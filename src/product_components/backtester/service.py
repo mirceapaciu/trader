@@ -81,23 +81,21 @@ class BacktesterService:
     # ----- regeneration ---------------------------------------------------
 
     def _run_regeneration(self, params: BacktestRunParams) -> None:
-        if not self._settings.regeneration_enabled:
-            raise RuntimeError("regeneration_disabled")
+        # The provider is required to build the ThesisBuilder config snapshot the
+        # run row needs; its absence is a wiring error, not a runtime condition.
         if self._regeneration is None:
             raise RuntimeError("regeneration_provider_unavailable")
 
-        # Isolated per-run schema: regenerated analyses/cards never touch production.
         sim_schema = sim_schema_name(params.run_id)
-        self._repository.bootstrap_sim_thesis_schema(
-            repo_root=self._repo_root, sim_schema=sim_schema
-        )
-
         thesis_config = self._regeneration.thesis_config_snapshot(
             llm_model=params.llm_model
         )
         token_budget = params.llm_max_tokens_per_run
         snapshot_hash = _regeneration_dataset_hash(params=params, thesis_config=thesis_config)
-        # Record the run up front (status running) so hard failures are persisted.
+        # Create the run row FIRST so that every subsequent failure (including a
+        # disabled-regeneration config error) is persisted as a `failed` run the
+        # UI can display, instead of leaving the UI polling a run_id that never
+        # gets a DB row (which looks "stuck").
         self._repository.create_run(
             params=params,
             dataset_snapshot_hash=snapshot_hash,
@@ -105,13 +103,28 @@ class BacktesterService:
             llm_token_budget_limit=token_budget,
             llm_model=params.llm_model,
         )
+        LOGGER.info(
+            "regeneration run created run_id=%s window=%s..%s model=%s token_budget=%d",
+            params.run_id,
+            params.window_start_at.isoformat(),
+            params.window_end_at.isoformat(),
+            params.llm_model,
+            token_budget,
+        )
 
         try:
+            if not self._settings.regeneration_enabled:
+                raise RuntimeError("regeneration_disabled")
+
+            self._report_progress("regenerating", 0, 0, None)
+            self._repository.bootstrap_sim_thesis_schema(
+                repo_root=self._repo_root, sim_schema=sim_schema
+            )
             card_delay = (
                 params.ideal_fetch_delay_seconds + params.ideal_thesis_delay_seconds
             )
-            self._report_progress("regenerating", 0, 0, None)
-            self._regeneration.regenerate(
+            LOGGER.info("regeneration analysis starting run_id=%s sim_schema=%s", params.run_id, sim_schema)
+            regen = self._regeneration.regenerate(
                 run_id=params.run_id,
                 sim_schema=sim_schema,
                 window_start_at=params.window_start_at,
@@ -123,17 +136,31 @@ class BacktesterService:
                     "regenerating", done, total, ticker
                 ),
             )
+            LOGGER.info(
+                "regeneration analysis done run_id=%s articles=%d analyses=%d cards=%d budget_exhausted=%s",
+                params.run_id,
+                regen.articles_found,
+                regen.analyses_created,
+                regen.cards_created,
+                regen.budget_exhausted,
+            )
 
             sim_cards = self._regeneration.cards_provider(sim_schema=sim_schema)
             cards = sim_cards.export_cards(
                 window_start_at=params.window_start_at,
                 window_end_at=params.window_end_at,
             )
+            LOGGER.info(
+                "regeneration prewarming market data run_id=%s cards=%d", params.run_id, len(cards)
+            )
             self._prefetch_market_data(cards, params)
 
             self._report_progress("simulating", 0, 0, None)
+            LOGGER.info("regeneration simulating run_id=%s", params.run_id)
             self._run_engine_and_persist(params, sim_cards)
+            LOGGER.info("regeneration run completed run_id=%s", params.run_id)
         except Exception as error:
+            LOGGER.exception("regeneration run failed run_id=%s", params.run_id)
             self._repository.finalize_run_failure(
                 run_id=params.run_id,
                 error_code=error.__class__.__name__,
