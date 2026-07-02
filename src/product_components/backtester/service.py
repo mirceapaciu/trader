@@ -88,7 +88,9 @@ class BacktesterService:
 
         sim_schema = sim_schema_name(params.run_id)
         thesis_config = self._regeneration.thesis_config_snapshot(
-            llm_model=params.llm_model
+            llm_model=params.llm_model,
+            required_evidence_count=params.required_evidence_count,
+            evidence_collection_max_minutes=params.evidence_collection_max_minutes,
         )
         token_budget = params.llm_max_tokens_per_run
         snapshot_hash = _regeneration_dataset_hash(params=params, thesis_config=thesis_config)
@@ -132,6 +134,8 @@ class BacktesterService:
                 llm_model=params.llm_model,
                 token_budget=token_budget,
                 card_delay_seconds=card_delay,
+                required_evidence_count=params.required_evidence_count,
+                evidence_collection_max_minutes=params.evidence_collection_max_minutes,
                 progress=lambda done, total, ticker: self._report_progress(
                     "regenerating", done, total, ticker
                 ),

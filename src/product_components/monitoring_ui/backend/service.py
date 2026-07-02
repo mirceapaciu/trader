@@ -983,6 +983,8 @@ class MonitoringService:
             initial_capital=payload.initial_capital,
             run_note=payload.run_note,
             llm_model=payload.llm_model,
+            required_evidence_count=payload.required_evidence_count,
+            evidence_collection_max_minutes=payload.evidence_collection_max_minutes,
         )
         try:
             run_id = self._backtest_runner.start_run(request)

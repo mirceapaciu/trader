@@ -19,3 +19,7 @@ class BacktestRunRequest:
     # Regeneration mode only: which OpenAI model to re-run analysis with. None ->
     # the coordinator falls back to the production default model.
     llm_model: str | None = None
+    # Regeneration mode only: ThesisBuilder evidence-threshold overrides. None ->
+    # the production ThesisBuilder default is used.
+    required_evidence_count: int | None = None
+    evidence_collection_max_minutes: int | None = None

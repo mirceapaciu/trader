@@ -137,6 +137,8 @@ def main() -> None:
             if args.llm_max_tokens_per_run is not None
             else settings.llm_max_tokens_per_run
         ),
+        required_evidence_count=args.required_evidence_count,
+        evidence_collection_max_minutes=args.evidence_collection_max_minutes,
     )
     LOGGER.info("starting backtester run_id=%s", params.run_id)
     BacktesterService(
@@ -199,6 +201,18 @@ def _parse_args() -> argparse.Namespace:
         "Defaults to the production model (BACKTESTER_LLM_MODEL).",
     )
     parser.add_argument("--llm-max-tokens-per-run", type=int)
+    parser.add_argument(
+        "--required-evidence-count",
+        type=int,
+        help="Regeneration mode only: override ThesisBuilder required evidence count "
+        "(default: production setting).",
+    )
+    parser.add_argument(
+        "--evidence-collection-max-minutes",
+        type=int,
+        help="Regeneration mode only: override ThesisBuilder evidence-collection window "
+        "in minutes (default: production setting).",
+    )
     parser.add_argument("--run-note")
     return parser.parse_args()
 

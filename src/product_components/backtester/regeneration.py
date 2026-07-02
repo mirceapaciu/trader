@@ -57,19 +57,56 @@ class ThesisRegenerationProvider:
         # the real OpenAI client from ThesisBuilder settings.
         self._llm_client_factory = llm_client_factory
 
-    def thesis_config_snapshot(self, *, llm_model: str) -> dict:
+    def thesis_config_snapshot(
+        self,
+        *,
+        llm_model: str,
+        required_evidence_count: int | None = None,
+        evidence_collection_max_minutes: int | None = None,
+    ) -> dict:
         s = self._thesis_settings
+        thresholds = self._resolve_thresholds(
+            required_evidence_count=required_evidence_count,
+            evidence_collection_max_minutes=evidence_collection_max_minutes,
+        )
+        # Records the EFFECTIVE thresholds (after applying any per-run overrides) so
+        # the run is reproducible and auditable.
         return {
             "llm_model": llm_model,
             "llm_max_output_tokens": s.llm_max_output_tokens,
-            "required_evidence_count": s.required_evidence_count,
+            "required_evidence_count": thresholds.required_evidence_count,
             "min_confidence": s.min_confidence,
             "min_relevance": s.min_relevance,
             "risk_max_loss_usd": s.risk_max_loss_usd,
             "default_time_horizon": s.default_time_horizon,
-            "evidence_collection_max_minutes": s.evidence_collection_max_minutes,
+            "evidence_collection_max_minutes": thresholds.evidence_collection_max_minutes,
             "max_evidence_age_minutes": s.max_evidence_age_minutes,
         }
+
+    def _resolve_thresholds(
+        self,
+        *,
+        required_evidence_count: int | None,
+        evidence_collection_max_minutes: int | None,
+    ) -> RegenerationThresholds:
+        s = self._thesis_settings
+        return RegenerationThresholds(
+            required_evidence_count=(
+                required_evidence_count
+                if required_evidence_count is not None
+                else s.required_evidence_count
+            ),
+            min_confidence=s.min_confidence,
+            min_relevance=s.min_relevance,
+            risk_max_loss_usd=s.risk_max_loss_usd,
+            default_time_horizon=s.default_time_horizon,
+            evidence_collection_max_minutes=(
+                evidence_collection_max_minutes
+                if evidence_collection_max_minutes is not None
+                else s.evidence_collection_max_minutes
+            ),
+            max_evidence_age_minutes=s.max_evidence_age_minutes,
+        )
 
     def regenerate(
         self,
@@ -81,6 +118,8 @@ class ThesisRegenerationProvider:
         llm_model: str,
         token_budget: int,
         card_delay_seconds: int,
+        required_evidence_count: int | None = None,
+        evidence_collection_max_minutes: int | None = None,
         progress: RegenerationProgress | None = None,
     ) -> RegenerationResult:
         # Late import to avoid a module import cycle (repository -> nothing heavy,
@@ -108,14 +147,9 @@ class ThesisRegenerationProvider:
             max_tokens_per_run=token_budget,
             max_tokens_per_item=s.llm_max_output_tokens,
         )
-        thresholds = RegenerationThresholds(
-            required_evidence_count=s.required_evidence_count,
-            min_confidence=s.min_confidence,
-            min_relevance=s.min_relevance,
-            risk_max_loss_usd=s.risk_max_loss_usd,
-            default_time_horizon=s.default_time_horizon,
-            evidence_collection_max_minutes=s.evidence_collection_max_minutes,
-            max_evidence_age_minutes=s.max_evidence_age_minutes,
+        thresholds = self._resolve_thresholds(
+            required_evidence_count=required_evidence_count,
+            evidence_collection_max_minutes=evidence_collection_max_minutes,
         )
         runner = RegenerationRunner(
             dsn=self._dsn,

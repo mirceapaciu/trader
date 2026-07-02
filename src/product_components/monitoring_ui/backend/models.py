@@ -840,6 +840,10 @@ class BacktestStartRunRequest(BaseModel):
     run_note: str | None = None
     # Regeneration mode only: which OpenAI model to re-run analysis with.
     llm_model: str | None = None
+    # Regeneration mode only: ThesisBuilder evidence-threshold overrides (None =
+    # production default).
+    required_evidence_count: int | None = None
+    evidence_collection_max_minutes: int | None = None
 
 
 class BacktestStartRunResponse(BaseModel):

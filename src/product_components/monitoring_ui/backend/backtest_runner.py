@@ -142,6 +142,8 @@ class BacktestRunCoordinator:
             run_note=request.run_note,
             llm_model=(request.llm_model or settings.llm_model),
             llm_max_tokens_per_run=settings.llm_max_tokens_per_run,
+            required_evidence_count=request.required_evidence_count,
+            evidence_collection_max_minutes=request.evidence_collection_max_minutes,
         )
 
     def _run_in_background(self, params: BacktestRunParams) -> None:

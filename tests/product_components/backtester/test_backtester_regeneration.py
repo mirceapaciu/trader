@@ -152,18 +152,27 @@ class _RecordingRegeneration:
         self.regenerate_kwargs: dict | None = None
         self.config_model: str | None = None
 
-    def thesis_config_snapshot(self, *, llm_model):
+    def thesis_config_snapshot(self, *, llm_model, required_evidence_count=None,
+                               evidence_collection_max_minutes=None):
         self.config_model = llm_model
-        return {"llm_model": llm_model, "required_evidence_count": 1}
+        return {
+            "llm_model": llm_model,
+            "required_evidence_count": required_evidence_count or 1,
+            "evidence_collection_max_minutes": evidence_collection_max_minutes or 120,
+        }
 
     def regenerate(self, *, run_id, sim_schema, window_start_at, window_end_at,
-                   llm_model, token_budget, card_delay_seconds, progress=None):
+                   llm_model, token_budget, card_delay_seconds,
+                   required_evidence_count=None, evidence_collection_max_minutes=None,
+                   progress=None):
         self.regenerate_kwargs = {
             "run_id": run_id,
             "sim_schema": sim_schema,
             "llm_model": llm_model,
             "token_budget": token_budget,
             "card_delay_seconds": card_delay_seconds,
+            "required_evidence_count": required_evidence_count,
+            "evidence_collection_max_minutes": evidence_collection_max_minutes,
         }
         if self._raise is not None:
             raise self._raise
@@ -235,6 +244,31 @@ def test_regeneration_happy_path_populates_sim_and_simulates():
     assert "insert_trades" in repo.calls
 
 
+def test_regeneration_passes_evidence_threshold_overrides():
+    repo = _RecordingRepo()
+    entry = T0 + timedelta(seconds=180)
+    regeneration = _RecordingRegeneration([_card()])
+    params = BacktestRunParams(
+        run_id="bt_run1",
+        window_start_at=T0 - timedelta(minutes=5),
+        window_end_at=T0 + timedelta(hours=6),
+        mode=BacktestMode.REGENERATION,
+        required_evidence_count=2,
+        evidence_collection_max_minutes=1440,
+    )
+    BacktesterService(
+        settings=_settings(),
+        repository=repo,
+        cards_provider=_FakeCards([]),
+        bars_provider=_FakeBars(_rising_bars(entry)),
+        regeneration_provider=regeneration,
+        repo_root=Path("."),
+    ).run(params)
+
+    assert regeneration.regenerate_kwargs["required_evidence_count"] == 2
+    assert regeneration.regenerate_kwargs["evidence_collection_max_minutes"] == 1440
+
+
 def test_regeneration_disabled_records_failed_run():
     # Even when regeneration is disabled, the run must be persisted and marked
     # failed (so the UI shows an error) rather than left without a DB row.
@@ -284,6 +318,38 @@ def test_regeneration_failure_finalizes_run_failed_and_reraises():
     assert "create_run" in repo.calls
     assert repo.finalized_failure is not None
     assert repo.finalized_failure["error_code"] == "ValueError"
+
+
+def test_provider_resolves_threshold_defaults_and_overrides():
+    from src.product_components.backtester.regeneration import ThesisRegenerationProvider
+
+    thesis_settings = SimpleNamespace(
+        llm_max_output_tokens=1200,
+        required_evidence_count=3,
+        min_confidence=0.6,
+        min_relevance=0.5,
+        risk_max_loss_usd=120.0,
+        default_time_horizon="swing_1d_5d",
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+    )
+    provider = ThesisRegenerationProvider(
+        dsn="postgresql://unused",
+        thesis_settings=thesis_settings,
+        instrument_registry=SimpleNamespace(),
+        market_data_service=SimpleNamespace(),
+        quote_max_age_seconds=300,
+    )
+    # None -> production defaults
+    default_cfg = provider.thesis_config_snapshot(llm_model="m")
+    assert default_cfg["required_evidence_count"] == 3
+    assert default_cfg["evidence_collection_max_minutes"] == 120
+    # explicit overrides win
+    override_cfg = provider.thesis_config_snapshot(
+        llm_model="m", required_evidence_count=2, evidence_collection_max_minutes=1440
+    )
+    assert override_cfg["required_evidence_count"] == 2
+    assert override_cfg["evidence_collection_max_minutes"] == 1440
 
 
 def test_market_context_requests_bars_as_of_without_lookahead():

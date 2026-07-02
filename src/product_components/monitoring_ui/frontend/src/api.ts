@@ -733,6 +733,8 @@ export type StartBacktestRequest = {
   initial_capital?: number | null;
   run_note?: string | null;
   llm_model?: string | null;
+  required_evidence_count?: number | null;
+  evidence_collection_max_minutes?: number | null;
 };
 
 export type StartBacktestResponse = {

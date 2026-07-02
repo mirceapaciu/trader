@@ -64,7 +64,13 @@ class RegenerationProvider(Protocol):
     existing replay engine.
     """
 
-    def thesis_config_snapshot(self, *, llm_model: str) -> dict: ...
+    def thesis_config_snapshot(
+        self,
+        *,
+        llm_model: str,
+        required_evidence_count: int | None = None,
+        evidence_collection_max_minutes: int | None = None,
+    ) -> dict: ...
 
     def regenerate(
         self,
@@ -76,6 +82,8 @@ class RegenerationProvider(Protocol):
         llm_model: str,
         token_budget: int,
         card_delay_seconds: int,
+        required_evidence_count: int | None = None,
+        evidence_collection_max_minutes: int | None = None,
         progress: RegenerationProgress | None = None,
     ) -> "RegenerationResult": ...
 

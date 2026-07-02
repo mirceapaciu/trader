@@ -196,6 +196,8 @@ function TriggerPanel({
   const [cardPopulation, setCardPopulation] = useState<StartBacktestRequest["card_population"]>("all");
   const [strategiesText, setStrategiesText] = useState("");
   const [initialCapitalText, setInitialCapitalText] = useState("");
+  const [requiredEvidenceText, setRequiredEvidenceText] = useState("");
+  const [evidenceWindowText, setEvidenceWindowText] = useState("");
 
   const conflict = error instanceof ApiError && error.status === 409;
   const invalid = error instanceof ApiError && error.status === 422;
@@ -211,6 +213,11 @@ function TriggerPanel({
       .map((value) => value.trim())
       .filter(Boolean);
     const initialCapital = initialCapitalText.trim() ? Number(initialCapitalText) : null;
+    const isRegen = mode === "regeneration";
+    const parseIntOrNull = (text: string): number | null => {
+      const value = text.trim() ? Number(text) : NaN;
+      return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+    };
     onSubmit({
       window_start_at: localDateTimeToIso(windowStart),
       window_end_at: localDateTimeToIso(windowEnd),
@@ -220,7 +227,9 @@ function TriggerPanel({
       strategies: strategies.length > 0 ? strategies : null,
       initial_capital: initialCapital != null && !Number.isNaN(initialCapital) ? initialCapital : null,
       run_note: null,
-      llm_model: mode === "regeneration" ? llmModel : null
+      llm_model: isRegen ? llmModel : null,
+      required_evidence_count: isRegen ? parseIntOrNull(requiredEvidenceText) : null,
+      evidence_collection_max_minutes: isRegen ? parseIntOrNull(evidenceWindowText) : null
     });
   };
 
@@ -326,6 +335,32 @@ function TriggerPanel({
               value={initialCapitalText}
               onChange={(event) => setInitialCapitalText(event.target.value)}
               disabled={busy}
+            />
+          </label>
+        </div>
+        <div className="filter-editor-row">
+          <label>
+            Required evidence count (regeneration)
+            <input
+              type="number"
+              min="1"
+              step="1"
+              placeholder="production default"
+              value={requiredEvidenceText}
+              onChange={(event) => setRequiredEvidenceText(event.target.value)}
+              disabled={busy || mode !== "regeneration"}
+            />
+          </label>
+          <label>
+            Evidence window minutes (regeneration)
+            <input
+              type="number"
+              min="1"
+              step="1"
+              placeholder="production default"
+              value={evidenceWindowText}
+              onChange={(event) => setEvidenceWindowText(event.target.value)}
+              disabled={busy || mode !== "regeneration"}
             />
           </label>
         </div>
