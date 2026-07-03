@@ -469,6 +469,69 @@ class PostgresSharedThesisCardReviewWriter:
         return psycopg.connect(self._dsn, autocommit=False)
 
 
+class PostgresSharedThesisCardReviewReader:
+    """Reads shared review state for a thesis card.
+
+    A missing row is returned as ``None`` and must be treated as rejected /
+    fail-closed by callers (TradeExecutor's ``review_not_approved`` gate).
+    """
+
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        shared_schema: str,
+    ) -> None:
+        self._dsn = dsn
+        self._shared_schema = _safe_identifier(shared_schema)
+
+    def get_review_state(self, *, card_id: str) -> str | None:
+        sql = (
+            f"SELECT decision_state FROM {self._shared_schema}.t_thesis_card_reviews "
+            f"WHERE card_id = %s"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (card_id,))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return str(row[0])
+
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self._dsn, autocommit=False)
+
+
+class PostgresSharedInstrumentSectorReader:
+    """Best-effort sector lookup from ``shared.t_instruments.identifiers`` (JSONB)."""
+
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        shared_schema: str,
+    ) -> None:
+        self._dsn = dsn
+        self._shared_schema = _safe_identifier(shared_schema)
+
+    def get_sector(self, *, ticker: str, exchange_code: str) -> str | None:
+        sql = (
+            f"SELECT i.identifiers ->> 'sector' AS sector "
+            f"FROM {self._shared_schema}.t_exchange_listings el "
+            f"JOIN {self._shared_schema}.t_instruments i ON i.id = el.instrument_id "
+            f"WHERE UPPER(el.ticker) = UPPER(%s) AND UPPER(el.exchange_code) = UPPER(%s)"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (ticker.strip().upper(), exchange_code.strip().upper()))
+            row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        sector = str(row[0]).strip()
+        return sector or None
+
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self._dsn, autocommit=False)
+
+
 def _safe_identifier(value: str) -> str:
     if not _IDENTIFIER.match(value):
         raise ValueError(f"Unsafe SQL identifier: {value!r}")
