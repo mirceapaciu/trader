@@ -18,6 +18,7 @@ from src.product_components.backtester.regeneration import ThesisRegenerationPro
 from src.product_components.backtester.repository import BacktesterRepository
 from src.product_components.backtester.service import BacktesterService, new_run_id
 from src.product_components.backtester.settings import BacktesterSettings
+from src.product_components.market_data.ibkr_gateway import build_market_data_ibkr_gateway
 from src.product_components.market_data.providers import build_provider_clients
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.market_data.settings import MarketDataSettings
@@ -147,9 +148,13 @@ class BacktestRunCoordinator:
         )
 
     def _run_in_background(self, params: BacktestRunParams) -> None:
+        ibkr_gateway = None
         try:
             settings = self._settings_factory()
             market_data_settings = self._market_data_settings_factory()
+            # Prefer IBKR for historical bars when a live session is reachable; falls back to
+            # Polygon/Alpha Vantage otherwise (see build_market_data_ibkr_gateway).
+            ibkr_gateway = build_market_data_ibkr_gateway(market_data_settings)
             instrument_registry = PostgresSharedInstrumentRegistry(
                 dsn=settings.postgres_dsn,
                 shared_schema=settings.shared_db_schema,
@@ -165,10 +170,11 @@ class BacktestRunCoordinator:
                         shared_schema=market_data_settings.shared_db_schema,
                     ),
                 ),
-                provider_clients=build_provider_clients(market_data_settings),
+                provider_clients=build_provider_clients(market_data_settings, ibkr_gateway=ibkr_gateway),
                 quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
                 daily_bar_lookback_days=market_data_settings.daily_bar_lookback_days,
                 historical_bars_provider=market_data_settings.historical_bars_provider,
+                prefer_ibkr_historical=market_data_settings.prefer_ibkr_historical,
                 max_requests_per_minute=market_data_settings.polygon_max_requests_per_minute,
             )
             bars_provider = MarketDataBarsProvider(market_data_service=market_data_service)
@@ -213,6 +219,8 @@ class BacktestRunCoordinator:
         except Exception:
             LOGGER.exception("backtester run failed run_id=%s", params.run_id)
         finally:
+            if ibkr_gateway is not None:
+                ibkr_gateway.disconnect()
             with self._lock:
                 if self._active_run_id == params.run_id:
                     self._active_run_id = None

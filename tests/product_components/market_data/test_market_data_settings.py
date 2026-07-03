@@ -15,6 +15,7 @@ def test_market_data_settings_defaults(monkeypatch) -> None:
     assert settings.backfill_provider == "alpha_vantage"
     assert settings.allow_delayed is True
     assert settings.ibkr_market_data_client_id == 2
+    assert settings.prefer_ibkr_historical is True
 
 
 def test_market_data_settings_env_override(monkeypatch) -> None:

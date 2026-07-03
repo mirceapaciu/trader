@@ -69,6 +69,7 @@ def _ibkr_symbol(ticker: str, exchange_code: str) -> ProviderSymbol:
             "exchange": exchange,
             "primary_exchange": primary_exchange,
             "sec_type": "STK",
+            "currency": currency,
         },
     )
 

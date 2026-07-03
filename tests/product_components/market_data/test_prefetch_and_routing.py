@@ -122,6 +122,97 @@ def _service(storage, clients, **kwargs) -> MarketDataService:
     )
 
 
+class _AvailableIbkrClient(_CountingClient):
+    def __init__(self, available: bool) -> None:
+        super().__init__(MarketDataProvider.IBKR)
+        self._available = available
+
+    def is_available(self) -> bool:
+        return self._available
+
+
+def _preference(clients, *, prefer_ibkr: bool = True) -> "MarketDataService":
+    return MarketDataService(
+        storage=None,  # type: ignore[arg-type]  # _provider_preference does not touch storage
+        provider_clients=clients,
+        quote_max_age_seconds=1,
+        daily_bar_lookback_days=1,
+        prefer_ibkr_historical=prefer_ibkr,
+    )
+
+
+def test_provider_preference_puts_ibkr_first_when_available() -> None:
+    service = _preference(
+        {
+            MarketDataProvider.POLYGON: _CountingClient(MarketDataProvider.POLYGON),
+            MarketDataProvider.IBKR: _AvailableIbkrClient(available=True),
+        }
+    )
+    assert service._provider_preference("XNAS") == [
+        MarketDataProvider.IBKR,
+        MarketDataProvider.POLYGON,
+        MarketDataProvider.ALPHA_VANTAGE,
+    ]
+
+
+def test_provider_preference_keeps_polygon_first_when_ibkr_unavailable() -> None:
+    service = _preference(
+        {
+            MarketDataProvider.POLYGON: _CountingClient(MarketDataProvider.POLYGON),
+            MarketDataProvider.IBKR: _AvailableIbkrClient(available=False),
+        }
+    )
+    assert service._provider_preference("XNAS")[0] is MarketDataProvider.POLYGON
+
+
+def test_provider_preference_respects_disabled_toggle_even_when_available() -> None:
+    service = _preference(
+        {
+            MarketDataProvider.POLYGON: _CountingClient(MarketDataProvider.POLYGON),
+            MarketDataProvider.IBKR: _AvailableIbkrClient(available=True),
+        },
+        prefer_ibkr=False,
+    )
+    assert service._provider_preference("XNAS")[0] is MarketDataProvider.POLYGON
+
+
+def test_us_instrument_prefers_ibkr_when_available() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    ibkr = _AvailableIbkrClient(available=True)
+    service = _service(
+        storage,
+        {MarketDataProvider.POLYGON: polygon, MarketDataProvider.IBKR: ibkr},
+    )
+
+    service.get_historical_bars(
+        ticker="AAPL", exchange_code="XNAS", interval="1m", start=_START, end=_END
+    )
+
+    assert len(ibkr.calls) == 1
+    assert polygon.calls == []
+    assert any(s.provider is MarketDataProvider.IBKR for s in storage.provider_symbols)
+
+
+def test_us_instrument_falls_back_to_polygon_when_ibkr_unavailable() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    ibkr = _AvailableIbkrClient(available=False)
+    service = _service(
+        storage,
+        {MarketDataProvider.POLYGON: polygon, MarketDataProvider.IBKR: ibkr},
+    )
+
+    service.get_historical_bars(
+        ticker="AAPL", exchange_code="XNAS", interval="1m", start=_START, end=_END
+    )
+
+    # Guards the coverage-ledger trap: a disconnected IBKR must not win and mark the
+    # window covered-but-empty; Polygon serves the bars instead.
+    assert len(polygon.calls) == 1
+    assert ibkr.calls == []
+
+
 def test_us_instrument_routes_to_polygon() -> None:
     storage = _FakeStorage()
     polygon = _CountingClient(MarketDataProvider.POLYGON)

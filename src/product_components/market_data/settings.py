@@ -25,6 +25,7 @@ class MarketDataSettings:
     polygon_api_base_url: str
     polygon_max_requests_per_minute: int
     historical_bars_provider: str
+    prefer_ibkr_historical: bool
 
     @property
     def postgres_dsn(self) -> str:
@@ -62,6 +63,7 @@ class MarketDataSettings:
             polygon_api_base_url=os.getenv("POLYGON_API_BASE_URL", "https://api.polygon.io"),
             polygon_max_requests_per_minute=_int_env("POLYGON_MAX_REQUESTS_PER_MINUTE", 5),
             historical_bars_provider=os.getenv("MARKET_DATA_HISTORICAL_BARS_PROVIDER", "polygon"),
+            prefer_ibkr_historical=_bool_env("MARKET_DATA_PREFER_IBKR_HISTORICAL", True),
         )
 
 

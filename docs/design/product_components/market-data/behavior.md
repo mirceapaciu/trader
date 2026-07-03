@@ -25,10 +25,20 @@ Canonical instrument identity uses (`ticker`, `exchange_code`), where `exchange_
 - France: `XPAR`.
 
 Provider priority:
-1. IBKR for current quotes and historical bars when Gateway or TWS is connected. IBKR is the primary
+1. IBKR for current quotes and historical bars when Gateway or TWS is connected. IBKR is the preferred
    source for intraday historical bars, including 1-minute resolution used by the Backtester.
 2. IBKR delayed mode when realtime subscriptions are unavailable and delayed data is permitted.
 3. Alpha Vantage for low-frequency daily-bar backfill only when a verified provider mapping exists.
+
+Historical-bars provider selection (US instruments) is availability-gated: when an IBKR session is
+live, IBKR is tried first, otherwise MarketData falls back to the configured
+`MARKET_DATA_HISTORICAL_BARS_PROVIDER` (Polygon) and then Alpha Vantage. IBKR is only placed first
+when actually connected — a disconnected IBKR must never win selection, because a selected provider
+records its requested window as covered even when it returns zero bars, which would defeat the
+fallback. The `MARKET_DATA_PREFER_IBKR_HISTORICAL` toggle (default `true`) disables the IBKR-first
+preference without changing connection settings. Non-US instruments (for example `XETR`, `XPAR`) are
+IBKR-only, since the Polygon free tier is US-only. The IBKR session used for historical bars runs on
+`IBKR_MARKET_DATA_CLIENT_ID` (default 2), independent of the TradeExecutor's broker session.
 
 Provider-specific symbols such as `RHM.DE`, `AXA.PA`, IBKR contract metadata, or Alpha Vantage symbols are stored in MarketData provider mapping rows.
 

@@ -332,7 +332,10 @@ Producer components and required read contracts:
   MarketData fetching missing ranges on demand and storing them durably so they are reused across
   runs (see `docs/design/product_components/market-data/behavior.md` Section 4). The Backtester must
   not query `market_data`-owned tables directly and must not call external market-data providers
-  itself.
+  itself. During warmup the Backtester wires an IBKR market-data session into MarketData so bars are
+  fetched from IBKR first when a Gateway/TWS is reachable, falling back to Polygon/Alpha Vantage when
+  IBKR is unavailable (see MarketData behavior Section 2). The session is best-effort: if IBKR cannot
+  be reached, warmup proceeds on the fallback providers.
 - In regeneration mode the Backtester invokes ThesisBuilder analysis through a ThesisBuilder-owned
   replay entry point with an immutable, run-scoped config snapshot; it must not mutate global
   ThesisBuilder configuration or production tables.

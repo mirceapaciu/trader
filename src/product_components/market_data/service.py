@@ -40,6 +40,7 @@ class MarketDataService:
         quote_max_age_seconds: int,
         daily_bar_lookback_days: int,
         historical_bars_provider: str = "polygon",
+        prefer_ibkr_historical: bool = True,
         max_requests_per_minute: int = 5,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -49,6 +50,7 @@ class MarketDataService:
         self._quote_max_age_seconds = quote_max_age_seconds
         self._daily_bar_lookback_days = daily_bar_lookback_days
         self._historical_bars_provider = historical_bars_provider
+        self._prefer_ibkr_historical = prefer_ibkr_historical
         self._max_requests_per_minute = max_requests_per_minute
         self._clock = clock
         self._sleep = sleep
@@ -169,6 +171,13 @@ class MarketDataService:
         if progress is not None:
             progress(done, total, ticker, status)
 
+    def _ibkr_available(self) -> bool:
+        client = self._provider_clients.get(MarketDataProvider.IBKR)
+        if client is None:
+            return False
+        is_available = getattr(client, "is_available", None)
+        return bool(is_available()) if callable(is_available) else False
+
     def _provider_preference(self, exchange_code: str) -> list[MarketDataProvider]:
         canonical = normalize_exchange_code(exchange_code)
         if canonical in _US_EXCHANGES:
@@ -176,7 +185,12 @@ class MarketDataService:
                 primary = MarketDataProvider(self._historical_bars_provider)
             except ValueError:
                 primary = MarketDataProvider.POLYGON
-            order = [primary, MarketDataProvider.IBKR, MarketDataProvider.ALPHA_VANTAGE]
+            # Prefer IBKR first when a live session is available; otherwise fall back to the
+            # configured historical provider (Polygon) so a disconnected IBKR never wins.
+            if self._prefer_ibkr_historical and self._ibkr_available():
+                order = [MarketDataProvider.IBKR, primary, MarketDataProvider.ALPHA_VANTAGE]
+            else:
+                order = [primary, MarketDataProvider.IBKR, MarketDataProvider.ALPHA_VANTAGE]
         else:
             # Polygon's free tier is US-only; non-US history comes from IBKR.
             order = [MarketDataProvider.IBKR]

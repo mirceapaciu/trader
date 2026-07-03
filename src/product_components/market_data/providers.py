@@ -187,6 +187,14 @@ class IbkrClient:
     def __init__(self, *, gateway: Any | None = None) -> None:
         self._gateway = gateway
 
+    def is_available(self) -> bool:
+        """True only when a gateway is injected and its IBKR session is live.
+
+        The service uses this to prefer IBKR *only when actually connected* — otherwise it
+        would mark ranges covered-but-empty and defeat the Polygon fallback.
+        """
+        return self._gateway is not None and bool(self._gateway.is_connected())
+
     def fetch_quote(self, symbol: ProviderSymbol) -> MarketQuote | None:
         return None
 
