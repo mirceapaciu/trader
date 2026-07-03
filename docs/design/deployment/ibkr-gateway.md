@@ -62,10 +62,25 @@ its "disconnected → reconnect with backoff" state until someone logs back in. 
 deployment, run Gateway under **[IBC (IBController)](https://github.com/IbcAlpha/IBC)** to
 auto-relaunch and re-login unattended.
 
+## Connectivity smoke test
+
+`scripts/deployment/trade-executor/smoke_test.py` is a **read-only** check (connect →
+account / positions / open orders / quote → disconnect; **places no orders**). Run it with
+TWS/Gateway up in paper mode to confirm the API, mode/port agreement, contract qualification,
+and market-data entitlement before starting the service:
+
+```
+uv run python scripts/deployment/trade-executor/smoke_test.py [TICKER] [EXCHANGE_MIC]
+```
+
+It uses a distinct client id (default 11) so it never clashes with the live MarketData (2) /
+TradeExecutor (5) connections. A `quote ... unavailable` line with everything else succeeding
+means the connection is fine but the account lacks a real-time subscription for that instrument.
+
 ## Notes
 
 - The concrete broker adapter lives in
   `src/product_components/trade_executor/broker/ib_async_gateway.py` (the only module that
   imports `ib_async`); everything else depends on the `BrokerGateway` Protocol.
 - The adapter cannot be exercised without a running TWS/Gateway; unit tests use the in-memory
-  fake gateway instead.
+  fake gateway instead. The smoke test above is the manual path to validate the real adapter.
