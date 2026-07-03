@@ -37,6 +37,17 @@ def main() -> int:
     parser.add_argument("ticker", nargs="?", default="AAPL", help="ticker to quote (default AAPL)")
     parser.add_argument("exchange", nargs="?", default="XNAS", help="exchange MIC (default XNAS)")
     parser.add_argument("--client-id", type=int, default=11, help="IBKR client id for the test")
+    parser.add_argument(
+        "--currency",
+        default="USD",
+        help="contract currency for SMART routing (e.g. EUR for German listings)",
+    )
+    parser.add_argument(
+        "--delayed",
+        action="store_true",
+        help="request delayed data (type 3) instead of real-time — diagnostic only; the "
+        "executor requires real-time and rejects stale quotes",
+    )
     args = parser.parse_args()
 
     load_env_files(
@@ -57,7 +68,8 @@ def main() -> int:
         return 1
 
     gateway = IbAsyncBrokerGateway(
-        host=settings.ibkr_host, port=settings.ibkr_port, client_id=args.client_id
+        host=settings.ibkr_host, port=settings.ibkr_port, client_id=args.client_id,
+        default_currency=args.currency,
     )
     try:
         gateway.connect()
@@ -79,20 +91,30 @@ def main() -> int:
         print(f"account unrealized PnL total: {gateway.account_snapshot().total_unrealized_pnl}")
         print(f"open orders: {len(gateway.list_open_orders())}")
 
+        if args.delayed:
+            # Diagnostic: switch the session feed to delayed (type 3) to confirm the
+            # quote path works even without a real-time entitlement for the instrument.
+            gateway._call(lambda: gateway._ib.reqMarketDataType(3))
+            print("market-data type: DELAYED (diagnostic; not valid for live execution)")
+
         quote = gateway.snapshot_quote(
             ticker=args.ticker, exchange_code=args.exchange, timeout_seconds=10.0
         )
-        if quote is None or not quote.has_two_sided:
+        if quote is None:
             print(
-                f"quote {args.ticker}: unavailable — check the market-data subscription for this "
-                "instrument (a real-time US feed is required; delayed data is too stale for the "
-                "executor's freshness window)."
+                f"quote {args.ticker}: no ticker returned — check the market-data subscription "
+                "for this instrument (the executor requires a real-time US feed)."
             )
         else:
             print(
                 f"quote {args.ticker}: bid={quote.bid} ask={quote.ask} last={quote.last} "
                 f"two_sided={quote.has_two_sided}"
             )
+            if not quote.has_two_sided:
+                print(
+                    "  note: no live bid/ask (market likely closed, or delayed feed) — the "
+                    "executor needs a two-sided real-time quote to size and price an order."
+                )
     finally:
         gateway.disconnect()
         print("disconnected. Smoke test complete (no orders placed).")
