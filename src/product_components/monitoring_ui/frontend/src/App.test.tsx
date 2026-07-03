@@ -6,6 +6,10 @@ vi.mock("./newsFetcher/NewsFetcherTab", () => ({
   NewsFetcherTab: () => <div>NewsFetcher content</div>
 }));
 
+vi.mock("./overview/OverviewTab", () => ({
+  OverviewTab: () => <div>Overview content</div>
+}));
+
 vi.mock("./thesisBuilder/ThesisBuilderTab", () => ({
   ThesisBuilderTab: () => <div>ThesisBuilder content</div>
 }));
@@ -19,6 +23,12 @@ vi.mock("./backtester/BacktesterTab", () => ({
 }));
 
 describe("App", () => {
+  it("opens on the Overview tab", () => {
+    render(<App />);
+
+    expect(screen.getByText("Overview content")).toBeInTheDocument();
+  });
+
   it("switches to the Watchlist tab", () => {
     render(<App />);
 

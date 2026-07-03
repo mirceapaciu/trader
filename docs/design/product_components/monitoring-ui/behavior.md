@@ -54,11 +54,19 @@ Runtime behavior:
 
 ## 4. Dashboard Behavior
 
-The Monitoring UI is organized as a modular tabbed application. The default tab is `NewsFetcher`; ThesisBuilder monitoring appears in a separate `ThesisBuilder` tab. Domain-specific data access, frontend state, and dashboard composition should stay separated in source code.
+The Monitoring UI is organized as a modular tabbed application. The default tab is `Overview`; NewsFetcher and ThesisBuilder monitoring appear in separate domain tabs. Domain-specific data access, frontend state, and dashboard composition should stay separated in source code.
 
 The Monitoring UI also includes a top-level `Watchlist` tab for operator/admin workflows around shared watchlist membership and instrument alias maintenance. This tab is distinct from NewsFetcher filter tuning and must use the Monitoring UI HTTP API rather than direct browser access to external providers or databases.
 
 The Monitoring UI also includes a top-level `Backtest` tab for triggering and reviewing historical backtest runs produced by the Backtester component. Like the other tabs, it accesses data only through the Monitoring UI HTTP API and keeps its data access, frontend state, and composition separated in source code.
+
+### 4.0.1 Overview Pipeline Panel
+
+The `Overview` tab displays a bucketed pipeline throughput chart over `15m`, `1h`, `1d`, `7d`, and `30d` windows with:
+- NewsFetcher articles published to the downstream queue, derived from publication obligations with `status='published'` and bucketed by obligation `created_at`.
+- ThesisBuilder articles processed, derived from distinct analyzed articles and bucketed by `analyzed_at`.
+
+The overview chart is a diagnostic flow signal rather than an exact conversion report because the two series are measured at different lifecycle timestamps.
 
 ### 4.1 Global Health Panel
 

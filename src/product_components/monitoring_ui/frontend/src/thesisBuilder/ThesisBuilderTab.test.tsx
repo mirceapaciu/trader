@@ -196,7 +196,7 @@ describe("ThesisBuilderTab", () => {
     expect(screen.getAllByText("Market moving").length).toBeGreaterThan(0);
     expect(
       useQuery.mock.calls.some(
-        ([options]: [{ queryKey?: unknown[] }]) =>
+        ([options]: Array<{ queryKey?: unknown[] } | undefined>) =>
           options?.queryKey?.[0] === "thesis-builder" &&
           options?.queryKey?.[1] === "throughput" &&
           options?.queryKey?.[2] === "1d"
@@ -211,7 +211,7 @@ describe("ThesisBuilderTab", () => {
 
     expect(
       useQuery.mock.calls.some(
-        ([options]: [{ queryKey?: unknown[] }]) =>
+        ([options]: Array<{ queryKey?: unknown[] } | undefined>) =>
           options?.queryKey?.[0] === "thesis-builder" &&
           options?.queryKey?.[1] === "throughput" &&
           options?.queryKey?.[2] === "7d"

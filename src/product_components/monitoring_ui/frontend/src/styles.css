@@ -243,6 +243,36 @@ h2 {
   line-height: 1.4;
 }
 
+.overview-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 12px;
+  color: #4f5d58;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.overview-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.legend-swatch.published {
+  background: #1d8f6f;
+}
+
+.legend-swatch.processed {
+  background: #4967d1;
+}
+
 .heading-with-state {
   display: flex;
   align-items: center;
