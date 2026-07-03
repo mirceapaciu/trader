@@ -219,6 +219,9 @@ export type ThesisBuilderMetricsResponse = {
 
 export type ThesisBuilderThroughputBucket = {
   window_start: string;
+  consumed_messages_count: number;
+  skipped_messages_count: number;
+  failed_messages_count: number;
   processed_articles_count: number;
   news_catalyst_articles_count: number;
   market_moving_articles_count: number;

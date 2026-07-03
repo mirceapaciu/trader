@@ -273,6 +273,13 @@ class ThesisBuilderRunner:
         article = message.as_article()
         if article is None:
             self._redis.publish_dlq(message=message, error_code="missing_article_payload")
+            self._record_processing_event(
+                message=message,
+                outcome="failed_dlq",
+                reason_code="missing_article_payload",
+                analyses_created=0,
+                signals_published=0,
+            )
             self._redis.ack(message.message_id)
             return ProcessMessageResult(acked=True, analyses_created=0, signals_published=0)
 
@@ -281,6 +288,13 @@ class ThesisBuilderRunner:
             active_instruments=self._instrument_registry.list_active_instruments(),
         )
         if not instruments:
+            self._record_processing_event(
+                message=message,
+                outcome="skipped",
+                reason_code="no_active_instrument",
+                analyses_created=0,
+                signals_published=0,
+            )
             self._redis.ack(message.message_id)
             return ProcessMessageResult(acked=True, analyses_created=0, signals_published=0)
 
@@ -331,12 +345,46 @@ class ThesisBuilderRunner:
                 )
                 signals_published += 1
 
+        self._record_processing_event(
+            message=message,
+            outcome="analyzed",
+            reason_code=None,
+            analyses_created=analyses_created,
+            signals_published=signals_published,
+        )
         self._redis.ack(message.message_id)
         return ProcessMessageResult(
             acked=True,
             analyses_created=analyses_created,
             signals_published=signals_published,
         )
+
+    def _record_processing_event(
+        self,
+        *,
+        message: NewsStreamMessage,
+        outcome: str,
+        reason_code: str | None,
+        analyses_created: int,
+        signals_published: int,
+    ) -> None:
+        try:
+            self._repository.record_message_processing_event(
+                source_message_id=message.message_id,
+                event_id=message.event_id,
+                article_id=message.article_id,
+                outcome=outcome,
+                reason_code=reason_code,
+                analyses_created=analyses_created,
+                signals_published=signals_published,
+                payload=message.payload,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Failed to record ThesisBuilder processing telemetry message_id=%s outcome=%s",
+                message.message_id,
+                outcome,
+            )
 
     def _load_market_context(self, instrument: InstrumentIdentity) -> dict[str, Any] | None:
         if self._market_context_client is None:

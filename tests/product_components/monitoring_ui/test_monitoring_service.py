@@ -149,6 +149,9 @@ class FakeDataSource:
             buckets=[
                 ThesisBuilderThroughputBucket(
                     window_start=_now() - timedelta(minutes=30),
+                    consumed_messages_count=7,
+                    skipped_messages_count=2,
+                    failed_messages_count=0,
                     processed_articles_count=5,
                     news_catalyst_articles_count=2,
                     market_moving_articles_count=3,
@@ -905,6 +908,8 @@ def test_get_thesis_builder_throughput_forwards_supported_window() -> None:
 
     assert data_source.thesis_builder_throughput_window == "7d"
     assert response.window == "7d"
+    assert response.buckets[0].consumed_messages_count == 7
+    assert response.buckets[0].skipped_messages_count == 2
     assert response.buckets[0].processed_articles_count == 5
     assert response.buckets[0].news_catalyst_articles_count == 2
     assert response.buckets[0].market_moving_articles_count == 3
@@ -1220,12 +1225,18 @@ def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
     rows = [
         {
             "window_start": datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc),
+            "consumed_messages_count": 7,
+            "skipped_messages_count": 2,
+            "failed_messages_count": 0,
             "processed_articles_count": 5,
             "news_catalyst_articles_count": 2,
             "market_moving_articles_count": 3,
         },
         {
             "window_start": datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc),
+            "consumed_messages_count": 4,
+            "skipped_messages_count": 0,
+            "failed_messages_count": 0,
             "processed_articles_count": 4,
             "news_catalyst_articles_count": 1,
             "market_moving_articles_count": 2,
@@ -1263,6 +1274,8 @@ def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
     assert response.available is True
     assert response.granularity == "hour"
     assert len(response.buckets) == 2
+    assert response.buckets[0].consumed_messages_count == 7
+    assert response.buckets[0].skipped_messages_count == 2
     assert response.buckets[0].processed_articles_count == 5
     assert response.buckets[0].news_catalyst_articles_count == 2
     assert response.buckets[0].market_moving_articles_count == 3

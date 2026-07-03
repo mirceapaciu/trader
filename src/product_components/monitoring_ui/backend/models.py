@@ -85,6 +85,9 @@ class ThesisBuilderThroughputBucket(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     window_start: datetime
+    consumed_messages_count: int = 0
+    skipped_messages_count: int = 0
+    failed_messages_count: int = 0
     processed_articles_count: int
     news_catalyst_articles_count: int
     market_moving_articles_count: int

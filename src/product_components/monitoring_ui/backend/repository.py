@@ -269,6 +269,7 @@ class PostgresRedisMonitoringDataSource:
             generated_at=generated_at,
         )
         sql = (
+            f"WITH analyses AS ("
             f"SELECT {bucket_expression} AS window_start, "
             f"COUNT(DISTINCT article_id) AS processed_articles_count, "
             f"COUNT(DISTINCT article_id) FILTER (WHERE content_type = 'news_catalyst') "
@@ -277,11 +278,32 @@ class PostgresRedisMonitoringDataSource:
             f"AS market_moving_articles_count "
             f"FROM {self._thesis_builder_schema}.t_news_analyses "
             f"WHERE analyzed_at >= %s AND analyzed_at < %s "
-            f"GROUP BY 1 ORDER BY 1"
+            f"GROUP BY 1"
+            f"), events AS ("
+            f"SELECT {_message_event_bucket_expression(window)} AS window_start, "
+            f"COUNT(*) AS consumed_messages_count, "
+            f"COUNT(*) FILTER (WHERE outcome = 'skipped') AS skipped_messages_count, "
+            f"COUNT(*) FILTER (WHERE outcome = 'failed_dlq') AS failed_messages_count "
+            f"FROM {self._thesis_builder_schema}.t_message_processing_events "
+            f"WHERE processed_at >= %s AND processed_at < %s "
+            f"GROUP BY 1"
+            f") "
+            f"SELECT COALESCE(events.window_start, analyses.window_start) AS window_start, "
+            f"COALESCE(events.consumed_messages_count, 0) AS consumed_messages_count, "
+            f"COALESCE(events.skipped_messages_count, 0) AS skipped_messages_count, "
+            f"COALESCE(events.failed_messages_count, 0) AS failed_messages_count, "
+            f"COALESCE(analyses.processed_articles_count, 0) AS processed_articles_count, "
+            f"COALESCE(analyses.news_catalyst_articles_count, 0) AS news_catalyst_articles_count, "
+            f"COALESCE(analyses.market_moving_articles_count, 0) AS market_moving_articles_count "
+            f"FROM events FULL OUTER JOIN analyses USING (window_start) "
+            f"ORDER BY 1"
         )
         try:
             with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(sql, (resolved_start_at, resolved_end_at))
+                cur.execute(
+                    sql,
+                    (resolved_start_at, resolved_end_at, resolved_start_at, resolved_end_at),
+                )
                 rows = cur.fetchall()
         except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
             return empty_response
@@ -289,6 +311,9 @@ class PostgresRedisMonitoringDataSource:
         buckets = [
             ThesisBuilderThroughputBucket(
                 window_start=_to_utc(row["window_start"]),
+                consumed_messages_count=int(row["consumed_messages_count"]),
+                skipped_messages_count=int(row["skipped_messages_count"]),
+                failed_messages_count=int(row["failed_messages_count"]),
                 processed_articles_count=int(row["processed_articles_count"]),
                 news_catalyst_articles_count=int(row["news_catalyst_articles_count"]),
                 market_moving_articles_count=int(row["market_moving_articles_count"]),
@@ -1406,6 +1431,15 @@ def _analysis_throughput_bucket_expression(window: str) -> str:
     if granularity == "hour":
         return "date_trunc('hour', analyzed_at)"
     return "date_trunc('day', analyzed_at)"
+
+
+def _message_event_bucket_expression(window: str) -> str:
+    granularity = _throughput_granularity_for_window(window)
+    if granularity == "raw":
+        return "processed_at"
+    if granularity == "hour":
+        return "date_trunc('hour', processed_at)"
+    return "date_trunc('day', processed_at)"
 
 
 def _to_utc(value: datetime) -> datetime:

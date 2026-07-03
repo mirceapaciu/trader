@@ -63,6 +63,9 @@ describe("OverviewTab", () => {
       buckets: [
         {
           window_start: "2026-06-16T09:00:00Z",
+          consumed_messages_count: 5,
+          skipped_messages_count: 1,
+          failed_messages_count: 0,
           processed_articles_count: 4,
           news_catalyst_articles_count: 3,
           market_moving_articles_count: 2,
@@ -80,9 +83,9 @@ describe("OverviewTab", () => {
     expect(screen.getAllByText("Processed by ThesisBuilder").length).toBeGreaterThan(0);
     expect(screen.getByText("Unprocessed delta")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText("5")).toBeInTheDocument();
-      expect(screen.getByText("4")).toBeInTheDocument();
-      expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText("0")).toBeInTheDocument();
+      expect(screen.getByText("1")).toBeInTheDocument();
     });
   });
 

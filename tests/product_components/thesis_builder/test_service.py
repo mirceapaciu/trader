@@ -46,10 +46,14 @@ class _FakeIo:
 class _FakeRepository:
     def __init__(self) -> None:
         self.rejected: list[str] = []
+        self.processing_events: list[dict] = []
 
     def persist_rejected_analysis(self, **kwargs):
         self.rejected.append(kwargs["rejection_reason_code"])
         return 1
+
+    def record_message_processing_event(self, **kwargs):
+        self.processing_events.append(kwargs)
 
 
 class _FakeInstrumentRegistry:
@@ -92,6 +96,7 @@ def test_thesis_builder_runner_bootstraps_io() -> None:
 
 def test_missing_article_goes_to_dlq_and_acks() -> None:
     io = _FakeIo()
+    repo = _FakeRepository()
     message = NewsStreamMessage(
         message_id="1-0",
         event_id="evt-1",
@@ -103,7 +108,7 @@ def test_missing_article_goes_to_dlq_and_acks() -> None:
     runner = ThesisBuilderRunner(
         settings=_settings(),
         redis_io=io,
-        repository=_FakeRepository(),
+        repository=repo,
         analyzer=_NoopAnalyzer(),
         instrument_registry=_FakeInstrumentRegistry(),
         review_writer=_FakeReviewWriter(),
@@ -114,6 +119,18 @@ def test_missing_article_goes_to_dlq_and_acks() -> None:
     assert result.acked is True
     assert io.acked == ["1-0"]
     assert io.dlq == [("1-0", "missing_article_payload")]
+    assert repo.processing_events == [
+        {
+            "source_message_id": "1-0",
+            "event_id": "evt-1",
+            "article_id": "missing",
+            "outcome": "failed_dlq",
+            "reason_code": "missing_article_payload",
+            "analyses_created": 0,
+            "signals_published": 0,
+            "payload": {"id": "missing"},
+        }
+    ]
 
 
 def test_invalid_llm_response_is_persisted_and_acked() -> None:
@@ -141,10 +158,11 @@ def test_invalid_llm_response_is_persisted_and_acked() -> None:
 
 def test_article_without_registry_match_is_acked_without_processing() -> None:
     io = _FakeIo()
+    repo = _FakeRepository()
     runner = ThesisBuilderRunner(
         settings=_settings(),
         redis_io=io,
-        repository=_FakeRepository(),
+        repository=repo,
         analyzer=_NoopAnalyzer(),
         instrument_registry=_FakeInstrumentRegistry(),
         review_writer=_FakeReviewWriter(),
@@ -155,6 +173,8 @@ def test_article_without_registry_match_is_acked_without_processing() -> None:
     assert result.acked is True
     assert result.analyses_created == 0
     assert io.acked == ["1-0"]
+    assert repo.processing_events[0]["outcome"] == "skipped"
+    assert repo.processing_events[0]["reason_code"] == "no_active_instrument"
 
 
 def test_resolve_instruments_ignores_short_alias_inside_words() -> None:

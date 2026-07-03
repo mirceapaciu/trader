@@ -22,7 +22,7 @@ type OverviewThroughputRow = {
   timestamp: string;
   timestampMs: number;
   published: number;
-  processed: number;
+  consumed: number;
 };
 
 export function OverviewTab() {
@@ -63,7 +63,7 @@ export function OverviewTab() {
         : 6
       : undefined;
   const publishedTotal = chartRows.reduce((total, row) => total + row.published, 0);
-  const processedTotal = chartRows.reduce((total, row) => total + row.processed, 0);
+  const consumedTotal = chartRows.reduce((total, row) => total + row.consumed, 0);
   const lastGeneratedAt = maxIso([
     newsFetcherThroughput.data?.generated_at,
     thesisBuilderThroughput.data?.generated_at
@@ -105,8 +105,8 @@ export function OverviewTab() {
 
       <section className="status-grid" aria-label="Pipeline totals">
         <MetricTile label="Published to queue" value={formatInteger(publishedTotal)} />
-        <MetricTile label="Processed by ThesisBuilder" value={formatInteger(processedTotal)} />
-        <MetricTile label="Unprocessed delta" value={formatInteger(Math.max(0, publishedTotal - processedTotal))} />
+        <MetricTile label="Processed by ThesisBuilder" value={formatInteger(consumedTotal)} />
+        <MetricTile label="Unprocessed delta" value={formatInteger(Math.max(0, publishedTotal - consumedTotal))} />
         <MetricTile label="Buckets with activity" value={formatInteger(chartRows.length)} />
       </section>
 
@@ -154,7 +154,7 @@ export function OverviewTab() {
                 <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip content={<OverviewThroughputTooltip />} />
                 <Bar dataKey="published" name="Published to queue" fill="#1d8f6f" fillOpacity={0.84} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="processed" name="Processed by ThesisBuilder" fill="#4967d1" fillOpacity={0.74} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="consumed" name="Processed by ThesisBuilder" fill="#4967d1" fillOpacity={0.74} radius={[3, 3, 0, 0]} />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
@@ -224,10 +224,10 @@ function aggregateOverviewThroughputRows(
   }
   for (const bucket of thesisBuilderData?.buckets ?? []) {
     const current = getOrCreateRow(totals, bucket.window_start);
-    current.processed += bucket.processed_articles_count;
+    current.consumed += bucket.consumed_messages_count;
   }
   return Array.from(totals.values())
-    .filter((row) => row.published > 0 || row.processed > 0)
+    .filter((row) => row.published > 0 || row.consumed > 0)
     .sort((left, right) => left.timestampMs - right.timestampMs);
 }
 
@@ -240,7 +240,7 @@ function getOrCreateRow(totals: Map<string, OverviewThroughputRow>, timestamp: s
     timestamp,
     timestampMs: new Date(timestamp).getTime(),
     published: 0,
-    processed: 0
+    consumed: 0
   };
   totals.set(timestamp, row);
   return row;

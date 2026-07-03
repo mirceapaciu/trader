@@ -163,6 +163,51 @@ class PostgresThesisBuilderRepository:
             cur.execute(sql, (_to_utc(published_at), thesis_card_id))
             conn.commit()
 
+    def record_message_processing_event(
+        self,
+        *,
+        source_message_id: str,
+        event_id: str,
+        article_id: str,
+        outcome: str,
+        reason_code: str | None,
+        analyses_created: int,
+        signals_published: int,
+        payload: dict[str, Any],
+        processed_at: datetime | None = None,
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._thesis_schema}.t_message_processing_events "
+            f"(source_message_id, event_id, article_id, outcome, reason_code, analyses_created, "
+            f"signals_published, processed_at, payload_json) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (source_message_id) DO UPDATE SET "
+            f"event_id = EXCLUDED.event_id, "
+            f"article_id = EXCLUDED.article_id, "
+            f"outcome = EXCLUDED.outcome, "
+            f"reason_code = EXCLUDED.reason_code, "
+            f"analyses_created = EXCLUDED.analyses_created, "
+            f"signals_published = EXCLUDED.signals_published, "
+            f"processed_at = EXCLUDED.processed_at, "
+            f"payload_json = EXCLUDED.payload_json"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    source_message_id,
+                    event_id,
+                    article_id,
+                    outcome,
+                    reason_code,
+                    analyses_created,
+                    signals_published,
+                    _to_utc(processed_at or datetime.now(timezone.utc)),
+                    Json(payload),
+                ),
+            )
+            conn.commit()
+
     def _insert_analysis(
         self,
         *,

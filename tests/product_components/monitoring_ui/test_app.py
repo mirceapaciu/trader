@@ -127,6 +127,9 @@ class FakeMonitoringDataSource:
             buckets=[
                 ThesisBuilderThroughputBucket(
                     window_start=datetime(2026, 6, 12, 9, 0, tzinfo=timezone.utc),
+                    consumed_messages_count=7,
+                    skipped_messages_count=2,
+                    failed_messages_count=0,
                     processed_articles_count=5,
                     news_catalyst_articles_count=2,
                     market_moving_articles_count=3,
@@ -423,6 +426,8 @@ def test_thesis_builder_throughput_endpoint_returns_buckets(monkeypatch) -> None
     assert response.status_code == 200
     payload = response.json()
     assert payload["window"] == "1h"
+    assert payload["buckets"][0]["consumed_messages_count"] == 7
+    assert payload["buckets"][0]["skipped_messages_count"] == 2
     assert payload["buckets"][0]["processed_articles_count"] == 5
     assert payload["buckets"][0]["news_catalyst_articles_count"] == 2
     assert payload["buckets"][0]["market_moving_articles_count"] == 3

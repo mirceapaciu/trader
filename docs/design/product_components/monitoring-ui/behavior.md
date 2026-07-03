@@ -64,7 +64,7 @@ The Monitoring UI also includes a top-level `Backtest` tab for triggering and re
 
 The `Overview` tab displays a bucketed pipeline throughput chart over `15m`, `1h`, `1d`, `7d`, and `30d` windows with:
 - NewsFetcher articles published to the downstream queue, derived from publication obligations with `status='published'` and bucketed by obligation `created_at`.
-- ThesisBuilder articles processed, derived from distinct analyzed articles and bucketed by `analyzed_at`.
+- ThesisBuilder messages processed, derived from ThesisBuilder processing events and bucketed by `processed_at`. This series includes messages that are analyzed, skipped, or sent to the ThesisBuilder DLQ.
 
 The overview chart is a diagnostic flow signal rather than an exact conversion report because the two series are measured at different lifecycle timestamps.
 

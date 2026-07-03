@@ -91,6 +91,27 @@ Behavioral constraints:
 - Each executable thesis card must be traceable to one or more analysis records.
 - Analyses may be emitted without a thesis card when evidence is insufficient, conflicting, stale, or below confidence thresholds.
 
+### `t_message_processing_events`
+
+Purpose:
+- Durable audit and monitoring record for every NewsFetcher queue message consumed by ThesisBuilder, including messages that are skipped before analysis.
+
+Logical fields:
+- `source_message_id`: Redis stream message id consumed from `news_raw_queue`.
+- `event_id`: upstream event id when present.
+- `article_id`: article identity derived from the payload or stream metadata.
+- `outcome`: processing outcome (`analyzed`, `skipped`, or `failed_dlq`).
+- `reason_code`: optional machine-readable reason such as `no_active_instrument` or `missing_article_payload`.
+- `analyses_created`: number of `t_news_analyses` rows created while handling the message.
+- `signals_published`: number of executable thesis signals published while handling the message.
+- `processed_at`: timestamp when ThesisBuilder finished handling the message.
+- `payload_json`: JSON copy of the consumed payload for audit/debugging.
+
+Behavioral constraints:
+- There is at most one processing-event row per source stream message id.
+- Overview-level pipeline monitoring uses this table to count ThesisBuilder consumed/processed messages; analysis-specific charts continue to use `t_news_analyses`.
+- Skipped messages are terminal from the consumer perspective and must be visible here even when no analysis row is created.
+
 ### `t_evidence_windows`
 
 Purpose:
