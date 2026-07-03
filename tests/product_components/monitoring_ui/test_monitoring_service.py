@@ -24,6 +24,8 @@ from src.product_components.monitoring_ui.backend.models import (
     ProviderStatus,
     ThesisBuilderActionableCard,
     ThesisBuilderConsumerHealth,
+    ThesisBuilderThroughputBucket,
+    ThesisBuilderThroughputResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderMetricsResponse,
     ThesisBuilderEvidenceWindow,
@@ -37,6 +39,7 @@ from src.product_components.monitoring_ui.backend.models import (
 from src.product_components.monitoring_ui.backend.filter_quality_runner import FilterQualityRunCoordinator
 from src.product_components.monitoring_ui.backend.repository import (
     PostgresRedisMonitoringDataSource,
+    _analysis_throughput_bucket_expression,
     _incorrectly_rejected_item,
     _incorrectly_accepted_item,
     _throughput_bucket_expression,
@@ -77,6 +80,7 @@ class FakeDataSource:
         self.throughput_end_at: datetime | None = None
         self.thesis_builder_window: str | None = None
         self.thesis_builder_evidence_collection_max_minutes: int | None = None
+        self.thesis_builder_throughput_window: str | None = None
         self.consumer_health_group: str | None = None
         self.consumer_health = ThesisBuilderConsumerHealth(
             available=True,
@@ -130,6 +134,28 @@ class FakeDataSource:
         self.thesis_builder_window = window
         self.thesis_builder_evidence_collection_max_minutes = evidence_collection_max_minutes
         return _thesis_builder_metrics(window=window)
+
+    def get_thesis_builder_throughput(
+        self,
+        *,
+        window: str,
+    ) -> ThesisBuilderThroughputResponse:
+        self.thesis_builder_throughput_window = window
+        return ThesisBuilderThroughputResponse(
+            window=window,
+            granularity=_throughput_granularity_for_window(window),
+            window_start_at=_now() - timedelta(hours=1),
+            window_end_at=_now(),
+            buckets=[
+                ThesisBuilderThroughputBucket(
+                    window_start=_now() - timedelta(minutes=30),
+                    processed_articles_count=5,
+                    news_catalyst_articles_count=2,
+                    market_moving_articles_count=3,
+                )
+            ],
+            generated_at=_now(),
+        )
 
     def get_thesis_builder_consumer_health(
         self, *, consumer_group: str
@@ -356,6 +382,15 @@ class FailingThesisBuilderMetricsDataSource(FakeDataSource):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse:
+        raise redis.ConnectionError("redis unavailable")
+
+
+class FailingThesisBuilderThroughputDataSource(FakeDataSource):
+    def get_thesis_builder_throughput(
+        self,
+        *,
+        window: str,
+    ) -> ThesisBuilderThroughputResponse:
         raise redis.ConnectionError("redis unavailable")
 
 
@@ -813,6 +848,14 @@ def test_throughput_bucket_expression_matches_granularity() -> None:
     assert _throughput_bucket_expression("30d") == "date_trunc('day', created_at)"
 
 
+def test_analysis_throughput_bucket_expression_matches_granularity() -> None:
+    assert _analysis_throughput_bucket_expression("15m") == "analyzed_at"
+    assert _analysis_throughput_bucket_expression("1h") == "analyzed_at"
+    assert _analysis_throughput_bucket_expression("1d") == "date_trunc('hour', analyzed_at)"
+    assert _analysis_throughput_bucket_expression("7d") == "date_trunc('hour', analyzed_at)"
+    assert _analysis_throughput_bucket_expression("30d") == "date_trunc('day', analyzed_at)"
+
+
 def test_get_throughput_rejects_invalid_custom_range() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)
@@ -852,6 +895,19 @@ def test_get_thesis_builder_metrics_forwards_supported_window() -> None:
     assert len(response.actionable_cards) == 1
     assert response.actionable_cards[0].card_id == "card-1"
     assert response.actionable_cards[0].direction == "buy"
+
+
+def test_get_thesis_builder_throughput_forwards_supported_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_builder_throughput(window="7d")
+
+    assert data_source.thesis_builder_throughput_window == "7d"
+    assert response.window == "7d"
+    assert response.buckets[0].processed_articles_count == 5
+    assert response.buckets[0].news_catalyst_articles_count == 2
+    assert response.buckets[0].market_moving_articles_count == 3
 
 
 def test_get_thesis_builder_metrics_attaches_consumer_health() -> None:
@@ -992,6 +1048,18 @@ def test_get_thesis_builder_metrics_rejects_invalid_window() -> None:
         raise AssertionError("expected InvalidThroughputWindow")
 
 
+def test_get_thesis_builder_throughput_rejects_invalid_window() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    try:
+        service.get_thesis_builder_throughput(window="12h")
+    except InvalidThroughputWindow as exc:
+        assert "Unsupported thesis-builder throughput window" in str(exc)
+    else:
+        raise AssertionError("expected InvalidThroughputWindow")
+
+
 def test_get_thesis_builder_metrics_returns_degraded_response_when_dependency_is_unavailable() -> None:
     data_source = FailingThesisBuilderMetricsDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)
@@ -1002,6 +1070,17 @@ def test_get_thesis_builder_metrics_returns_degraded_response_when_dependency_is
     assert response.message == "ThesisBuilder telemetry unavailable."
     assert response.dead_letter_count == 0
     assert response.recent_dead_letters == []
+
+
+def test_get_thesis_builder_throughput_returns_degraded_response_when_dependency_is_unavailable() -> None:
+    data_source = FailingThesisBuilderThroughputDataSource(dependencies=[], providers=[])
+    service = MonitoringService(settings=_settings(), data_source=data_source)
+
+    response = service.get_thesis_builder_throughput(window="1d")
+
+    assert response.available is False
+    assert response.message == "ThesisBuilder throughput unavailable."
+    assert response.buckets == []
 
 
 def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
@@ -1125,6 +1204,110 @@ def test_repository_maps_thesis_builder_metric_aggregates(monkeypatch) -> None:
     assert response.actionable_cards[1].expires_in_seconds == -3600.0
     assert response.recent_dead_letters[0].error_code == "missing_article_payload"
     assert response.pending_windows[0].ticker == "AAPL"
+
+
+def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+    rows = [
+        {
+            "window_start": datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc),
+            "processed_articles_count": 5,
+            "news_catalyst_articles_count": 2,
+            "market_moving_articles_count": 3,
+        },
+        {
+            "window_start": datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc),
+            "processed_articles_count": 4,
+            "news_catalyst_articles_count": 1,
+            "market_moving_articles_count": 2,
+        },
+    ]
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            self.sql = sql
+            self.params = params
+
+        def fetchall(self):
+            return rows
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self, row_factory=None):
+            return _Cursor()
+
+    monkeypatch.setattr(repository, "_connect", lambda: _Connection())
+
+    response = repository.get_thesis_builder_throughput(window="1d")
+
+    assert response.available is True
+    assert response.granularity == "hour"
+    assert len(response.buckets) == 2
+    assert response.buckets[0].processed_articles_count == 5
+    assert response.buckets[0].news_catalyst_articles_count == 2
+    assert response.buckets[0].market_moving_articles_count == 3
+    assert response.buckets[1].processed_articles_count == 4
+
+
+def test_repository_thesis_builder_throughput_returns_unavailable_when_tables_are_missing(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            raise psycopg.errors.UndefinedTable("missing")
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self, row_factory=None):
+            return _Cursor()
+
+    monkeypatch.setattr(repository, "_connect", lambda: _Connection())
+
+    response = repository.get_thesis_builder_throughput(window="1d")
+
+    assert response.available is False
+    assert response.message == "ThesisBuilder throughput is unavailable."
+    assert response.buckets == []
 
 
 def test_repository_reads_thesis_builder_dead_letters_from_redis() -> None:

@@ -14,6 +14,8 @@ from src.product_components.monitoring_ui.backend.models import (
     ProviderStatus,
     ThesisBuilderConsumerHealth,
     ThesisBuilderDeadLetterItem,
+    ThesisBuilderThroughputBucket,
+    ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
     ThroughputResponse,
 )
@@ -105,6 +107,29 @@ class FakeMonitoringDataSource:
                     article_id="article-1",
                     error_code="missing_article_payload",
                     failed_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+                )
+            ],
+            generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+        )
+
+    def get_thesis_builder_throughput(
+        self,
+        *,
+        window: str,
+    ) -> ThesisBuilderThroughputResponse:
+        self.window = window
+        return ThesisBuilderThroughputResponse(
+            available=True,
+            window=window,
+            granularity=_throughput_granularity_for_window(window),
+            window_start_at=datetime(2026, 6, 12, 9, 0, tzinfo=timezone.utc),
+            window_end_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
+            buckets=[
+                ThesisBuilderThroughputBucket(
+                    window_start=datetime(2026, 6, 12, 9, 0, tzinfo=timezone.utc),
+                    processed_articles_count=5,
+                    news_catalyst_articles_count=2,
+                    market_moving_articles_count=3,
                 )
             ],
             generated_at=datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc),
@@ -234,6 +259,15 @@ class FailingThesisBuilderMetricsDataSource(FakeMonitoringDataSource):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse:
+        raise redis.ConnectionError("redis unavailable")
+
+
+class FailingThesisBuilderThroughputDataSource(FakeMonitoringDataSource):
+    def get_thesis_builder_throughput(
+        self,
+        *,
+        window: str,
+    ) -> ThesisBuilderThroughputResponse:
         raise redis.ConnectionError("redis unavailable")
 
 
@@ -372,6 +406,29 @@ def test_thesis_builder_metrics_endpoint_returns_metrics(monkeypatch) -> None:
     assert data_source.window == "1h"
 
 
+def test_thesis_builder_throughput_endpoint_returns_buckets(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/throughput", params={"window": "1h"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["window"] == "1h"
+    assert payload["buckets"][0]["processed_articles_count"] == 5
+    assert payload["buckets"][0]["news_catalyst_articles_count"] == 2
+    assert payload["buckets"][0]["market_moving_articles_count"] == 3
+    assert data_source.window == "1h"
+
+
 def test_thesis_builder_metrics_endpoint_rejects_invalid_window(monkeypatch) -> None:
     monkeypatch.setattr(
         "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
@@ -387,6 +444,23 @@ def test_thesis_builder_metrics_endpoint_rejects_invalid_window(monkeypatch) -> 
 
     assert response.status_code == 422
     assert "Unsupported thesis-builder metrics window" in response.json()["detail"]
+
+
+def test_thesis_builder_throughput_endpoint_rejects_invalid_window(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FakeMonitoringDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/throughput", params={"window": "12h"})
+
+    assert response.status_code == 422
+    assert "Unsupported thesis-builder throughput window" in response.json()["detail"]
 
 
 def test_providers_endpoint_includes_last_non_zero_fetch_timestamp(monkeypatch) -> None:
@@ -558,6 +632,25 @@ def test_thesis_builder_metrics_endpoint_returns_degraded_response_when_dependen
     assert response.json()["message"] == "ThesisBuilder telemetry unavailable."
     assert response.json()["dead_letter_count"] == 0
     assert response.json()["recent_dead_letters"] == []
+
+
+def test_thesis_builder_throughput_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FailingThesisBuilderThroughputDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/throughput", params={"window": "1d"})
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["message"] == "ThesisBuilder throughput unavailable."
+    assert response.json()["buckets"] == []
 
 
 def test_filter_quality_endpoint_returns_degraded_response_when_dependency_is_unavailable(monkeypatch) -> None:

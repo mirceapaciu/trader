@@ -217,6 +217,24 @@ export type ThesisBuilderMetricsResponse = {
   generated_at: string;
 };
 
+export type ThesisBuilderThroughputBucket = {
+  window_start: string;
+  processed_articles_count: number;
+  news_catalyst_articles_count: number;
+  market_moving_articles_count: number;
+};
+
+export type ThesisBuilderThroughputResponse = {
+  available: boolean;
+  message?: string | null;
+  window: string;
+  granularity: "raw" | "hour" | "day";
+  window_start_at: string;
+  window_end_at: string;
+  buckets: ThesisBuilderThroughputBucket[];
+  generated_at: string;
+};
+
 export type BacklogResponse = {
   available: boolean;
   message?: string | null;
@@ -871,6 +889,14 @@ export function fetchThroughput(request: ThroughputRequest): Promise<ThroughputR
 export function fetchThesisBuilderMetrics(window: ThroughputPresetWindow): Promise<ThesisBuilderMetricsResponse> {
   return getJson<ThesisBuilderMetricsResponse>(
     `/api/thesis-builder/metrics?window=${encodeURIComponent(window)}`
+  );
+}
+
+export function fetchThesisBuilderThroughput(
+  window: ThroughputPresetWindow
+): Promise<ThesisBuilderThroughputResponse> {
+  return getJson<ThesisBuilderThroughputResponse>(
+    `/api/thesis-builder/throughput?window=${encodeURIComponent(window)}`
   );
 }
 

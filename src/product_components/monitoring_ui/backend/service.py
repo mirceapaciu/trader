@@ -52,6 +52,7 @@ from .models import (
     NewsAnalysesResponse,
     ProvidersResponse,
     ThesisBuilderConsumerHealth,
+    ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
     ThesisCardListResponse,
     ThesisCardSummary,
@@ -100,6 +101,12 @@ class MonitoringDataSource(Protocol):
         window: str,
         evidence_collection_max_minutes: int,
     ) -> ThesisBuilderMetricsResponse: ...
+
+    def get_thesis_builder_throughput(
+        self,
+        *,
+        window: str,
+    ) -> ThesisBuilderThroughputResponse: ...
 
     def get_thesis_builder_consumer_health(
         self, *, consumer_group: str
@@ -391,6 +398,28 @@ class MonitoringService:
         if consumer_health is not None:
             metrics = metrics.model_copy(update={"consumer_health": consumer_health})
         return metrics
+
+    def get_thesis_builder_throughput(self, *, window: str | None) -> ThesisBuilderThroughputResponse:
+        selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(
+                f"Unsupported thesis-builder throughput window: {selected_window}"
+            )
+        try:
+            return self._data_source.get_thesis_builder_throughput(window=selected_window)
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("thesis builder throughput unavailable for window %s", selected_window)
+            now = _utc_now()
+            return ThesisBuilderThroughputResponse(
+                available=False,
+                message="ThesisBuilder throughput unavailable.",
+                window=selected_window,
+                granularity=_throughput_granularity(selected_window),
+                window_start_at=now - _window_duration(selected_window),
+                window_end_at=now,
+                buckets=[],
+                generated_at=now,
+            )
 
     def _thesis_builder_consumer_health(self) -> ThesisBuilderConsumerHealth | None:
         try:

@@ -159,6 +159,20 @@ The ThesisBuilder tab displays KPI tiles for:
 Time windows:
 - 15 minutes, 1 hour, 1 day, 7 days, and 30 days.
 
+The ThesisBuilder tab also displays a bucketed throughput chart for the selected window. The chart
+uses ThesisBuilder analysis `analyzed_at` as the time axis and shows three distinct series:
+- processed articles (`COUNT(DISTINCT article_id)`)
+- news-catalyst articles (`COUNT(DISTINCT article_id)` where `content_type='news_catalyst'`)
+- market-moving articles (`COUNT(DISTINCT article_id)` where `is_market_moving=TRUE`)
+
+Chart bucket granularity follows the same preset rules as the NewsFetcher throughput panel:
+- `15m` and `1h`: raw `analyzed_at` timestamps
+- `1d` and `7d`: `date_trunc('hour', analyzed_at)`
+- `30d`: `date_trunc('day', analyzed_at)`
+
+Bucketed ThesisBuilder throughput must render as discrete bars rather than connected lines so zero
+activity remains visually empty instead of implying continuity between buckets.
+
 Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
 
 The ThesisBuilder tab also shows a recent dead-letter panel sourced from `failed_messages_dlq` entries written by ThesisBuilder when message consumption fails after validation or payload checks. These items are separate from the NewsFetcher outbox dead-letter views:
@@ -256,6 +270,7 @@ Required read endpoints:
 - `GET /api/providers` returns provider-level cycle summaries and last error state.
 - `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics for either a preset `window` token or explicit `start_at` and `end_at` bounds.
 - `GET /api/thesis-builder/metrics` returns bounded-window ThesisBuilder KPIs and pending evidence windows for `15m`, `1h`, `1d`, `7d`, or `30d`.
+- `GET /api/thesis-builder/throughput` returns bounded-window ThesisBuilder article throughput buckets for `15m`, `1h`, `1d`, `7d`, or `30d`.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.

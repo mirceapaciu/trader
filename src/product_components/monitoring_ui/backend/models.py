@@ -81,6 +81,28 @@ class ThroughputResponse(BaseModel):
     generated_at: datetime
 
 
+class ThesisBuilderThroughputBucket(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    window_start: datetime
+    processed_articles_count: int
+    news_catalyst_articles_count: int
+    market_moving_articles_count: int
+
+
+class ThesisBuilderThroughputResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    window: str
+    granularity: ThroughputGranularity
+    window_start_at: datetime
+    window_end_at: datetime
+    buckets: list[ThesisBuilderThroughputBucket]
+    generated_at: datetime
+
+
 class ThesisBuilderEvidenceWindow(BaseModel):
     model_config = ConfigDict(frozen=True)
 

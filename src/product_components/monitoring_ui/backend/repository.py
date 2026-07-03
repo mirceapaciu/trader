@@ -42,6 +42,8 @@ from .models import (
     ProviderStatus,
     ThesisBuilderActionableCard,
     ThesisBuilderConsumerHealth,
+    ThesisBuilderThroughputBucket,
+    ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderEvidenceWindow,
@@ -244,6 +246,62 @@ class PostgresRedisMonitoringDataSource:
             window_end_at=resolved_end_at,
             buckets=buckets,
             generated_at=_utc_now(),
+        )
+
+    def get_thesis_builder_throughput(
+        self,
+        *,
+        window: str,
+    ) -> ThesisBuilderThroughputResponse:
+        resolved_end_at = _utc_now()
+        resolved_start_at = resolved_end_at - _window_to_timedelta(window)
+        granularity = _throughput_granularity_for_window(window)
+        bucket_expression = _analysis_throughput_bucket_expression(window)
+        generated_at = _utc_now()
+        empty_response = ThesisBuilderThroughputResponse(
+            available=False,
+            message="ThesisBuilder throughput is unavailable.",
+            window=window,
+            granularity=granularity,
+            window_start_at=resolved_start_at,
+            window_end_at=resolved_end_at,
+            buckets=[],
+            generated_at=generated_at,
+        )
+        sql = (
+            f"SELECT {bucket_expression} AS window_start, "
+            f"COUNT(DISTINCT article_id) AS processed_articles_count, "
+            f"COUNT(DISTINCT article_id) FILTER (WHERE content_type = 'news_catalyst') "
+            f"AS news_catalyst_articles_count, "
+            f"COUNT(DISTINCT article_id) FILTER (WHERE is_market_moving = TRUE) "
+            f"AS market_moving_articles_count "
+            f"FROM {self._thesis_builder_schema}.t_news_analyses "
+            f"WHERE analyzed_at >= %s AND analyzed_at < %s "
+            f"GROUP BY 1 ORDER BY 1"
+        )
+        try:
+            with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (resolved_start_at, resolved_end_at))
+                rows = cur.fetchall()
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return empty_response
+
+        buckets = [
+            ThesisBuilderThroughputBucket(
+                window_start=_to_utc(row["window_start"]),
+                processed_articles_count=int(row["processed_articles_count"]),
+                news_catalyst_articles_count=int(row["news_catalyst_articles_count"]),
+                market_moving_articles_count=int(row["market_moving_articles_count"]),
+            )
+            for row in rows
+        ]
+        return ThesisBuilderThroughputResponse(
+            window=window,
+            granularity=granularity,
+            window_start_at=resolved_start_at,
+            window_end_at=resolved_end_at,
+            buckets=buckets,
+            generated_at=generated_at,
         )
 
     def get_thesis_builder_metrics(
@@ -1339,6 +1397,15 @@ def _throughput_bucket_expression(window: str) -> str:
     if granularity == "hour":
         return "date_trunc('hour', created_at)"
     return "date_trunc('day', created_at)"
+
+
+def _analysis_throughput_bucket_expression(window: str) -> str:
+    granularity = _throughput_granularity_for_window(window)
+    if granularity == "raw":
+        return "analyzed_at"
+    if granularity == "hour":
+        return "date_trunc('hour', analyzed_at)"
+    return "date_trunc('day', analyzed_at)"
 
 
 def _to_utc(value: datetime) -> datetime:

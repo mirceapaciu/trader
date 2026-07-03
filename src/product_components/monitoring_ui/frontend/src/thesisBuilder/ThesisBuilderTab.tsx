@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 
 import {
   fetchNewsAnalyses,
   fetchReprocessStatus,
   fetchThesisBuilderMetrics,
+  fetchThesisBuilderThroughput,
   fetchThesisCardArticles,
   fetchThesisCards,
   fetchWindowArticles,
@@ -13,6 +15,7 @@ import {
   type ThesisBuilderConsumerHealth,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
+  type ThesisBuilderThroughputResponse,
   type ThesisBuilderEvidenceWindow,
   type ThesisCardSummary,
   type ThesisReprocessStatusResponse,
@@ -40,6 +43,11 @@ export function ThesisBuilderTab() {
     queryFn: () => fetchThesisBuilderMetrics(window),
     refetchInterval: 15000
   });
+  const throughput = useQuery({
+    queryKey: ["thesis-builder", "throughput", window],
+    queryFn: () => fetchThesisBuilderThroughput(window),
+    refetchInterval: 15000
+  });
   const reprocess = useMutation({
     mutationFn: () => reprocessThesisBuilder({ days_back: daysBack }),
     onSuccess: (data) => setRunId(data.run_id)
@@ -56,6 +64,34 @@ export function ThesisBuilderTab() {
     reprocess.isPending ||
     (runId !== null && status != null && !REPROCESS_TERMINAL_STATES.has(status.status));
   const data = metrics.data;
+  const throughputData = throughput.data;
+  const chartRows = aggregateThesisBuilderThroughputRows(throughputData);
+  const throughputWindowStartAtMs = throughputData?.window_start_at
+    ? new Date(throughputData.window_start_at).getTime()
+    : undefined;
+  const throughputWindowEndAtMs = throughputData?.window_end_at
+    ? new Date(throughputData.window_end_at).getTime()
+    : undefined;
+  const throughputDataStartAtMs = chartRows[0]?.timestampMs;
+  const throughputDataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
+  const throughputAxisStartAtMs = throughputDataStartAtMs ?? throughputWindowStartAtMs;
+  const throughputAxisEndAtMs = throughputDataEndAtMs ?? throughputWindowEndAtMs;
+  const throughputAxisDurationMs =
+    throughputAxisStartAtMs != null && throughputAxisEndAtMs != null
+      ? Math.max(0, throughputAxisEndAtMs - throughputAxisStartAtMs)
+      : undefined;
+  const throughputUsesDiscretePoints = throughputData?.granularity === "raw" && window === "15m";
+  const throughputTicks = buildThroughputAxisTicks(
+    throughputData?.granularity,
+    throughputAxisStartAtMs,
+    throughputAxisEndAtMs
+  );
+  const throughputTickCount =
+    throughputData?.granularity === "raw"
+      ? throughputAxisDurationMs != null && throughputAxisDurationMs <= 3 * 24 * 60 * 60 * 1000
+        ? 4
+        : 6
+      : undefined;
 
   return (
     <main className="shell">
@@ -94,6 +130,69 @@ export function ThesisBuilderTab() {
       {metrics.isError && <div className="inline-error">{metrics.error.message}</div>}
       {data && !data.available && <div className="inline-error">{data.message ?? "ThesisBuilder telemetry unavailable."}</div>}
       <ConsumerHealthBanner health={data?.consumer_health} />
+
+      <section className="panel panel-large">
+        <div className="panel-heading">
+          <div>
+            <h2>Throughput</h2>
+            <span>{formatThesisThroughputWindowSummary(throughputData, window)}</span>
+          </div>
+        </div>
+        {throughputData && !throughputData.available ? (
+          <div className="inline-error">{throughputData.message ?? "ThesisBuilder throughput unavailable."}</div>
+        ) : null}
+        <div className="consumer-stall-stats" style={{ paddingBottom: "0.75rem" }}>
+          <span>Processed</span>
+          <span>News catalyst</span>
+          <span>Market moving</span>
+        </div>
+        <div className="chart">
+          {chartRows.length > 0 ? (
+            <ResponsiveContainer width="100%" height={290} minWidth={0}>
+              <ComposedChart data={chartRows}>
+                <CartesianGrid stroke="#dbe3dc" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="timestampMs"
+                  type="number"
+                  scale="time"
+                  domain={[throughputAxisStartAtMs ?? "dataMin", throughputAxisEndAtMs ?? "dataMax"]}
+                  tickLine={false}
+                  axisLine={false}
+                  minTickGap={20}
+                  tickCount={throughputTickCount}
+                  ticks={throughputTicks}
+                  tickFormatter={(value) =>
+                    formatThroughputAxisTick(
+                      Number(value),
+                      throughputData?.granularity,
+                      throughputAxisDurationMs
+                    )
+                  }
+                />
+                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip content={<ThesisBuilderThroughputTooltip />} />
+                {throughputUsesDiscretePoints ? (
+                  <>
+                    <Scatter dataKey="processed" fill="#4967d1" />
+                    <Scatter dataKey="newsCatalyst" fill="#c47422" />
+                    <Scatter dataKey="marketMoving" fill="#1d8f6f" />
+                  </>
+                ) : (
+                  <>
+                    <Bar dataKey="processed" name="Processed" fill="#4967d1" fillOpacity={0.72} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="newsCatalyst" name="News catalyst" fill="#c47422" fillOpacity={0.8} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="marketMoving" name="Market moving" fill="#1d8f6f" fillOpacity={0.82} radius={[3, 3, 0, 0]} />
+                  </>
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyState
+              text={!throughputData?.available ? "ThesisBuilder throughput unavailable" : "No ThesisBuilder throughput yet"}
+            />
+          )}
+        </div>
+      </section>
 
       <section className="thesis-kpi-grid">
         <MetricTile label="Articles processed" value={formatInteger(data?.articles_processed_count)} />
@@ -1040,6 +1139,39 @@ function EmptyState({ text }: { text: string }) {
   return <div className="empty">{text}</div>;
 }
 
+function ThesisBuilderThroughputTooltip({
+  active,
+  label,
+  payload
+}: {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{ dataKey?: string; value?: number | string | null }>;
+}) {
+  if (!active || label == null || !payload?.length) {
+    return null;
+  }
+  const items = payload
+    .filter((entry) => entry.dataKey && entry.dataKey !== "timestampMs" && entry.value != null)
+    .map((entry) => ({
+      label: formatThesisThroughputSeriesLabel(String(entry.dataKey)),
+      value: entry.value
+    }));
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="chart-tooltip">
+      <strong>{formatThroughputTooltipLabel(Number(label))}</strong>
+      {items.map((item) => (
+        <div key={item.label}>
+          {item.label}: {item.value}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function formatInteger(value?: number | null) {
   return value == null ? "n/a" : value.toLocaleString();
 }
@@ -1088,4 +1220,146 @@ function formatWindowSummary(data?: ThesisBuilderMetricsResponse) {
     return "Loading metrics";
   }
   return `${formatDate(data.window_start_at)} to ${formatDate(data.window_end_at)}`;
+}
+
+function formatThesisThroughputWindowSummary(
+  data: ThesisBuilderThroughputResponse | undefined,
+  window: ThroughputPresetWindow
+) {
+  if (!data) {
+    return `Last ${window}`;
+  }
+  return `${formatDate(data.window_start_at)} to ${formatDate(data.window_end_at)}`;
+}
+
+function formatThroughputAxisTick(
+  value: number,
+  granularity?: ThesisBuilderThroughputResponse["granularity"],
+  windowDurationMs?: number
+) {
+  const date = new Date(value);
+  if (granularity === "day") {
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  if (granularity === "hour") {
+    if (windowDurationMs != null && windowDurationMs <= 24 * 60 * 60 * 1000) {
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+  if (windowDurationMs != null && windowDurationMs <= 24 * 60 * 60 * 1000) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  if (windowDurationMs != null && windowDurationMs <= 3 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function buildThroughputAxisTicks(
+  granularity?: ThesisBuilderThroughputResponse["granularity"],
+  windowStartAtMs?: number,
+  windowEndAtMs?: number
+) {
+  if (granularity === "day") {
+    return buildAlignedTicks(windowStartAtMs, windowEndAtMs, "day", 1);
+  }
+  if (granularity === "hour") {
+    const durationMs =
+      windowStartAtMs != null && windowEndAtMs != null
+        ? Math.max(0, windowEndAtMs - windowStartAtMs)
+        : undefined;
+    if (durationMs == null) {
+      return undefined;
+    }
+    const stepHours = durationMs <= 24 * 60 * 60 * 1000 ? 3 : durationMs <= 3 * 24 * 60 * 60 * 1000 ? 6 : 24;
+    return buildAlignedTicks(windowStartAtMs, windowEndAtMs, "hour", stepHours);
+  }
+  return undefined;
+}
+
+function buildAlignedTicks(
+  windowStartAtMs: number | undefined,
+  windowEndAtMs: number | undefined,
+  unit: "hour" | "day",
+  step: number
+) {
+  if (windowStartAtMs == null || windowEndAtMs == null) {
+    return undefined;
+  }
+  const start = new Date(windowStartAtMs);
+  const end = new Date(windowEndAtMs);
+  const ticks: number[] = [];
+  const cursor = new Date(start);
+  if (unit === "day") {
+    cursor.setHours(0, 0, 0, 0);
+    if (cursor.getTime() < start.getTime()) {
+      cursor.setDate(cursor.getDate() + step);
+    }
+  } else {
+    cursor.setMinutes(0, 0, 0);
+    const currentHour = cursor.getHours();
+    const alignedHour = Math.ceil(currentHour / step) * step;
+    cursor.setHours(alignedHour, 0, 0, 0);
+    if (cursor.getTime() < start.getTime()) {
+      cursor.setHours(cursor.getHours() + step);
+    }
+  }
+  while (cursor.getTime() < end.getTime()) {
+    ticks.push(cursor.getTime());
+    if (unit === "day") {
+      cursor.setDate(cursor.getDate() + step);
+    } else {
+      cursor.setHours(cursor.getHours() + step);
+    }
+  }
+  return ticks.length > 0 ? ticks : undefined;
+}
+
+function formatThroughputTooltipLabel(value: number) {
+  return new Date(value).toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatThesisThroughputSeriesLabel(value: string) {
+  if (value === "processed") {
+    return "Processed";
+  }
+  if (value === "newsCatalyst") {
+    return "News catalyst";
+  }
+  if (value === "marketMoving") {
+    return "Market moving";
+  }
+  return value;
+}
+
+function aggregateThesisBuilderThroughputRows(response?: ThesisBuilderThroughputResponse) {
+  if (!response) {
+    return [];
+  }
+  return response.buckets
+    .map((bucket) => ({
+      timestamp: bucket.window_start,
+      timestampMs: new Date(bucket.window_start).getTime(),
+      processed: bucket.processed_articles_count,
+      newsCatalyst: bucket.news_catalyst_articles_count,
+      marketMoving: bucket.market_moving_articles_count
+    }))
+    .sort((left, right) => left.timestampMs - right.timestampMs);
 }

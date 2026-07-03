@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { ThesisBuilderTab } from "./ThesisBuilderTab";
 
 const fetchThesisBuilderMetrics = vi.fn();
+const fetchThesisBuilderThroughput = vi.fn();
 const fetchThesisCards = vi.fn();
 const useQuery = vi.fn();
 
@@ -16,6 +17,7 @@ vi.mock("../api", async () => {
   return {
     ...actual,
     fetchThesisBuilderMetrics: (...args: unknown[]) => fetchThesisBuilderMetrics(...args),
+    fetchThesisBuilderThroughput: (...args: unknown[]) => fetchThesisBuilderThroughput(...args),
     fetchThesisCards: (...args: unknown[]) => fetchThesisCards(...args),
   };
 });
@@ -28,6 +30,9 @@ describe("ThesisBuilderTab", () => {
       }
       if (options?.queryKey?.includes("cards")) {
         return cardsQueryResult;
+      }
+      if (options?.queryKey?.includes("throughput")) {
+        return throughputQueryResult;
       }
       if (options?.queryKey?.includes("analyses")) {
         return analysesQueryResult;
@@ -138,6 +143,29 @@ describe("ThesisBuilderTab", () => {
     error: null,
   };
 
+  const throughputQueryResult = {
+    data: {
+      available: true,
+      message: null,
+      window: "1d",
+      granularity: "hour",
+      window_start_at: "2026-06-16T09:00:00Z",
+      window_end_at: "2026-06-16T10:00:00Z",
+      buckets: [
+        {
+          window_start: "2026-06-16T09:00:00Z",
+          processed_articles_count: 5,
+          news_catalyst_articles_count: 2,
+          market_moving_articles_count: 3,
+        },
+      ],
+      generated_at: "2026-06-16T10:00:00Z",
+    },
+    isError: false,
+    isLoading: false,
+    error: null,
+  };
+
   const analysesQueryResult = {
     data: {
       available: true,
@@ -157,6 +185,38 @@ describe("ThesisBuilderTab", () => {
     expect(screen.getByText("Dead letters")).toBeInTheDocument();
     expect(screen.getByText("article-1")).toBeInTheDocument();
     expect(screen.getByText("missing_article_payload")).toBeInTheDocument();
+  });
+
+  it("renders the throughput chart labels", () => {
+    render(<ThesisBuilderTab />);
+
+    expect(screen.getByText("Throughput")).toBeInTheDocument();
+    expect(screen.getByText("Processed")).toBeInTheDocument();
+    expect(screen.getAllByText("News catalyst").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Market moving").length).toBeGreaterThan(0);
+    expect(
+      useQuery.mock.calls.some(
+        ([options]: [{ queryKey?: unknown[] }]) =>
+          options?.queryKey?.[0] === "thesis-builder" &&
+          options?.queryKey?.[1] === "throughput" &&
+          options?.queryKey?.[2] === "1d"
+      )
+    ).toBe(true);
+  });
+
+  it("switches the throughput query window when a preset is selected", () => {
+    render(<ThesisBuilderTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+
+    expect(
+      useQuery.mock.calls.some(
+        ([options]: [{ queryKey?: unknown[] }]) =>
+          options?.queryKey?.[0] === "thesis-builder" &&
+          options?.queryKey?.[1] === "throughput" &&
+          options?.queryKey?.[2] === "7d"
+      )
+    ).toBe(true);
   });
 
   it("renders the thesis cards section and detail on selection", () => {
@@ -256,6 +316,22 @@ describe("ThesisBuilderTab", () => {
       if (options?.queryKey?.includes("cards")) {
         return cardsQueryResult;
       }
+      if (options?.queryKey?.includes("throughput")) {
+        return {
+          data: {
+            available: false,
+            message: "ThesisBuilder throughput unavailable.",
+            window: "1d",
+            granularity: "hour",
+            window_start_at: "2026-06-16T09:00:00Z",
+            window_end_at: "2026-06-16T10:00:00Z",
+            buckets: [],
+            generated_at: "2026-06-16T10:00:00Z",
+          },
+          isError: false,
+          error: null,
+        };
+      }
       if (options?.queryKey?.includes("analyses")) {
         return analysesQueryResult;
       }
@@ -265,6 +341,7 @@ describe("ThesisBuilderTab", () => {
     render(<ThesisBuilderTab />);
 
     expect(screen.getByText("ThesisBuilder telemetry unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("ThesisBuilder throughput unavailable.")).toBeInTheDocument();
     expect(screen.getByText("ThesisBuilder dead-letter data unavailable")).toBeInTheDocument();
   });
 });
