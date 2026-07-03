@@ -54,6 +54,7 @@ class IbAsyncBrokerGateway:
         self._events: deque[BrokerEvent] = deque()
         self._events_lock = threading.Lock()
         self._orders: dict[int, Any] = {}  # ibkr_order_id -> Trade
+        self._contracts: dict[tuple[str, str], Any] = {}  # (ticker, exchange) -> qualified Contract
         self._register_callbacks()
 
     # --- event loop plumbing -------------------------------------------------
@@ -74,11 +75,25 @@ class IbAsyncBrokerGateway:
         self._thread.start()
         ready.wait()
 
-    def _call(self, coro_factory: Callable[[], Any], *, timeout: float | None = None) -> Any:
-        """Run a coroutine on the loop thread and block for its result."""
+    def _call(self, factory: Callable[[], Any], *, timeout: float | None = None) -> Any:
+        """Run an ib_async interaction on the loop thread and block for the result.
+
+        ``factory`` is invoked *on the loop thread* — some ib_async request methods
+        (e.g. reqAllOpenOrdersAsync) build their asyncio.Future eagerly when called,
+        so calling them from the caller's thread raises "no current event loop". If
+        the factory returns an awaitable it is awaited; otherwise the plain value is
+        returned. This keeps every ib_async touch single-threaded on the loop.
+        """
         if self._loop is None:
             raise RuntimeError("IBKR event loop not started")
-        future: Future = asyncio.run_coroutine_threadsafe(coro_factory(), self._loop)
+
+        async def _runner() -> Any:
+            result = factory()
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                return await result
+            return result
+
+        future: Future = asyncio.run_coroutine_threadsafe(_runner(), self._loop)
         return future.result(timeout=timeout)
 
     # --- callbacks -----------------------------------------------------------
@@ -157,14 +172,37 @@ class IbAsyncBrokerGateway:
     def is_connected(self) -> bool:
         return bool(self._ib.isConnected())
 
-    def _contract(self, ticker: str, exchange_code: str):
-        # SMART routing; exchange_code (MIC) is advisory. US names route via SMART.
-        return Stock(ticker, "SMART", self._default_currency)
+    def _qualified_contract(self, ticker: str, exchange_code: str):
+        """Return a conId-qualified contract (cached).
+
+        IBKR requires contracts to be qualified before requesting market data or
+        placing orders — a bare Stock has no conId and cannot even be hashed. SMART
+        routing is used; exchange_code (MIC) is advisory. Returns None if the
+        instrument cannot be resolved.
+        """
+        key = (ticker, exchange_code)
+        cached = self._contracts.get(key)
+        if cached is not None:
+            return cached
+        contract = Stock(ticker, "SMART", self._default_currency)
+        try:
+            qualified = self._call(
+                lambda: self._ib.qualifyContractsAsync(contract), timeout=10.0
+            )
+        except Exception:
+            LOGGER.exception("Contract qualification failed for %s/%s", ticker, exchange_code)
+            return None
+        result = qualified[0] if qualified else None
+        if result is not None:
+            self._contracts[key] = result
+        return result
 
     def snapshot_quote(
         self, *, ticker: str, exchange_code: str, timeout_seconds: float
     ) -> QuoteSnapshot | None:
-        contract = self._contract(ticker, exchange_code)
+        contract = self._qualified_contract(ticker, exchange_code)
+        if contract is None:
+            return None
 
         async def _fetch():
             tickers = await self._ib.reqTickersAsync(contract, regulatorySnapshot=False)
@@ -188,21 +226,23 @@ class IbAsyncBrokerGateway:
 
     def submit_bracket(self, request: BracketRequest) -> BracketHandle:
         action = "BUY" if request.side == "buy" else "SELL"
-        contract = self._contract(request.ticker, request.exchange_code)
-        bracket = self._ib.bracketOrder(
-            action,
-            request.quantity,
-            limitPrice=request.entry_limit_price,
-            takeProfitPrice=request.take_profit_price,
-            stopLossPrice=request.stop_price,
-        )
-        for order in bracket:
-            order.ocaGroup = request.oca_group
-            order.outsideRth = request.outside_rth
+        contract = self._qualified_contract(request.ticker, request.exchange_code)
+        if contract is None:
+            raise ValueError(f"unresolved_contract:{request.ticker}/{request.exchange_code}")
 
         def _place():
-            trades = [self._ib.placeOrder(contract, order) for order in bracket]
-            return trades
+            # bracketOrder assigns order ids via the client, so build + place on the loop thread.
+            bracket = self._ib.bracketOrder(
+                action,
+                request.quantity,
+                limitPrice=request.entry_limit_price,
+                takeProfitPrice=request.take_profit_price,
+                stopLossPrice=request.stop_price,
+            )
+            for order in bracket:
+                order.ocaGroup = request.oca_group
+                order.outsideRth = request.outside_rth
+            return [self._ib.placeOrder(contract, order) for order in bracket]
 
         trades = self._call(_place, timeout=10.0)
         for trade in trades:
@@ -220,7 +260,7 @@ class IbAsyncBrokerGateway:
         trade = self._orders.get(ibkr_order_id)
         if trade is None:
             return
-        self._call(lambda: _as_coro(self._ib.cancelOrder(trade.order)), timeout=5.0)
+        self._call(lambda: self._ib.cancelOrder(trade.order), timeout=5.0)
 
     def replace_order_price(self, ibkr_order_id: int, new_limit_price: float) -> None:
         trade = self._orders.get(ibkr_order_id)
@@ -228,22 +268,16 @@ class IbAsyncBrokerGateway:
             return
         order = trade.order
         order.lmtPrice = new_limit_price
-
-        def _replace():
-            return self._ib.placeOrder(trade.contract, order)
-
-        self._call(lambda: _as_coro(_replace()), timeout=5.0)
+        self._call(lambda: self._ib.placeOrder(trade.contract, order), timeout=5.0)
 
     def submit_flatten(self, request: FlattenRequest) -> BracketHandle:
         action = "BUY" if request.side_to_close == "buy" else "SELL"
-        contract = self._contract(request.ticker, request.exchange_code)
+        contract = self._qualified_contract(request.ticker, request.exchange_code)
+        if contract is None:
+            raise ValueError(f"unresolved_contract:{request.ticker}/{request.exchange_code}")
         order = LimitOrder(action, request.quantity, request.limit_price)
         order.outsideRth = request.outside_rth
-
-        def _place():
-            return self._ib.placeOrder(contract, order)
-
-        trade = self._call(lambda: _as_coro(_place()), timeout=5.0)
+        trade = self._call(lambda: self._ib.placeOrder(contract, order), timeout=5.0)
         order_id = int(trade.order.orderId)
         self._orders[order_id] = trade
         return BracketHandle(entry_order_id=order_id, stop_order_id=0, take_profit_order_id=0, oca_group="")
@@ -265,7 +299,7 @@ class IbAsyncBrokerGateway:
         return result
 
     def list_positions(self) -> list[BrokerPosition]:
-        positions = self._call(lambda: _as_coro(self._ib.positions()), timeout=10.0)
+        positions = self._call(lambda: self._ib.positions(), timeout=10.0)
         result: list[BrokerPosition] = []
         for pos in positions or []:
             result.append(
@@ -279,7 +313,7 @@ class IbAsyncBrokerGateway:
         return result
 
     def account_snapshot(self) -> AccountSnapshot:
-        items = self._call(lambda: _as_coro(self._ib.portfolio()), timeout=10.0)
+        items = self._call(lambda: self._ib.portfolio(), timeout=10.0)
         by_instrument: dict[tuple[str, str], float] = {}
         total = 0.0
         for item in items or []:
@@ -294,11 +328,6 @@ class IbAsyncBrokerGateway:
             events = list(self._events)
             self._events.clear()
         return events
-
-
-async def _as_coro(value: Any) -> Any:
-    """Wrap an already-computed (synchronous ib_async) value so it can be awaited."""
-    return value
 
 
 def _now() -> datetime:
