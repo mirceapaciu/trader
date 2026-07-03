@@ -301,7 +301,7 @@ The system uses the following baseline stack:
 - **Service/API layer:** Python service processes (process-based architecture)
 - **Message broker:** Redis Streams
 - **Database:** PostgreSQL 16+
-- **Trading integration:** Interactive Brokers TWS/Gateway via `ib_insync`
+- **Trading integration:** Interactive Brokers TWS/Gateway via `ib_async`
 - **LLM providers:** OpenAI gpt-4o-mini (primary), Groq/Gemini (fallback)
 - **Local infrastructure/runtime:** Docker for broker and database, local process execution for services
 
@@ -386,7 +386,7 @@ Validates trading decisions and executes them via IBKR.
 - Support manual override: pause bot, cancel pending orders
 
 **IBKR Integration:**
-- Use `ib_insync` Python library for IBKR TWS API
+- Use `ib_async` Python library for IBKR TWS API (maintained fork of ib_insync)
 - Connect to IB Gateway (headless) or TWS (with UI)
 - Paper trading mode for testing (IBKR provides free paper accounts)
 - Market orders for urgent signals; limit orders for non-urgent
@@ -526,7 +526,7 @@ The UI (`src/product_components/monitoring_ui/frontend`) provides:
 - [Finnhub API docs](https://finnhub.io/docs/api)
 - [Marketaux API docs](https://www.marketaux.com/documentation)
 - [EODHD API docs](https://eodhd.com/financial-apis)
-- [ib_insync documentation](https://ib-insync.readthedocs.io/)
+- [ib_async documentation](https://ib-api-reloaded.github.io/ib_async/)
 - [IBKR API reference](https://interactivebrokers.github.io/tws-api/)
 - [OpenAI API pricing](https://openai.com/api/pricing/)
 - Trading strategies: see [trading-strategies.md](../trading-strategies.md)

@@ -1,9 +1,9 @@
-"""Broker abstraction — the ib_insync isolation seam.
+"""Broker abstraction — the ib_async isolation seam.
 
 Every module in the component depends only on the DTOs and the ``BrokerGateway``
-Protocol defined here. The single concrete ``ib_insync``-backed implementation
-lives in ``ib_insync_gateway.py``; tests use ``fake_gateway.InMemoryBrokerGateway``.
-Nothing here imports ib_insync, so the service and pipeline stay network-free and
+Protocol defined here. The single concrete ``ib_async``-backed implementation
+lives in ``ib_async_gateway.py``; tests use ``fake_gateway.InMemoryBrokerGateway``.
+Nothing here imports ib_async, so the service and pipeline stay network-free and
 fully unit-testable.
 """
 

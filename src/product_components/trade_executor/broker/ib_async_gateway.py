@@ -1,12 +1,12 @@
-"""Interactive Brokers execution gateway (the ONLY module importing ib_insync).
+"""Interactive Brokers execution gateway (the ONLY module importing ib_async).
 
 Design (see trade-executor/behavior.md §5 and the plan):
-ib_insync is asyncio-based and its ``IB`` object is not thread-safe, so this
+ib_async is asyncio-based and its ``IB`` object is not thread-safe, so this
 gateway owns an asyncio event loop on a dedicated background thread. All broker
 RPCs from the (single-threaded) service loop are marshalled onto that thread and
 awaited with a timeout. IB callbacks run on the loop thread and push *normalized*
 ``BrokerEvent``s into a lock-guarded deque; the service drains them synchronously
-via ``drain_events()``. Nothing in the rest of the component imports ib_insync.
+via ``drain_events()``. Nothing in the rest of the component imports ib_async.
 
 This module cannot be exercised without a live TWS/Gateway, so it carries no unit
 tests beyond the import-boundary check; its normalization helpers are kept small
@@ -23,16 +23,7 @@ from concurrent.futures import Future
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-# eventkit (pulled in by ib_insync) calls asyncio.get_event_loop() at import time,
-# which raises on Python 3.14 when no loop exists in the main thread. Ensure one is
-# present before importing so the module loads; the gateway runs its real loop on a
-# dedicated background thread (see _start_loop).
-try:  # pragma: no cover - import-time environment shim
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-from ib_insync import IB, LimitOrder, Stock
+from ib_async import IB, LimitOrder, Stock
 
 from .gateway import (
     AccountSnapshot,
@@ -49,8 +40,8 @@ from .gateway import (
 LOGGER = logging.getLogger("trade_executor.broker.ibkr")
 
 
-class IbInsyncBrokerGateway:
-    """Concrete BrokerGateway backed by ib_insync."""
+class IbAsyncBrokerGateway:
+    """Concrete BrokerGateway backed by ib_async."""
 
     def __init__(self, *, host: str, port: int, client_id: int, default_currency: str = "USD") -> None:
         self._host = host
@@ -216,7 +207,7 @@ class IbInsyncBrokerGateway:
         trades = self._call(_place, timeout=10.0)
         for trade in trades:
             self._orders[int(trade.order.orderId)] = trade
-        # ib_insync bracketOrder returns [parent, takeProfit, stopLoss].
+        # ib_async bracketOrder returns [parent, takeProfit, stopLoss].
         parent, take_profit, stop_loss = trades
         return BracketHandle(
             entry_order_id=int(parent.order.orderId),
@@ -306,7 +297,7 @@ class IbInsyncBrokerGateway:
 
 
 async def _as_coro(value: Any) -> Any:
-    """Wrap an already-computed (synchronous ib_insync) value so it can be awaited."""
+    """Wrap an already-computed (synchronous ib_async) value so it can be awaited."""
     return value
 
 

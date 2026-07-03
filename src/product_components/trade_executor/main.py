@@ -121,11 +121,11 @@ def main() -> None:
     _verify_configuration(settings)
     _bootstrap_database_schema(settings)
 
-    # Imported here (not at module top) so the ib_insync dependency is only pulled
+    # Imported here (not at module top) so the ib_async dependency is only pulled
     # in for the real run, keeping unit tests of this module import-light.
-    from .broker.ib_insync_gateway import IbInsyncBrokerGateway
+    from .broker.ib_async_gateway import IbAsyncBrokerGateway
 
-    broker = IbInsyncBrokerGateway(
+    broker = IbAsyncBrokerGateway(
         host=settings.ibkr_host,
         port=settings.ibkr_port,
         client_id=settings.ibkr_client_id,
