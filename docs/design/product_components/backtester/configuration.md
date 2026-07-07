@@ -54,6 +54,7 @@ BACKTESTER_LLM_CONCURRENCY=4
 # Output policy
 BACKTESTER_PERSIST_EQUITY_POINTS=true
 BACKTESTER_PERSIST_CARD_SNAPSHOTS=true
+BACKTESTER_EXCURSION_HORIZON_MINUTES=30,60,120,240,390,1170,1950
 
 # Operations
 BACKTESTER_LOG_LEVEL=INFO
@@ -76,6 +77,12 @@ BACKTESTER_LOG_LEVEL=INFO
   can be overridden per run.
 - `BACKTESTER_DELAY_BUCKETS_SECONDS` is a comma-separated list of bucket edges used to group trades by
   measured pipeline delay in reports.
+- `BACKTESTER_EXCURSION_HORIZON_MINUTES` lists the post-entry horizons for the per-trade
+  fixed-horizon gross returns persisted on trade rows (behavior spec Section 7), counted in
+  regular-trading-hours minutes (390 per trading day), so 390/1170/1950 are 1/3/5 trading days —
+  the horizons that match the default `swing_1d_5d` card `time_horizon`. Excursion diagnostics
+  are always computed for filled trades; a horizon return is null when the run window ends before
+  the horizon is reached.
 
 ## Shared Dependencies
 

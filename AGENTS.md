@@ -15,6 +15,8 @@
 - Data model index: `docs/design/data-model.md`
 - Component-owned data model specs: `docs/design/product_components/news-fetcher/data-model.md`, `docs/design/product_components/analyzer-worker/data-model.md`, `docs/design/product_components/trade-executor/data-model.md`, `docs/design/product_components/backtester/data-model.md`, `docs/design/shared/data-model.md`
 - Configuration index: `docs/design/configuration.md`
+- Audit tooling roadmap (Pipeline Judge): `docs/design/pipeline-judge.md`
+- Backtest verification methodology (used by the `verify-backtest` skill): `docs/design/backtest-verification-methodology.md`
 - Component-owned configuration specs: `docs/design/product_components/news-fetcher/configuration.md`, `docs/design/product_components/analyzer-worker/configuration.md`, `docs/design/product_components/trade-executor/configuration.md`, `docs/design/product_components/monitoring-ui/configuration.md`, `docs/design/product_components/backtester/configuration.md`, `docs/design/shared/configuration.md`
 
 When implementing features, prefer updating the smallest relevant design file above instead of adding implementation details to the overview.

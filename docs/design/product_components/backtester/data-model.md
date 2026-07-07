@@ -98,6 +98,19 @@ Logical fields:
   `risk_blocked`.
 - `risk_block_rule`: nullable binding rule name when `exit_reason = risk_blocked`.
 - `holding_period_seconds`: nullable realized holding period for closed trades.
+- Excursion diagnostics (computed during the simulation bar walk; null for `not_filled` and
+  `risk_blocked` trades; consumed by the backtest verification workflow,
+  `docs/design/backtest-verification-methodology.md`):
+  - `mfe_pct`, `mae_pct`: maximum favorable/adverse excursion over the holding period, signed by
+    direction, at ±1-bar resolution.
+  - `time_to_mfe_seconds`, `time_to_mae_seconds`.
+  - `horizon_returns_json`: signed gross returns at the configured post-entry horizons
+    (default 30/60/120/240 trading minutes plus 1/3/5 trading days, matching the card
+    `time_horizon` scale), cost-free and exit-free; a horizon is null when the window ends
+    before it.
+  - `both_brackets_in_one_bar`: whether any bar in the trade spanned both the stop and the target
+    (the trade's outcome depends on the intrabar tie-break assumption).
+  - `bar_coverage_ratio`: bars present / bars expected over the holding period.
 - `created_at`: row creation timestamp.
 
 Behavioral constraints:

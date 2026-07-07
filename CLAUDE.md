@@ -65,7 +65,7 @@ News APIs (Finnhub, Marketaux) + RSS
         v
     Redis Stream: signal_queue  +  Postgres: thesis cards
         |
-    TradeExecutor  (DB schema exists; not yet active)
+    TradeExecutor  (consumes signal_queue; IBKR bracket orders)
 ```
 
 ### Source layout
@@ -83,10 +83,11 @@ src/
     market_data/                # Price/quote cache used by ThesisBuilder for context (IB provider)
     thesis_builder/             # Redis consumer: OpenAI LLM thesis card generation
     filter_quality_evaluator/   # Offline tool: replay historical articles against a filter config
+    backtester/                 # Offline tool: replay/regenerate thesis cards against historical bars, simulate P&L
     monitoring_ui/
       backend/                  # FastAPI app (default port 8090)
       frontend/                 # React 19 + Vite + TanStack Query + Recharts
-    trade_executor/             # DB schema only; not yet active
+    trade_executor/             # Signal consumer: admission gate, ATR brackets, risk sizing, IBKR bracket orders
 tests/
   core_components/              # Unit tests for EventIngestionEngine
   product_components/           # Unit tests per component (no external deps)

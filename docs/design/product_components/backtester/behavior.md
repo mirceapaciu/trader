@@ -246,6 +246,15 @@ Run-level metrics (persisted on `t_backtest_runs.summary_json` and scalar column
 - signal accuracy (share of trades whose realized direction matched card direction),
 - counts of cards skipped for missing price history and trades that were `risk_blocked`.
 
+Per-trade excursion diagnostics are computed during the simulation's own bar walk and persisted on
+each trade row (see `t_backtest_trades` in the data-model spec): maximum favorable/adverse
+excursion with times-to-extreme, fixed-horizon gross returns at configurable post-entry horizons
+(cost-free and exit-free), a flag for bars that span both bracket levels, and the bar-coverage
+ratio. These cost nothing extra to compute at simulation time and are the primary inputs to the
+backtest verification workflow (`docs/design/backtest-verification-methodology.md`); horizon
+returns may require reading bars past the exit up to the largest horizon, still bounded by the
+run window and the no-look-ahead rules relative to the simulated clock.
+
 Per-strategy breakdown of the same trade-level metrics is produced for each `strategy` present in the
 card set, enabling the strategy-tuning workflow in `docs/trading-strategies.md` Section 7.
 
