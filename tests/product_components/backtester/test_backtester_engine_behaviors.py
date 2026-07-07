@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import pytest
 
@@ -22,6 +21,7 @@ from src.product_components.backtester.models import (
     RiskModel,
     TimingScenario,
 )
+from src.product_components.trade_executor.trading_calendar import NaiveTradingCalendar
 from src.product_components.thesis_builder.export import (
     ExportedEvidenceArticle,
     ExportedThesisCard,
@@ -212,6 +212,7 @@ def _default_exec(
     intrabar_stop_before_target: bool = True,
     commission_model: str = "flat",
     commission_flat_usd: float = 0.0,
+    excursion_horizon_minutes: tuple[int, ...] = (30, 60, 120, 240, 390, 1170, 1950),
 ) -> ExecutionModel:
     """ExecutionModel with zero commissions/slippage by default for clean assertions."""
     return ExecutionModel(
@@ -226,6 +227,7 @@ def _default_exec(
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
         time_stop_seconds=time_stop_seconds,
+        excursion_horizon_minutes=excursion_horizon_minutes,
     )
 
 
@@ -284,6 +286,7 @@ def _run(
     ideal_thesis_delay_seconds: int = 60,
     window_end_at: datetime | None = None,
     run_id: str = "run-test",
+    trading_calendar=None,
 ):
     engine = BacktesterEngine(
         params=_params(
@@ -298,8 +301,143 @@ def _run(
         ),
         cards_provider=FakeCardsProvider(cards),
         bars_provider=FakeBarsProvider(bars_by_key),
+        trading_calendar=trading_calendar,
     )
     return engine.run()
+
+
+# ---------------------------------------------------------------------------
+# Excursion diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_excursion_diagnostics_for_buy_trade() -> None:
+    entry = T0 + timedelta(seconds=180)
+    bars = [
+        Bar(start_at=entry, open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=1), open=100.0, high=104.0, low=98.0, close=101.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=2), open=101.0, high=103.0, low=97.0, close=102.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=3), open=102.0, high=106.0, low=99.0, close=105.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=4), open=105.0, high=105.0, low=96.0, close=99.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=5), open=99.0, high=102.0, low=98.0, close=101.0, volume=1000),
+    ]
+    result = _run(
+        [make_card(card_id="buy-diagnostics")],
+        {"AAPL|NASDAQ": bars},
+        execution_model=_default_exec(
+            take_profit_pct=0.20,
+            stop_loss_pct=0.20,
+            time_stop_seconds=5 * 60,
+            excursion_horizon_minutes=(2, 4, 10),
+        ),
+        window_end_at=entry + timedelta(minutes=6),
+        trading_calendar=NaiveTradingCalendar(),
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason == ExitReason.TIME_STOP
+    assert trade.mfe_pct == pytest.approx(0.06)
+    assert trade.mae_pct == pytest.approx(-0.04)
+    assert trade.time_to_mfe_seconds == pytest.approx(180.0)
+    assert trade.time_to_mae_seconds == pytest.approx(240.0)
+    assert trade.horizon_returns_json == {
+        "2": pytest.approx(0.01),
+        "4": pytest.approx(0.05),
+        "10": None,
+    }
+    assert trade.both_brackets_in_one_bar is False
+    assert trade.bar_coverage_ratio == pytest.approx(1.0)
+
+
+def test_excursion_diagnostics_for_sell_trade() -> None:
+    entry = T0 + timedelta(seconds=180)
+    bars = [
+        Bar(start_at=entry, open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=1), open=100.0, high=104.0, low=98.0, close=101.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=2), open=101.0, high=103.0, low=97.0, close=102.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=3), open=102.0, high=106.0, low=99.0, close=105.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=4), open=105.0, high=105.0, low=96.0, close=99.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=5), open=99.0, high=102.0, low=98.0, close=101.0, volume=1000),
+    ]
+    result = _run(
+        [make_card(card_id="sell-diagnostics", direction="sell")],
+        {"AAPL|NASDAQ": bars},
+        execution_model=_default_exec(
+            take_profit_pct=0.20,
+            stop_loss_pct=0.20,
+            time_stop_seconds=5 * 60,
+            excursion_horizon_minutes=(2, 4),
+        ),
+        trading_calendar=NaiveTradingCalendar(),
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason == ExitReason.TIME_STOP
+    assert trade.mfe_pct == pytest.approx(0.04)
+    assert trade.mae_pct == pytest.approx(-0.06)
+    assert trade.time_to_mfe_seconds == pytest.approx(240.0)
+    assert trade.time_to_mae_seconds == pytest.approx(180.0)
+    assert trade.horizon_returns_json == {
+        "2": pytest.approx(-0.01),
+        "4": pytest.approx(-0.05),
+    }
+
+
+def test_excursion_diagnostics_flags_bracket_span_and_missing_bar_coverage() -> None:
+    entry = T0 + timedelta(seconds=180)
+    span_bars = [
+        Bar(start_at=entry, open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=1), open=100.0, high=104.0, low=98.0, close=101.0, volume=1000),
+    ]
+    span_result = _run(
+        [make_card(card_id="span-diagnostics")],
+        {"AAPL|NASDAQ": span_bars},
+        execution_model=_default_exec(
+            take_profit_pct=0.03,
+            stop_loss_pct=0.015,
+            excursion_horizon_minutes=(1,),
+        ),
+        trading_calendar=NaiveTradingCalendar(),
+    )
+    assert span_result.trades[0].both_brackets_in_one_bar is True
+
+    sparse_bars = [
+        Bar(start_at=entry, open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=2), open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        Bar(start_at=entry + timedelta(minutes=4), open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+    ]
+    sparse_result = _run(
+        [make_card(card_id="coverage-diagnostics")],
+        {"AAPL|NASDAQ": sparse_bars},
+        execution_model=_default_exec(
+            take_profit_pct=0.20,
+            stop_loss_pct=0.20,
+            time_stop_seconds=4 * 60,
+            excursion_horizon_minutes=(1,),
+        ),
+        trading_calendar=NaiveTradingCalendar(),
+    )
+    assert sparse_result.trades[0].bar_coverage_ratio == pytest.approx(0.5)
+
+
+def test_unfilled_and_risk_blocked_trades_have_null_diagnostics() -> None:
+    not_filled = _run([make_card(card_id="no-bars")], {"AAPL|NASDAQ": []}).trades[0]
+    assert not_filled.exit_reason == ExitReason.NOT_FILLED
+    assert not_filled.mfe_pct is None
+    assert not_filled.horizon_returns_json is None
+    assert not_filled.bar_coverage_ratio is None
+
+    entry = T0 + timedelta(seconds=180)
+    blocked = _run(
+        [make_card(card_id="blocked")],
+        {"AAPL|NASDAQ": make_bars(entry, count=3)},
+        execution_model=_default_exec(),
+        risk_model=_default_risk(max_daily_trades=0),
+    ).trades[0]
+    assert blocked.exit_reason == ExitReason.RISK_BLOCKED
+    assert blocked.mfe_pct is None
+    assert blocked.horizon_returns_json is None
+    assert blocked.bar_coverage_ratio is None
 
 
 # ---------------------------------------------------------------------------

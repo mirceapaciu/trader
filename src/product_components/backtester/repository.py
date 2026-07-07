@@ -150,9 +150,11 @@ class BacktesterRepository:
             f"news_published_at, news_fetched_at, card_created_at, news_fetch_delay_seconds, "
             f"thesis_build_delay_seconds, total_pipeline_delay_seconds, entry_at, entry_price, "
             f"quantity, exit_at, exit_price, gross_pnl, commission, slippage, net_pnl, "
-            f"return_pct, exit_reason, risk_block_rule, holding_period_seconds) "
+            f"return_pct, exit_reason, risk_block_rule, holding_period_seconds, "
+            f"mfe_pct, mae_pct, time_to_mfe_seconds, time_to_mae_seconds, "
+            f"horizon_returns_json, both_brackets_in_one_bar, bar_coverage_ratio) "
             f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            f"%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (run_id, thesis_card_id, entry_timing_scenario) DO NOTHING"
         )
         with self._connect() as conn, conn.cursor() as cur:
@@ -189,6 +191,13 @@ class BacktesterRepository:
                         trade.exit_reason.value,
                         trade.risk_block_rule,
                         trade.holding_period_seconds,
+                        trade.mfe_pct,
+                        trade.mae_pct,
+                        trade.time_to_mfe_seconds,
+                        trade.time_to_mae_seconds,
+                        Json(trade.horizon_returns_json) if trade.horizon_returns_json is not None else None,
+                        trade.both_brackets_in_one_bar,
+                        trade.bar_coverage_ratio,
                     ),
                 )
             conn.commit()

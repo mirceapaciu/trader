@@ -59,3 +59,5 @@ def test_bootstrap_backtester_schema_applies_schema_sql(monkeypatch) -> None:
     applied = "\n".join(executed)
     assert "CREATE SCHEMA IF NOT EXISTS backtester" in applied
     assert "t_backtest_runs" in applied
+    assert "ADD COLUMN IF NOT EXISTS mfe_pct" in applied
+    assert "ADD COLUMN IF NOT EXISTS horizon_returns_json" in applied

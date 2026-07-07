@@ -174,6 +174,13 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_trades (
     exit_reason TEXT NOT NULL,
     risk_block_rule TEXT,
     holding_period_seconds NUMERIC(18, 3),
+    mfe_pct NUMERIC(18, 6),
+    mae_pct NUMERIC(18, 6),
+    time_to_mfe_seconds NUMERIC(18, 3),
+    time_to_mae_seconds NUMERIC(18, 3),
+    horizon_returns_json JSONB,
+    both_brackets_in_one_bar BOOLEAN,
+    bar_coverage_ratio NUMERIC(8, 6),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_backtest_trades_run_card_scenario
         UNIQUE (run_id, thesis_card_id, entry_timing_scenario),
@@ -205,6 +212,13 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_trades (
         ),
     CONSTRAINT ck_backtest_trades_holding_non_negative
         CHECK (holding_period_seconds IS NULL OR holding_period_seconds >= 0),
+    CONSTRAINT ck_backtest_trades_excursion_times_non_negative
+        CHECK (
+            (time_to_mfe_seconds IS NULL OR time_to_mfe_seconds >= 0)
+            AND (time_to_mae_seconds IS NULL OR time_to_mae_seconds >= 0)
+        ),
+    CONSTRAINT ck_backtest_trades_bar_coverage_bounds
+        CHECK (bar_coverage_ratio IS NULL OR (bar_coverage_ratio >= 0 AND bar_coverage_ratio <= 1)),
     CONSTRAINT ck_backtest_trades_risk_block_rule
         CHECK (
             (exit_reason = 'risk_blocked' AND risk_block_rule IS NOT NULL)
@@ -216,6 +230,15 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_trades (
             OR (exit_at IS NOT NULL AND exit_price IS NOT NULL)
         )
 );
+
+ALTER TABLE backtester.t_backtest_trades
+    ADD COLUMN IF NOT EXISTS mfe_pct NUMERIC(18, 6),
+    ADD COLUMN IF NOT EXISTS mae_pct NUMERIC(18, 6),
+    ADD COLUMN IF NOT EXISTS time_to_mfe_seconds NUMERIC(18, 3),
+    ADD COLUMN IF NOT EXISTS time_to_mae_seconds NUMERIC(18, 3),
+    ADD COLUMN IF NOT EXISTS horizon_returns_json JSONB,
+    ADD COLUMN IF NOT EXISTS both_brackets_in_one_bar BOOLEAN,
+    ADD COLUMN IF NOT EXISTS bar_coverage_ratio NUMERIC(8, 6);
 
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_scenario_strategy
     ON backtester.t_backtest_trades (run_id, entry_timing_scenario, strategy, thesis_card_id);

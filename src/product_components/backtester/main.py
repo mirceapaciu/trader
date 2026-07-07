@@ -177,6 +177,7 @@ def _execution_model_from_settings(settings: BacktesterSettings) -> ExecutionMod
         take_profit_r=settings.take_profit_r,
         min_confidence=settings.min_confidence,
         entry_limit_slippage_bps=settings.entry_limit_slippage_bps,
+        excursion_horizon_minutes=settings.excursion_horizon_minutes,
         time_horizon_days_map=settings.time_horizon_days_map,
     )
 

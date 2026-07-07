@@ -113,6 +113,17 @@ class _ExecutionPlan:
     time_exit_at: datetime
 
 
+@dataclass(frozen=True)
+class _ExcursionDiagnostics:
+    mfe_pct: float
+    mae_pct: float
+    time_to_mfe_seconds: float
+    time_to_mae_seconds: float
+    horizon_returns_json: dict[str, float | None]
+    both_brackets_in_one_bar: bool
+    bar_coverage_ratio: float
+
+
 class BacktesterEngine:
     """Pure, deterministic backtest simulator with no DB or provider access.
 
@@ -481,6 +492,16 @@ class BacktesterEngine:
                 ticker_key=ticker_key,
                 reversal_after=reversal_after,
             )
+            diagnostics = self._excursion_diagnostics(
+                series=series,
+                entry_bar=entry_bar,
+                exit_bar=exit_bar,
+                direction=direction,
+                entry_price=entry_price,
+                stop=plan.stop_price,
+                target=plan.target_price,
+                execution=execution,
+            )
 
             exit_price_raw = exit_bar.close if exit_reason != ExitReason.STOP_LOSS else (
                 plan.stop_price
@@ -538,6 +559,13 @@ class BacktesterEngine:
                 exit_reason=exit_reason,
                 risk_block_rule=None,
                 holding_period_seconds=holding,
+                mfe_pct=diagnostics.mfe_pct,
+                mae_pct=diagnostics.mae_pct,
+                time_to_mfe_seconds=diagnostics.time_to_mfe_seconds,
+                time_to_mae_seconds=diagnostics.time_to_mae_seconds,
+                horizon_returns_json=diagnostics.horizon_returns_json,
+                both_brackets_in_one_bar=diagnostics.both_brackets_in_one_bar,
+                bar_coverage_ratio=diagnostics.bar_coverage_ratio,
             )
             trades.append(trade)
             open_positions.append(
@@ -753,6 +781,134 @@ class BacktesterEngine:
                 return bar, ExitReason.TIME_STOP
 
         return last_bar, ExitReason.WINDOW_END
+
+    def _excursion_diagnostics(
+        self,
+        *,
+        series: BarSeries,
+        entry_bar: Bar,
+        exit_bar: Bar,
+        direction: str,
+        entry_price: float,
+        stop: float,
+        target: float,
+        execution: ExecutionModel,
+    ) -> _ExcursionDiagnostics:
+        entry_at = _to_utc(entry_bar.start_at)
+        exit_at = _to_utc(exit_bar.start_at)
+        holding_bars = [
+            bar
+            for bar in series.iter_after(entry_at)
+            if _to_utc(bar.start_at) <= exit_at
+        ]
+
+        mfe_pct = 0.0
+        mae_pct = 0.0
+        time_to_mfe = 0.0
+        time_to_mae = 0.0
+        both_brackets = False
+
+        for bar in holding_bars:
+            bar_at = _to_utc(bar.start_at)
+            favorable, adverse = _bar_excursions(
+                bar=bar,
+                direction=direction,
+                entry_price=entry_price,
+            )
+            elapsed = (bar_at - entry_at).total_seconds()
+            if favorable > mfe_pct:
+                mfe_pct = favorable
+                time_to_mfe = elapsed
+            if adverse < mae_pct:
+                mae_pct = adverse
+                time_to_mae = elapsed
+            hit_stop = bar.low <= stop if direction == "buy" else bar.high >= stop
+            hit_target = bar.high >= target if direction == "buy" else bar.low <= target
+            both_brackets = both_brackets or (hit_stop and hit_target)
+
+        return _ExcursionDiagnostics(
+            mfe_pct=mfe_pct,
+            mae_pct=mae_pct,
+            time_to_mfe_seconds=time_to_mfe,
+            time_to_mae_seconds=time_to_mae,
+            horizon_returns_json=self._horizon_returns(
+                series=series,
+                entry_at=entry_at,
+                entry_price=entry_price,
+                direction=direction,
+                execution=execution,
+            ),
+            both_brackets_in_one_bar=both_brackets,
+            bar_coverage_ratio=self._bar_coverage_ratio(
+                present_bars=holding_bars,
+                entry_at=entry_at,
+                exit_at=exit_at,
+                execution=execution,
+            ),
+        )
+
+    def _horizon_returns(
+        self,
+        *,
+        series: BarSeries,
+        entry_at: datetime,
+        entry_price: float,
+        direction: str,
+        execution: ExecutionModel,
+    ) -> dict[str, float | None]:
+        interval = _bar_interval_delta(execution.bar_interval)
+        returns: dict[str, float | None] = {}
+        for horizon_minutes in execution.excursion_horizon_minutes:
+            target_at = self._rth_minutes_after(entry_at, horizon_minutes)
+            if target_at > _to_utc(self._params.window_end_at):
+                returns[str(horizon_minutes)] = None
+                continue
+            horizon_bar: Bar | None = None
+            for bar in series.iter_after(entry_at):
+                bar_at = _to_utc(bar.start_at)
+                if bar_at + interval <= target_at:
+                    horizon_bar = bar
+                    continue
+                break
+            if horizon_bar is None:
+                returns[str(horizon_minutes)] = None
+                continue
+            gross_return = (horizon_bar.close - entry_price) / entry_price
+            if direction == "sell":
+                gross_return *= -1
+            returns[str(horizon_minutes)] = gross_return
+        return returns
+
+    def _rth_minutes_after(self, start_at: datetime, minutes: int) -> datetime:
+        if minutes <= 0:
+            return _to_utc(start_at)
+        current = _to_utc(start_at)
+        counted = 0
+        while counted < minutes:
+            current += timedelta(minutes=1)
+            if self._calendar.is_rth(current):
+                counted += 1
+        return current
+
+    def _bar_coverage_ratio(
+        self,
+        *,
+        present_bars: list[Bar],
+        entry_at: datetime,
+        exit_at: datetime,
+        execution: ExecutionModel,
+    ) -> float:
+        interval = _bar_interval_delta(execution.bar_interval)
+        expected = 0
+        slot_at = _to_utc(entry_at) + interval
+        while slot_at <= _to_utc(exit_at):
+            if self._calendar.is_rth(slot_at):
+                expected += 1
+            slot_at += interval
+        if expected == 0:
+            return 1.0
+        present = sum(1 for bar in present_bars if self._calendar.is_rth(_to_utc(bar.start_at)))
+        return min(1.0, present / expected)
 
     def _opposing_reversal_at(
         self,
@@ -1109,6 +1265,29 @@ def _signal_accuracy(trades: list[SimulatedTrade]) -> float | None:
         return None
     correct = sum(1 for t in closed if (t.net_pnl or 0.0) > 0)
     return correct / len(closed)
+
+
+def _bar_excursions(*, bar: Bar, direction: str, entry_price: float) -> tuple[float, float]:
+    if direction == "buy":
+        return (
+            (bar.high - entry_price) / entry_price,
+            (bar.low - entry_price) / entry_price,
+        )
+    return (
+        (entry_price - bar.low) / entry_price,
+        (entry_price - bar.high) / entry_price,
+    )
+
+
+def _bar_interval_delta(interval: str) -> timedelta:
+    normalized = interval.strip().lower()
+    if normalized.endswith("m"):
+        return timedelta(minutes=int(normalized[:-1]))
+    if normalized.endswith("h"):
+        return timedelta(hours=int(normalized[:-1]))
+    if normalized.endswith("d"):
+        return timedelta(days=int(normalized[:-1]))
+    raise ValueError(f"unsupported_bar_interval:{interval}")
 
 
 def _trades_flipped(

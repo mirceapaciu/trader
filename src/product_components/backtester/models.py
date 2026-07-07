@@ -60,6 +60,7 @@ class ExecutionModel:
     take_profit_r: float = 2.0
     min_confidence: float = 0.6
     entry_limit_slippage_bps: float = 5.0
+    excursion_horizon_minutes: tuple[int, ...] = (30, 60, 120, 240, 390, 1170, 1950)
     time_horizon_days_map: dict[str, int] = field(
         default_factory=lambda: {"swing_1d_5d": 5}
     )
@@ -87,6 +88,7 @@ class ExecutionModel:
             "take_profit_r": self.take_profit_r,
             "min_confidence": self.min_confidence,
             "entry_limit_slippage_bps": self.entry_limit_slippage_bps,
+            "excursion_horizon_minutes": list(self.excursion_horizon_minutes),
             "time_horizon_days_map": dict(self.time_horizon_days_map),
         }
 
@@ -193,6 +195,13 @@ class SimulatedTrade:
     exit_reason: ExitReason
     risk_block_rule: str | None
     holding_period_seconds: float | None
+    mfe_pct: float | None = None
+    mae_pct: float | None = None
+    time_to_mfe_seconds: float | None = None
+    time_to_mae_seconds: float | None = None
+    horizon_returns_json: dict[str, float | None] | None = None
+    both_brackets_in_one_bar: bool | None = None
+    bar_coverage_ratio: float | None = None
 
     @property
     def is_closed(self) -> bool:

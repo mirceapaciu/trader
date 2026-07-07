@@ -33,6 +33,7 @@ class BacktesterSettings:
     take_profit_r: float
     min_confidence: float
     entry_limit_slippage_bps: float
+    excursion_horizon_minutes: tuple[int, ...]
     time_horizon_days_map: dict[str, int]
     max_position_usd: float
     max_positions: int
@@ -98,6 +99,10 @@ class BacktesterSettings:
             take_profit_r=_float_env("TAKE_PROFIT_R", 2.0),
             min_confidence=_float_env("TRADE_EXECUTOR_MIN_CONFIDENCE", 0.6),
             entry_limit_slippage_bps=_float_env("ENTRY_LIMIT_SLIPPAGE_BPS", 5.0),
+            excursion_horizon_minutes=_int_tuple_env(
+                "BACKTESTER_EXCURSION_HORIZON_MINUTES",
+                (30, 60, 120, 240, 390, 1170, 1950),
+            ),
             time_horizon_days_map=_horizon_map_env("TIME_HORIZON_DAYS_MAP", {"swing_1d_5d": 5}),
             max_position_usd=_float_env("MAX_POSITION_SIZE", _float_env("BACKTESTER_MAX_POSITION_USD", 1000.0)),
             max_positions=_int_env("MAX_POSITIONS", 5),

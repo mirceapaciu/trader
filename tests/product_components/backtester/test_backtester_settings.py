@@ -15,6 +15,7 @@ def test_from_env_defaults():
     assert settings.execution_mode == "live_parity"
     assert settings.delay_buckets_seconds == (300, 900, 3600, 14400)
     assert settings.bar_interval == "1m"
+    assert settings.excursion_horizon_minutes == (30, 60, 120, 240, 390, 1170, 1950)
     assert settings.time_horizon_days_map == {"swing_1d_5d": 5}
     assert settings.ideal_fetch_delay_seconds == 120
     assert settings.ideal_thesis_delay_seconds == 60
@@ -23,6 +24,7 @@ def test_from_env_defaults():
 def test_from_env_parses_delay_buckets_and_flags():
     env = {
         "BACKTESTER_DELAY_BUCKETS_SECONDS": "60, 120 ,600",
+        "BACKTESTER_EXCURSION_HORIZON_MINUTES": "1, 5, 15",
         "BACKTESTER_PERSIST_EQUITY_POINTS": "false",
         "BACKTESTER_MAX_POSITION_USD": "2500",
         "MAX_POSITION_SIZE": "3000",
@@ -33,6 +35,7 @@ def test_from_env_parses_delay_buckets_and_flags():
     with mock.patch.dict(os.environ, env, clear=True):
         settings = BacktesterSettings.from_env()
     assert settings.delay_buckets_seconds == (60, 120, 600)
+    assert settings.excursion_horizon_minutes == (1, 5, 15)
     assert settings.persist_equity_points is False
     assert settings.max_position_usd == 3000.0
     assert settings.max_positions == 8
