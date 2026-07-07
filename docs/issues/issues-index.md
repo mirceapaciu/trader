@@ -23,3 +23,5 @@ llm_model fields | new | docs/issues/issues-detail/260626-02.md |
 | 260627-01 | Move thesis reprocessing out of Monitoring UI into ThesisBuilder via Redis command stream | new | docs/issues/issues-detail/260627-01.md |
 | 260628-01 | Regeneration backtest mode always fails and is an unimplemented no-op | new | docs/issues/issues-detail/260628-01.md |
 | 260628-02 | Backtest background-thread failures leave the UI stuck on "Running…" forever | new | docs/issues/issues-detail/260628-02.md |
+| 260707-01 | Backtester should invoke TradeExecutor's pure decision logic instead of reimplementing diverging trading rules | new | docs/issues/issues-detail/260707-01.md |
+| 260707-02 | Backtester must persist per-trade excursion diagnostics required by backtest verification | new | docs/issues/issues-detail/260707-02.md |
