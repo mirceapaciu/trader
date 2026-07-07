@@ -23,6 +23,11 @@ class CardPopulation(StrEnum):
     REJECTED_ONLY = "rejected_only"
 
 
+class ExecutionMode(StrEnum):
+    LIVE_PARITY = "live_parity"
+    LEGACY_FLAT_PERCENT = "legacy_flat_percent"
+
+
 class ExitReason(StrEnum):
     TAKE_PROFIT = "take_profit"
     STOP_LOSS = "stop_loss"
@@ -35,6 +40,7 @@ class ExitReason(StrEnum):
 
 @dataclass(frozen=True)
 class ExecutionModel:
+    mode: ExecutionMode | str = ExecutionMode.LIVE_PARITY
     commission_model: str = "per_share"
     commission_per_share_usd: float = 0.005
     commission_min_usd: float = 1.0
@@ -50,9 +56,21 @@ class ExecutionModel:
     take_profit_pct: float = 0.03
     stop_loss_pct: float = 0.015
     time_stop_seconds: int = 4 * 60 * 60
+    atr_stop_mult: float = 1.5
+    take_profit_r: float = 2.0
+    min_confidence: float = 0.6
+    entry_limit_slippage_bps: float = 5.0
+    time_horizon_days_map: dict[str, int] = field(
+        default_factory=lambda: {"swing_1d_5d": 5}
+    )
+
+    @property
+    def execution_mode(self) -> ExecutionMode:
+        return ExecutionMode(self.mode)
 
     def snapshot(self) -> dict[str, Any]:
         return {
+            "mode": self.execution_mode.value,
             "commission_model": self.commission_model,
             "commission_per_share_usd": self.commission_per_share_usd,
             "commission_min_usd": self.commission_min_usd,
@@ -65,13 +83,20 @@ class ExecutionModel:
             "take_profit_pct": self.take_profit_pct,
             "stop_loss_pct": self.stop_loss_pct,
             "time_stop_seconds": self.time_stop_seconds,
+            "atr_stop_mult": self.atr_stop_mult,
+            "take_profit_r": self.take_profit_r,
+            "min_confidence": self.min_confidence,
+            "entry_limit_slippage_bps": self.entry_limit_slippage_bps,
+            "time_horizon_days_map": dict(self.time_horizon_days_map),
         }
 
 
 @dataclass(frozen=True)
 class RiskModel:
     max_position_usd: float = 1000.0
+    max_positions: int = 5
     max_portfolio_exposure_usd: float = 5000.0
+    max_sector_exposure_usd: float = 2500.0
     max_positions_per_sector: int = 3
     max_daily_trades: int = 10
     daily_loss_limit_usd: float = 200.0
@@ -80,7 +105,9 @@ class RiskModel:
     def snapshot(self) -> dict[str, Any]:
         return {
             "max_position_usd": self.max_position_usd,
+            "max_positions": self.max_positions,
             "max_portfolio_exposure_usd": self.max_portfolio_exposure_usd,
+            "max_sector_exposure_usd": self.max_sector_exposure_usd,
             "max_positions_per_sector": self.max_positions_per_sector,
             "max_daily_trades": self.max_daily_trades,
             "daily_loss_limit_usd": self.daily_loss_limit_usd,

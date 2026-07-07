@@ -19,6 +19,23 @@ from src.core_components.backtest_engine import (
     win_rate,
 )
 from src.product_components.thesis_builder.export import ExportedThesisCard
+from src.product_components.trade_executor.models import (
+    DecisionReason,
+    ThesisCard,
+)
+from src.product_components.trade_executor.pipeline import (
+    DailyRiskState,
+    PortfolioState,
+    construct_levels,
+    entry_limit_price,
+    evaluate_admission_gate,
+    evaluate_risk_gate,
+    size_position,
+)
+from src.product_components.trade_executor.trading_calendar import (
+    TradingCalendar,
+    build_default_calendar,
+)
 
 from .clients import BarsProvider, CardsProvider
 from .models import (
@@ -27,6 +44,7 @@ from .models import (
     CardPopulation,
     CardSnapshot,
     EquityPoint,
+    ExecutionMode,
     ExecutionModel,
     ExitReason,
     RiskModel,
@@ -48,10 +66,29 @@ def _decision_state(card: ExportedThesisCard) -> str:
     return "approved" if card.validation_status == "valid" else "rejected"
 
 
+def _to_trade_executor_card(card: ExportedThesisCard) -> ThesisCard:
+    return ThesisCard(
+        thesis_card_id=card.id,
+        ticker=card.ticker,
+        exchange_code=card.exchange_code,
+        direction=card.direction,
+        time_horizon=card.time_horizon,
+        strategy=card.strategy,
+        confidence=card.confidence,
+        max_loss_usd=card.risk_max_loss_usd,
+        stop_condition=card.risk_stop_condition,
+        invalidation_condition=card.risk_invalidation_condition,
+        source_analysis_ids=[],
+        created_at=_to_utc(card.created_at),
+        expires_at=_to_utc(card.expires_at),
+    )
+
+
 @dataclass(frozen=True)
 class _OpenPosition:
     notional: float
     exit_at: datetime
+    ticker_key: str
 
 
 @dataclass(frozen=True)
@@ -64,6 +101,16 @@ class _CardTiming:
     news_fetch_delay_seconds: float | None
     thesis_build_delay_seconds: float | None
     total_pipeline_delay_seconds: float | None
+
+
+@dataclass(frozen=True)
+class _ExecutionPlan:
+    quantity: float
+    notional: float
+    entry_price: float
+    stop_price: float
+    target_price: float
+    time_exit_at: datetime
 
 
 class BacktesterEngine:
@@ -79,10 +126,12 @@ class BacktesterEngine:
         params: BacktestRunParams,
         cards_provider: CardsProvider,
         bars_provider: BarsProvider,
+        trading_calendar: TradingCalendar | None = None,
     ) -> None:
         self._params = params
         self._cards = cards_provider
         self._bars = bars_provider
+        self._calendar = trading_calendar or build_default_calendar()
 
     def run(self) -> BacktestResult:
         params = self._params
@@ -309,6 +358,7 @@ class BacktesterEngine:
         open_positions: list[_OpenPosition] = []
         daily_trade_count: dict[str, int] = {}
         daily_realized_pnl: dict[str, float] = {}
+        daily_halted: dict[str, bool] = {}
         last_trade_at: dict[str, datetime] = {}
         cooldown = timedelta(minutes=risk.ticker_cooldown_minutes)
         bars_cache: dict[str, BarSeries] = {}
@@ -341,18 +391,22 @@ class BacktesterEngine:
                 continue
 
             day_key = t_entry.date().isoformat()
+            execution_mode = execution.execution_mode
 
             # Portfolio/risk gates (binding constraint => risk_blocked).
             block_rule = None
             prev_trade = last_trade_at.get(ticker_key)
             current_exposure = sum(p.notional for p in open_positions)
-            if prev_trade is not None and t_entry - prev_trade < cooldown:
+            has_open_or_working_position = any(
+                p.ticker_key == ticker_key for p in open_positions
+            )
+            if execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and prev_trade is not None and t_entry - prev_trade < cooldown:
                 block_rule = "ticker_cooldown"
-            elif daily_trade_count.get(day_key, 0) >= risk.max_daily_trades:
+            elif execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and daily_trade_count.get(day_key, 0) >= risk.max_daily_trades:
                 block_rule = "max_daily_trades"
-            elif daily_realized_pnl.get(day_key, 0.0) <= -risk.daily_loss_limit_usd:
+            elif execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and daily_realized_pnl.get(day_key, 0.0) <= -risk.daily_loss_limit_usd:
                 block_rule = "daily_loss_limit"
-            elif current_exposure >= risk.max_portfolio_exposure_usd:
+            elif execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and current_exposure >= risk.max_portfolio_exposure_usd:
                 block_rule = "max_portfolio_exposure"
 
             if block_rule is not None:
@@ -363,41 +417,76 @@ class BacktesterEngine:
 
             # Entry fill (market order at first bar at/after t_entry open).
             entry_bar = series.first_at_or_after(t_entry)
-            quantity = self._position_size(card, entry_bar.open, risk)
-            notional = quantity * entry_bar.open
-            if notional > risk.max_portfolio_exposure_usd - current_exposure:
-                # Per-position portfolio share cap binds for this candidate.
-                trades.append(
-                    self._risk_blocked_trade(
-                        card, scenario, timing, "max_portfolio_exposure"
-                    )
+            if execution_mode == ExecutionMode.LIVE_PARITY:
+                plan_or_rule = self._live_parity_execution_plan(
+                    card=card,
+                    entry_bar=entry_bar,
+                    t_entry=t_entry,
+                    execution=execution,
+                    risk=risk,
+                    current_exposure=current_exposure,
+                    open_positions=open_positions,
+                    has_open_or_working_position=has_open_or_working_position,
+                    daily_trade_count=daily_trade_count,
+                    daily_realized_pnl=daily_realized_pnl,
+                    daily_halted=daily_halted,
+                    day_key=day_key,
                 )
-                continue
+                if isinstance(plan_or_rule, str):
+                    trades.append(
+                        self._risk_blocked_trade(card, scenario, timing, plan_or_rule)
+                    )
+                    continue
+                plan = plan_or_rule
+            else:
+                quantity = self._position_size(card, entry_bar.open, risk)
+                notional = quantity * entry_bar.open
+                if notional > risk.max_portfolio_exposure_usd - current_exposure:
+                    # Per-position portfolio share cap binds for this candidate.
+                    trades.append(
+                        self._risk_blocked_trade(
+                            card, scenario, timing, "max_portfolio_exposure"
+                        )
+                    )
+                    continue
+                entry_price = apply_slippage(
+                    entry_bar.open,
+                    execution.entry_slippage_bps,
+                    worse_is_higher=(card.direction == "buy"),
+                )
+                plan = _ExecutionPlan(
+                    quantity=quantity,
+                    notional=notional,
+                    entry_price=entry_price,
+                    stop_price=self._stop_price(entry_price, card.direction, execution),
+                    target_price=self._target_price(entry_price, card.direction, execution),
+                    time_exit_at=_to_utc(entry_bar.start_at)
+                    + timedelta(seconds=execution.time_stop_seconds),
+                )
 
             direction = card.direction
-            entry_price = apply_slippage(
-                entry_bar.open,
-                execution.entry_slippage_bps,
-                worse_is_higher=(direction == "buy"),
-            )
+            entry_price = plan.entry_price
+            quantity = plan.quantity
+            notional = plan.notional
             entry_commission = commission_model.cost(quantity, entry_price)
 
             exit_bar, exit_reason = self._find_exit(
                 series=series,
                 entry_bar=entry_bar,
                 direction=direction,
-                entry_price=entry_price,
                 execution=execution,
-                t_entry=t_entry,
+                stop=plan.stop_price,
+                target=plan.target_price,
+                time_exit_at=plan.time_exit_at,
                 ticker_key=ticker_key,
                 reversal_after=reversal_after,
             )
 
             exit_price_raw = exit_bar.close if exit_reason != ExitReason.STOP_LOSS else (
-                self._stop_price(entry_price, direction, execution)
+                plan.stop_price
             )
             if exit_reason == ExitReason.TAKE_PROFIT:
-                exit_price_raw = self._target_price(entry_price, direction, execution)
+                exit_price_raw = plan.target_price
             exit_price = apply_slippage(
                 exit_price_raw,
                 execution.exit_slippage_bps,
@@ -452,7 +541,11 @@ class BacktesterEngine:
             )
             trades.append(trade)
             open_positions.append(
-                _OpenPosition(notional=notional, exit_at=_to_utc(exit_bar.start_at))
+                _OpenPosition(
+                    notional=notional,
+                    exit_at=_to_utc(exit_bar.start_at),
+                    ticker_key=ticker_key,
+                )
             )
 
             daily_trade_count[day_key] = daily_trade_count.get(day_key, 0) + 1
@@ -477,6 +570,136 @@ class BacktesterEngine:
             return 0.0
         return budget / price
 
+    def _live_parity_execution_plan(
+        self,
+        *,
+        card: ExportedThesisCard,
+        entry_bar: Bar,
+        t_entry: datetime,
+        execution: ExecutionModel,
+        risk: RiskModel,
+        current_exposure: float,
+        open_positions: list[_OpenPosition],
+        has_open_or_working_position: bool,
+        daily_trade_count: dict[str, int],
+        daily_realized_pnl: dict[str, float],
+        daily_halted: dict[str, bool],
+        day_key: str,
+    ) -> _ExecutionPlan | str:
+        thesis_card = _to_trade_executor_card(card)
+        admission = evaluate_admission_gate(
+            card=thesis_card,
+            now=t_entry,
+            min_confidence=execution.min_confidence,
+            in_watchlist=True,
+            review_state="approved" if _decision_state(card) == "approved" else "rejected",
+            has_open_or_working_position=has_open_or_working_position,
+            horizon_map=execution.time_horizon_days_map,
+        )
+        if not admission.passed:
+            return admission.reason.value
+
+        entry = entry_limit_price(
+            direction=card.direction,
+            bid=entry_bar.open,
+            ask=entry_bar.open,
+            slippage_bps=execution.entry_limit_slippage_bps,
+        )
+        atr_20d = self._atr_20d_before_entry(card, t_entry)
+        if atr_20d is None:
+            return DecisionReason.ATR_UNAVAILABLE.value
+
+        levels = construct_levels(
+            direction=card.direction,
+            entry=entry,
+            atr_20d=atr_20d,
+            atr_stop_mult=execution.atr_stop_mult,
+            take_profit_r=execution.take_profit_r,
+        )
+        order = size_position(
+            max_loss_usd=card.risk_max_loss_usd,
+            entry=levels.entry,
+            stop=levels.stop,
+            max_position_size=risk.max_position_usd,
+            portfolio_headroom=risk.max_portfolio_exposure_usd - current_exposure,
+        )
+        if order.quantity < 1:
+            return DecisionReason.SIZE_BELOW_ONE_SHARE.value
+
+        daily = DailyRiskState(
+            realized_pnl=daily_realized_pnl.get(day_key, 0.0),
+            unrealized_pnl=0.0,
+            trades_count=daily_trade_count.get(day_key, 0),
+            halted=daily_halted.get(day_key, False),
+        )
+        portfolio = PortfolioState(
+            open_and_working_count=len(open_positions),
+            deployed_capital=current_exposure,
+            sector_exposure=0.0,
+            sector_known=False,
+        )
+        risk_gate = evaluate_risk_gate(
+            new_quantity=order.quantity,
+            entry=levels.entry,
+            portfolio=portfolio,
+            daily=daily,
+            max_positions=risk.max_positions,
+            max_portfolio_exposure=risk.max_portfolio_exposure_usd,
+            max_sector_exposure=risk.max_sector_exposure_usd,
+            daily_loss_limit=risk.daily_loss_limit_usd,
+            max_daily_trades=risk.max_daily_trades,
+        )
+        if not risk_gate.passed:
+            if risk_gate.details.get("halt_triggered"):
+                daily_halted[day_key] = True
+            return risk_gate.reason.value
+
+        trading_days = execution.time_horizon_days_map[card.time_horizon]
+        return _ExecutionPlan(
+            quantity=order.quantity,
+            notional=order.notional,
+            entry_price=levels.entry,
+            stop_price=levels.stop,
+            target_price=levels.target,
+            time_exit_at=self._calendar.time_exit_at(
+                fill_time=_to_utc(entry_bar.start_at),
+                trading_days=trading_days,
+            ),
+        )
+
+    def _atr_20d_before_entry(
+        self, card: ExportedThesisCard, t_entry: datetime
+    ) -> float | None:
+        end = _to_utc(t_entry)
+        bars = self._bars.historical_bars(
+            ticker=card.ticker,
+            exchange_code=card.exchange_code,
+            interval="1d",
+            start=end - timedelta(days=80),
+            end=end,
+        )
+        entry_date = end.date()
+        ordered = sorted(
+            (
+                bar
+                for bar in bars
+                if _to_utc(bar.start_at).date() < entry_date
+            ),
+            key=lambda bar: _to_utc(bar.start_at),
+        )
+        if len(ordered) < 21:
+            return None
+        true_ranges: list[float] = []
+        for previous, current in zip(ordered[-21:-1], ordered[-20:]):
+            true_ranges.append(
+                max(
+                    current.high - current.low,
+                    abs(current.high - previous.close),
+                    abs(current.low - previous.close),
+                )
+            )
+        return sum(true_ranges) / 20
+
     def _target_price(
         self, entry_price: float, direction: str, execution: ExecutionModel
     ) -> float:
@@ -497,17 +720,13 @@ class BacktesterEngine:
         series: BarSeries,
         entry_bar: Bar,
         direction: str,
-        entry_price: float,
         execution: ExecutionModel,
-        t_entry: datetime,
+        stop: float,
+        target: float,
+        time_exit_at: datetime,
         ticker_key: str,
         reversal_after: dict[str, list[tuple[datetime, str]]],
     ) -> tuple[Bar, ExitReason]:
-        target = self._target_price(entry_price, direction, execution)
-        stop = self._stop_price(entry_price, direction, execution)
-        time_stop_at = _to_utc(entry_bar.start_at) + timedelta(
-            seconds=execution.time_stop_seconds
-        )
         opposing = self._opposing_reversal_at(
             ticker_key, direction, reversal_after, after=_to_utc(entry_bar.start_at)
         )
@@ -530,7 +749,7 @@ class BacktesterEngine:
                 return bar, ExitReason.TAKE_PROFIT
             if opposing is not None and bar_at >= opposing:
                 return bar, ExitReason.REVERSAL
-            if bar_at >= time_stop_at:
+            if bar_at >= _to_utc(time_exit_at):
                 return bar, ExitReason.TIME_STOP
 
         return last_bar, ExitReason.WINDOW_END

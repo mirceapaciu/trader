@@ -22,8 +22,10 @@ Logical fields:
 - `card_population`: card scope simulated (`all`, `approved_only`, or `rejected_only`).
 - `strategies_requested`: optional strategy subset requested for the run.
 - `initial_capital`: starting simulated capital.
-- `execution_model_snapshot_json`: immutable slippage/commission/order-validity parameters used.
-- `risk_model_snapshot_json`: immutable sizing/exposure/cooldown/loss-limit parameters used.
+- `execution_model_snapshot_json`: immutable execution mode plus slippage/commission/order-validity
+  and live-parity or legacy exit parameters used.
+- `risk_model_snapshot_json`: immutable sizing/exposure/max-position/cooldown/loss-limit parameters
+  used.
 - `thesis_config_snapshot_json`: regeneration-mode ThesisBuilder override config; null in replay mode.
 - `run_note`: optional operator note from trigger payload.
 - `status`: `running`, `completed`, or `failed`.

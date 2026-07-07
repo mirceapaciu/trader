@@ -185,12 +185,22 @@ Look-ahead bias invalidates a backtest, so the following are hard rules.
 ## 5. Execution Simulation Model
 
 The simulator advances a per-instrument chronological clock over historical bars and applies a
-deterministic fill model. The model is configurable but defaults to conservative assumptions.
+deterministic fill model. The model is configurable and has two modes:
+
+- `live_parity` (default): invokes the TradeExecutor's pure `trade_executor.pipeline` functions for
+  admission, ATR/R bracket construction, risk-box sizing, and portfolio/daily risk gates. The
+  Backtester remains offline: it does not import the TradeExecutor service, broker, repository,
+  Redis, or live tables.
+- `legacy_flat_percent`: preserves the earlier experimental simulator with confidence-fractional
+  sizing, flat percent brackets, and a fixed time stop.
 
 ### 5.1 Entry
 
-- `market` order: fills at the open of the first bar at or after `t_entry`, adjusted by configured
-  entry slippage in basis points (adverse direction).
+- `live_parity`: approximates bid/ask from OHLCV as `bid = ask = first_entry_bar.open`, calls
+  `entry_limit_price`, then simulates the fill from historical bars. This preserves the live
+  marketable-limit math while documenting that historical OHLCV has no quote spread.
+- `legacy_flat_percent`: fills at the open of the first bar at or after `t_entry`, adjusted by
+  configured entry slippage in basis points (adverse direction).
 - `limit` order: fills only if the bar range crosses the limit price within the configured order
   validity window; otherwise the candidate expires unfilled and is recorded with
   `exit_reason = not_filled`.
@@ -198,12 +208,15 @@ deterministic fill model. The model is configurable but defaults to conservative
 
 ### 5.2 Exit
 
-Exit rules are evaluated per bar in chronological order, reusing the strategy rules from
-`docs/trading-strategies.md`:
+Exit rules are evaluated per bar in chronological order:
 
-- take-profit target,
-- stop-loss,
-- time stop (max holding period),
+- `live_parity` stop and take-profit levels come from `construct_levels` using ATR-20 daily bars
+  available before the entry session, `ATR_STOP_MULT`, and `TAKE_PROFIT_R`.
+- `live_parity` time exits come from the TradeExecutor trading calendar and
+  `TIME_HORIZON_DAYS_MAP`, so a `swing_1d_5d` card is held on a trading-day horizon rather than
+  force-closed after four hours.
+- `legacy_flat_percent` uses the old flat take-profit/stop percentages and fixed
+  `time_stop_seconds`.
 - reversal exit (a later opposing approved card for the same instrument).
 
 First-touch wins. When a single bar's range touches both the stop and the target (intrabar
@@ -220,13 +233,19 @@ the position is closed at the last available bar with `exit_reason = window_end`
 
 ## 6. Risk, Sizing, and Portfolio Construction
 
-The Backtester applies the same logical rules as the live risk manager so results are representative:
+In `live_parity`, the Backtester maps simulated state onto the TradeExecutor pure gate inputs:
 
-- Fixed-fractional position sizing keyed on card confidence/signal strength.
-- Per-ticker max position size and per-position portfolio share cap.
-- Max total portfolio exposure and max positions per sector.
-- Daily trade cap and per-ticker cooldown.
-- Daily loss circuit breaker: once tripped on a simulated day, no new positions open that day.
+- Admission uses `evaluate_admission_gate`: hold/expiry/min-confidence/watchlist/review/duplicate
+  position/horizon checks. Historical watchlist snapshots are not available, so the Backtester uses
+  an explicit assume-in-watchlist flag and records this as a fidelity limit.
+- Sizing uses `size_position`: `floor(risk_max_loss_usd / |entry - stop|)`, clamped by per-position
+  and portfolio headroom caps.
+- Risk uses `evaluate_risk_gate`: max positions, max portfolio exposure, best-effort sector cap,
+  daily trade cap, and the latching daily-loss halt. Sector exposure is marked unknown until a
+  historical sector snapshot source exists, so the sector cap is skipped by design.
+
+In `legacy_flat_percent`, the Backtester keeps the previous fixed-fractional sizing, exposure caps,
+cooldown, daily trade cap, and daily loss circuit breaker for regression and counterfactual runs.
 
 When a card cannot be opened because a portfolio constraint is binding, the trade is recorded with
 `exit_reason = risk_blocked` and the binding rule is captured for attribution. Sizing and risk
@@ -302,8 +321,10 @@ Trigger payload:
 - `card_population` (`all` default, `approved_only`, or `rejected_only`).
 - `strategies` (optional subset; default all strategies present in the card set).
 - `initial_capital`.
-- `execution_model_snapshot_json` (slippage, commission, order validity) — defaults applied when omitted.
-- `risk_model_snapshot_json` (sizing, exposure caps, cooldown, loss limit) — defaults applied when omitted.
+- `execution_model_snapshot_json` (mode, slippage, commission, order validity, and live-parity or
+  legacy exit parameters) — defaults applied when omitted.
+- `risk_model_snapshot_json` (sizing, exposure caps, max positions, cooldown, loss limit) — defaults
+  applied when omitted.
 - `thesis_config_snapshot_json` (regeneration mode only; the ThesisBuilder override config to replay).
 - `run_note` (optional).
 

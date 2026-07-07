@@ -24,6 +24,7 @@ from .models import (
     BacktestMode,
     BacktestRunParams,
     CardPopulation,
+    ExecutionMode,
     ExecutionModel,
     RiskModel,
     TimingScenario,
@@ -163,6 +164,7 @@ def main() -> None:
 
 def _execution_model_from_settings(settings: BacktesterSettings) -> ExecutionModel:
     return ExecutionModel(
+        mode=ExecutionMode(settings.execution_mode),
         commission_model=settings.commission_model,
         commission_per_share_usd=settings.commission_per_share_usd,
         commission_min_usd=settings.commission_min_usd,
@@ -171,13 +173,20 @@ def _execution_model_from_settings(settings: BacktesterSettings) -> ExecutionMod
         limit_order_validity_bars=settings.limit_order_validity_bars,
         intrabar_stop_before_target=settings.intrabar_stop_before_target,
         bar_interval=settings.bar_interval,
+        atr_stop_mult=settings.atr_stop_mult,
+        take_profit_r=settings.take_profit_r,
+        min_confidence=settings.min_confidence,
+        entry_limit_slippage_bps=settings.entry_limit_slippage_bps,
+        time_horizon_days_map=settings.time_horizon_days_map,
     )
 
 
 def _risk_model_from_settings(settings: BacktesterSettings) -> RiskModel:
     return RiskModel(
         max_position_usd=settings.max_position_usd,
+        max_positions=settings.max_positions,
         max_portfolio_exposure_usd=settings.max_portfolio_exposure_usd,
+        max_sector_exposure_usd=settings.max_sector_exposure_usd,
         max_positions_per_sector=settings.max_positions_per_sector,
         max_daily_trades=settings.max_daily_trades,
         daily_loss_limit_usd=settings.daily_loss_limit_usd,

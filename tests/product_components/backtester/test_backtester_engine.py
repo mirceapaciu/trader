@@ -7,6 +7,8 @@ from src.product_components.backtester.engine import BacktesterEngine
 from src.product_components.backtester.models import (
     BacktestRunParams,
     CardPopulation,
+    ExecutionMode,
+    ExecutionModel,
     ExitReason,
     TimingScenario,
 )
@@ -90,6 +92,7 @@ def _params(timing=TimingScenario.IDEAL, population=CardPopulation.ALL):
         window_end_at=T0 + timedelta(hours=6),
         timing_scenario=timing,
         card_population=population,
+        execution_model=ExecutionModel(mode=ExecutionMode.LEGACY_FLAT_PERCENT),
     )
 
 

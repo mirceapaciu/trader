@@ -12,6 +12,9 @@ from src.product_components.backtester.models import (
     BacktestMode,
     BacktestRunParams,
     CardPopulation,
+    ExecutionMode,
+    ExecutionModel,
+    RiskModel,
     TimingScenario,
 )
 from src.product_components.backtester.regeneration import ThesisRegenerationProvider
@@ -140,6 +143,8 @@ class BacktestRunCoordinator:
             initial_capital=initial_capital,
             ideal_fetch_delay_seconds=settings.ideal_fetch_delay_seconds,
             ideal_thesis_delay_seconds=settings.ideal_thesis_delay_seconds,
+            execution_model=_execution_model_from_settings(settings),
+            risk_model=_risk_model_from_settings(settings),
             run_note=request.run_note,
             llm_model=(request.llm_model or settings.llm_model),
             llm_max_tokens_per_run=settings.llm_max_tokens_per_run,
@@ -235,6 +240,38 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _execution_model_from_settings(settings: BacktesterSettings) -> ExecutionModel:
+    return ExecutionModel(
+        mode=ExecutionMode(settings.execution_mode),
+        commission_model=settings.commission_model,
+        commission_per_share_usd=settings.commission_per_share_usd,
+        commission_min_usd=settings.commission_min_usd,
+        entry_slippage_bps=settings.entry_slippage_bps,
+        exit_slippage_bps=settings.exit_slippage_bps,
+        limit_order_validity_bars=settings.limit_order_validity_bars,
+        intrabar_stop_before_target=settings.intrabar_stop_before_target,
+        bar_interval=settings.bar_interval,
+        atr_stop_mult=settings.atr_stop_mult,
+        take_profit_r=settings.take_profit_r,
+        min_confidence=settings.min_confidence,
+        entry_limit_slippage_bps=settings.entry_limit_slippage_bps,
+        time_horizon_days_map=settings.time_horizon_days_map,
+    )
+
+
+def _risk_model_from_settings(settings: BacktesterSettings) -> RiskModel:
+    return RiskModel(
+        max_position_usd=settings.max_position_usd,
+        max_positions=settings.max_positions,
+        max_portfolio_exposure_usd=settings.max_portfolio_exposure_usd,
+        max_sector_exposure_usd=settings.max_sector_exposure_usd,
+        max_positions_per_sector=settings.max_positions_per_sector,
+        max_daily_trades=settings.max_daily_trades,
+        daily_loss_limit_usd=settings.daily_loss_limit_usd,
+        ticker_cooldown_minutes=settings.ticker_cooldown_minutes,
+    )
 
 
 def _repo_root() -> Path:

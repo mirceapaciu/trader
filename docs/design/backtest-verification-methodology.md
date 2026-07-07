@@ -62,6 +62,12 @@ is a hypothesis to challenge, not a given. Beyond sim/live parity, audit the par
 *internal coherence* — whether they are consistent with each other and with what the thesis
 cards actually claim. Known incoherences to check first, then look for new ones:
 
+Live-parity note: runs whose `execution_model_snapshot_json.mode` is `live_parity` invoke the
+TradeExecutor pure pipeline for brackets, sizing, admission, risk gates, and time exits by
+construction. For those runs, S11 audits only documented approximations: OHLCV bid/ask
+approximation, assumed watchlist membership, and unknown historical sector exposure. For
+`legacy_flat_percent`, run the full parity audit against live rules.
+
 - **Horizon chain (S14):** card `time_horizon` (default `swing_1d_5d`) vs the execution time stop
   (4 h) vs card `expires_at` (creation + 6 h). A 1–5 *day* thesis that is force-closed within 4
   hours and expires in 6 is never actually tested at its own horizon; wins and losses inside 4 h
@@ -137,9 +143,10 @@ Discipline:
 - **Split-sample sign agreement:** a factor is `confirmed` only if its improvement has the same
   sign over the first and second halves of the window; otherwise `inconclusive`. State the
   multiple-comparison caveat in the report.
-- Exact live-parity brackets/sizing (ATR + risk-based) require Backtester `ExecutionModel`
-  extensions (`bracket_mode`, `sizing_mode`, `min_confidence_to_trade`) — a flagged future
-  Backtester change; until then S4/S7/S11 use the grid, the analytic gate, and the parity audit.
+- Current default: live-parity brackets/sizing/admission/risk gates are implemented through the
+  shared pure TradeExecutor pipeline. Keep the grid sweeps for `legacy_flat_percent` runs and for
+  exploratory counterfactuals, but do not report S11 as a rule-reimplementation gap for
+  `live_parity` unless a documented approximation explains the difference.
 
 ## 5. Stage 4 — Ex-ante judging
 
@@ -199,7 +206,7 @@ statistic and a dollar-impact estimate.
 | S8 | Latency | `pnl_gap`/`trades_flipped_by_delay` from `both`-scenario runs; hit-rate decay across delay deciles |
 | S9 | Beta-riding (market moves, not news alpha) | benchmark-adjusted mean ≈ 0 while raw ≠ 0; `market_wide_not_idiosyncratic` frequency |
 | S10 | Data-quality artifacts | Stage 1 hard violations or flagged share above threshold |
-| S11 | Sim/live parity gap | non-empty parity diff; associated counterfactual deltas |
+| S11 | Sim/live parity gap | for `live_parity`, differences beyond documented OHLCV/watchlist/sector approximations; for legacy runs, non-empty parity diff and associated counterfactual deltas |
 | S12 | Reversal churn | reversal exits with positive forgone return; loss concentration in high-churn tickers |
 | S13 | Unquantified analysis (qualitative reasoning, no magnitude estimate) | loss-weighted share of `unquantified_impact`/`channel_only_reasoning`; win rate worse for unquantified-backed trades |
 | S14 | Horizon/config incoherence (thesis claims `swing_1d_5d`; time stop 4 h, expiry 6 h, targets sized for intraday) | day-scale `edge_gross` positive while 2 h edge ≈ 0; day-scale time-stop counterfactual delta > 0; target rarely reachable within the time stop; configuration-critique findings |

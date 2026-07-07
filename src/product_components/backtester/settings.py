@@ -20,6 +20,7 @@ class BacktesterSettings:
     initial_capital_usd: float
     risk_free_rate_annual: float
     sharpe_periodicity: str
+    execution_mode: str
     bar_interval: str
     entry_slippage_bps: float
     exit_slippage_bps: float
@@ -28,8 +29,15 @@ class BacktesterSettings:
     commission_min_usd: float
     limit_order_validity_bars: int
     intrabar_stop_before_target: bool
+    atr_stop_mult: float
+    take_profit_r: float
+    min_confidence: float
+    entry_limit_slippage_bps: float
+    time_horizon_days_map: dict[str, int]
     max_position_usd: float
+    max_positions: int
     max_portfolio_exposure_usd: float
+    max_sector_exposure_usd: float
     max_positions_per_sector: int
     max_daily_trades: int
     daily_loss_limit_usd: float
@@ -77,6 +85,7 @@ class BacktesterSettings:
             initial_capital_usd=_float_env("BACKTESTER_INITIAL_CAPITAL_USD", 10000.0),
             risk_free_rate_annual=_float_env("BACKTESTER_RISK_FREE_RATE_ANNUAL", 0.02),
             sharpe_periodicity=os.getenv("BACKTESTER_SHARPE_PERIODICITY", "daily"),
+            execution_mode=os.getenv("BACKTESTER_EXECUTION_MODE", "live_parity"),
             bar_interval=os.getenv("BACKTESTER_BAR_INTERVAL", "1m"),
             entry_slippage_bps=_float_env("BACKTESTER_ENTRY_SLIPPAGE_BPS", 5.0),
             exit_slippage_bps=_float_env("BACKTESTER_EXIT_SLIPPAGE_BPS", 5.0),
@@ -85,11 +94,24 @@ class BacktesterSettings:
             commission_min_usd=_float_env("BACKTESTER_COMMISSION_MIN_USD", 1.0),
             limit_order_validity_bars=_int_env("BACKTESTER_LIMIT_ORDER_VALIDITY_BARS", 3),
             intrabar_stop_before_target=_bool_env("BACKTESTER_INTRABAR_STOP_BEFORE_TARGET", True),
-            max_position_usd=_float_env("BACKTESTER_MAX_POSITION_USD", 1000.0),
-            max_portfolio_exposure_usd=_float_env("BACKTESTER_MAX_PORTFOLIO_EXPOSURE_USD", 5000.0),
+            atr_stop_mult=_float_env("ATR_STOP_MULT", 1.5),
+            take_profit_r=_float_env("TAKE_PROFIT_R", 2.0),
+            min_confidence=_float_env("TRADE_EXECUTOR_MIN_CONFIDENCE", 0.6),
+            entry_limit_slippage_bps=_float_env("ENTRY_LIMIT_SLIPPAGE_BPS", 5.0),
+            time_horizon_days_map=_horizon_map_env("TIME_HORIZON_DAYS_MAP", {"swing_1d_5d": 5}),
+            max_position_usd=_float_env("MAX_POSITION_SIZE", _float_env("BACKTESTER_MAX_POSITION_USD", 1000.0)),
+            max_positions=_int_env("MAX_POSITIONS", 5),
+            max_portfolio_exposure_usd=_float_env(
+                "MAX_PORTFOLIO_EXPOSURE",
+                _float_env("BACKTESTER_MAX_PORTFOLIO_EXPOSURE_USD", 5000.0),
+            ),
+            max_sector_exposure_usd=_float_env("MAX_SECTOR_EXPOSURE", 2500.0),
             max_positions_per_sector=_int_env("BACKTESTER_MAX_POSITIONS_PER_SECTOR", 3),
-            max_daily_trades=_int_env("BACKTESTER_MAX_DAILY_TRADES", 10),
-            daily_loss_limit_usd=_float_env("BACKTESTER_DAILY_LOSS_LIMIT_USD", 200.0),
+            max_daily_trades=_int_env("MAX_DAILY_TRADES", _int_env("BACKTESTER_MAX_DAILY_TRADES", 10)),
+            daily_loss_limit_usd=_float_env(
+                "DAILY_LOSS_LIMIT",
+                _float_env("BACKTESTER_DAILY_LOSS_LIMIT_USD", 200.0),
+            ),
             ticker_cooldown_minutes=_int_env("BACKTESTER_TICKER_COOLDOWN_MINUTES", 30),
             regeneration_enabled=_bool_env("BACKTESTER_REGENERATION_ENABLED", False),
             llm_model=os.getenv("BACKTESTER_LLM_MODEL", "gpt-4o-mini"),
@@ -135,3 +157,20 @@ def _int_tuple_env(key: str, default: tuple[int, ...]) -> tuple[int, ...]:
     if value is None or not value.strip():
         return default
     return tuple(int(part.strip()) for part in value.split(",") if part.strip())
+
+
+def _horizon_map_env(key: str, default: dict[str, int]) -> dict[str, int]:
+    value = os.getenv(key)
+    if value is None or not value.strip():
+        return dict(default)
+    mapping: dict[str, int] = {}
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        horizon, days = chunk.split("=", 1)
+        try:
+            mapping[horizon.strip()] = int(days.strip())
+        except ValueError:
+            continue
+    return mapping or dict(default)

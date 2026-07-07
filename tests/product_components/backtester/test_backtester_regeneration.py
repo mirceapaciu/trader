@@ -10,6 +10,8 @@ from src.core_components.backtest_engine import Bar
 from src.product_components.backtester.models import (
     BacktestMode,
     BacktestRunParams,
+    ExecutionMode,
+    ExecutionModel,
 )
 from src.product_components.backtester.repository import (
     render_thesis_schema_sql,
@@ -205,6 +207,7 @@ def _params(mode: BacktestMode = BacktestMode.REGENERATION) -> BacktestRunParams
         mode=mode,
         ideal_fetch_delay_seconds=120,
         ideal_thesis_delay_seconds=60,
+        execution_model=ExecutionModel(mode=ExecutionMode.LEGACY_FLAT_PERCENT),
         llm_model="gpt-4o",
         llm_max_tokens_per_run=12345,
     )
@@ -263,6 +266,7 @@ def test_regeneration_passes_evidence_threshold_overrides():
         window_start_at=T0 - timedelta(minutes=5),
         window_end_at=T0 + timedelta(hours=6),
         mode=BacktestMode.REGENERATION,
+        execution_model=ExecutionModel(mode=ExecutionMode.LEGACY_FLAT_PERCENT),
         required_evidence_count=2,
         evidence_collection_max_minutes=1440,
     )

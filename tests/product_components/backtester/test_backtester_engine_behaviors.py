@@ -16,6 +16,7 @@ from src.product_components.backtester.engine import BacktesterEngine
 from src.product_components.backtester.models import (
     BacktestRunParams,
     CardPopulation,
+    ExecutionMode,
     ExecutionModel,
     ExitReason,
     RiskModel,
@@ -214,6 +215,7 @@ def _default_exec(
 ) -> ExecutionModel:
     """ExecutionModel with zero commissions/slippage by default for clean assertions."""
     return ExecutionModel(
+        mode=ExecutionMode.LEGACY_FLAT_PERCENT,
         commission_model=commission_model,
         commission_flat_usd=commission_flat_usd,
         commission_per_share_usd=0.0,

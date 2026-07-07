@@ -28,6 +28,7 @@ BACKTESTER_RISK_FREE_RATE_ANNUAL=0.02
 BACKTESTER_SHARPE_PERIODICITY=daily
 
 # Execution model (fill simulation)
+BACKTESTER_EXECUTION_MODE=live_parity
 BACKTESTER_BAR_INTERVAL=1m
 BACKTESTER_ENTRY_SLIPPAGE_BPS=5
 BACKTESTER_EXIT_SLIPPAGE_BPS=5
@@ -36,13 +37,20 @@ BACKTESTER_COMMISSION_PER_SHARE_USD=0.005
 BACKTESTER_COMMISSION_MIN_USD=1.0
 BACKTESTER_LIMIT_ORDER_VALIDITY_BARS=3
 BACKTESTER_INTRABAR_STOP_BEFORE_TARGET=true
+ATR_STOP_MULT=1.5
+TAKE_PROFIT_R=2.0
+TRADE_EXECUTOR_MIN_CONFIDENCE=0.6
+ENTRY_LIMIT_SLIPPAGE_BPS=5
+TIME_HORIZON_DAYS_MAP=swing_1d_5d=5
 
 # Risk and sizing model (mirrors live risk manager defaults)
-BACKTESTER_MAX_POSITION_USD=1000
-BACKTESTER_MAX_PORTFOLIO_EXPOSURE_USD=5000
+MAX_POSITION_SIZE=1000
+MAX_POSITIONS=5
+MAX_PORTFOLIO_EXPOSURE=5000
+MAX_SECTOR_EXPOSURE=2500
 BACKTESTER_MAX_POSITIONS_PER_SECTOR=3
-BACKTESTER_MAX_DAILY_TRADES=10
-BACKTESTER_DAILY_LOSS_LIMIT_USD=200
+MAX_DAILY_TRADES=10
+DAILY_LOSS_LIMIT=200
 BACKTESTER_TICKER_COOLDOWN_MINUTES=30
 
 # Regeneration mode (LLM replay of ThesisBuilder)
@@ -65,6 +73,11 @@ BACKTESTER_LOG_LEVEL=INFO
 - Execution-model and risk-model variables are defaults only. Each value may be overridden per run
   through `execution_model_snapshot_json` and `risk_model_snapshot_json` in the trigger payload, and
   the effective values are persisted immutably on the run row.
+- `BACKTESTER_EXECUTION_MODE=live_parity` is the default verification baseline. It invokes the
+  TradeExecutor pure decision functions for admission, ATR/R bracket construction, risk-box sizing,
+  portfolio/daily risk gates, and horizon-aware time exits. `legacy_flat_percent` keeps the old
+  confidence-fractional sizing, flat percent brackets, and fixed time stop as an explicit
+  experimental mode.
 - `BACKTESTER_DEFAULT_MODE=regeneration` requires `BACKTESTER_REGENERATION_ENABLED=true`; otherwise
   the run fails closed before any LLM call.
 - `BACKTESTER_BAR_INTERVAL` selects the historical bar granularity requested from MarketData. The
@@ -77,6 +90,11 @@ BACKTESTER_LOG_LEVEL=INFO
   can be overridden per run.
 - `BACKTESTER_DELAY_BUCKETS_SECONDS` is a comma-separated list of bucket edges used to group trades by
   measured pipeline delay in reports.
+- `ATR_STOP_MULT`, `TAKE_PROFIT_R`, `TRADE_EXECUTOR_MIN_CONFIDENCE`,
+  `ENTRY_LIMIT_SLIPPAGE_BPS`, `TIME_HORIZON_DAYS_MAP`, `MAX_POSITION_SIZE`, `MAX_POSITIONS`,
+  `MAX_PORTFOLIO_EXPOSURE`, `MAX_SECTOR_EXPOSURE`, `DAILY_LOSS_LIMIT`, and `MAX_DAILY_TRADES`
+  intentionally mirror the live TradeExecutor env names so live-parity runs use the same rule
+  defaults. The Backtester does not start the TradeExecutor service or touch its schema.
 - `BACKTESTER_EXCURSION_HORIZON_MINUTES` lists the post-entry horizons for the per-trade
   fixed-horizon gross returns persisted on trade rows (behavior spec Section 7), counted in
   regular-trading-hours minutes (390 per trading day), so 390/1170/1950 are 1/3/5 trading days —

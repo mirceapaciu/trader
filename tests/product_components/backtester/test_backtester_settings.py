@@ -12,8 +12,10 @@ def test_from_env_defaults():
     assert settings.db_schema == "backtester"
     assert settings.default_mode == "replay"
     assert settings.default_timing_scenario == "ideal"
+    assert settings.execution_mode == "live_parity"
     assert settings.delay_buckets_seconds == (300, 900, 3600, 14400)
     assert settings.bar_interval == "1m"
+    assert settings.time_horizon_days_map == {"swing_1d_5d": 5}
     assert settings.ideal_fetch_delay_seconds == 120
     assert settings.ideal_thesis_delay_seconds == 60
 
@@ -23,13 +25,18 @@ def test_from_env_parses_delay_buckets_and_flags():
         "BACKTESTER_DELAY_BUCKETS_SECONDS": "60, 120 ,600",
         "BACKTESTER_PERSIST_EQUITY_POINTS": "false",
         "BACKTESTER_MAX_POSITION_USD": "2500",
+        "MAX_POSITION_SIZE": "3000",
+        "MAX_POSITIONS": "8",
+        "TIME_HORIZON_DAYS_MAP": "swing_1d_5d=5,swing_5d_20d=20,bad",
         "THESIS_BUILDER_DB_SCHEMA": "tb_custom",
     }
     with mock.patch.dict(os.environ, env, clear=True):
         settings = BacktesterSettings.from_env()
     assert settings.delay_buckets_seconds == (60, 120, 600)
     assert settings.persist_equity_points is False
-    assert settings.max_position_usd == 2500.0
+    assert settings.max_position_usd == 3000.0
+    assert settings.max_positions == 8
+    assert settings.time_horizon_days_map == {"swing_1d_5d": 5, "swing_5d_20d": 20}
     assert settings.thesis_builder_db_schema == "tb_custom"
 
 
