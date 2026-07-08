@@ -49,6 +49,9 @@ class RegenerationResult:
     analyses_created: int
     cards_created: int
     budget_exhausted: bool
+    llm_tokens_used: int = 0
+    llm_cache_hits: int = 0
+    llm_calls: int = 0
 
 
 class RegenerationRunner:

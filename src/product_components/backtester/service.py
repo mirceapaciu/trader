@@ -165,6 +165,9 @@ class BacktesterService:
                 "articles_analyzed": regen.articles_analyzed,
                 "analyses_created": regen.analyses_created,
                 "cards_created": regen.cards_created,
+                "llm_tokens_used": regen.llm_tokens_used,
+                "llm_cache_hits": regen.llm_cache_hits,
+                "llm_calls": regen.llm_calls,
                 "evidence_windows_created": self._repository.count_sim_evidence_windows(
                     sim_schema=sim_schema
                 ),

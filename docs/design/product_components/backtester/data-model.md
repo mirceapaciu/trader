@@ -70,6 +70,28 @@ Behavioral constraints:
 - Gap metrics (`pnl_gap`, `win_rate_gap`, `trades_flipped_by_delay`) are non-null only when
   `timing_scenario = both`.
 
+### `t_llm_analysis_cache`
+
+Purpose:
+- Durable cache of deterministic ThesisBuilder article-analysis LLM responses used only by
+  Backtester regeneration runs.
+
+Logical fields:
+- `llm_model`, `max_output_tokens`, `prompt_sha256` (composite primary key): cache identity for
+  the exact model, output-token cap, and canonical prompt string.
+- `article_id`, `ticker`, `exchange_code`: supporting debug/invalidation columns; not part of
+  cache identity.
+- `response_json`: raw structured response JSON returned by the LLM client after API usage token
+  normalization and before ThesisBuilder semantic validation.
+- `created_at`, `last_used_at`: cache lifecycle timestamps.
+
+Behavioral constraints:
+- Stored in the durable `backtester` schema, not the per-run `sim_bt_*` schemas, so cache entries
+  survive repeated runs and sim-schema teardown.
+- Used only by regeneration wiring. Live ThesisBuilder analysis remains uncached.
+- Cache hits are reported as budget-free by the regeneration analyzer; real LLM token usage remains
+  attributable to cache misses.
+
 ### `t_backtest_trades`
 
 Purpose:

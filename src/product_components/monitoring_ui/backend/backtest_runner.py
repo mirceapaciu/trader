@@ -194,6 +194,7 @@ class BacktestRunCoordinator:
                 instrument_registry=instrument_registry,
                 market_data_service=market_data_service,
                 quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
+                backtester_schema=settings.db_schema,
             )
             repository = BacktesterRepository(
                 dsn=settings.postgres_dsn,

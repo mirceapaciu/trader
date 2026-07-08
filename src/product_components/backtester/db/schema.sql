@@ -144,6 +144,29 @@ ALTER TABLE backtester.t_backtest_runs
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_status_created
     ON backtester.t_backtest_runs (status, created_at DESC, run_id);
 
+CREATE TABLE IF NOT EXISTS backtester.t_llm_analysis_cache (
+    llm_model TEXT NOT NULL,
+    max_output_tokens INTEGER NOT NULL,
+    prompt_sha256 TEXT NOT NULL,
+    article_id TEXT,
+    ticker TEXT,
+    exchange_code TEXT,
+    response_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ,
+    PRIMARY KEY (llm_model, max_output_tokens, prompt_sha256),
+    CONSTRAINT ck_llm_analysis_cache_max_tokens_positive
+        CHECK (max_output_tokens > 0),
+    CONSTRAINT ck_llm_analysis_cache_prompt_hash
+        CHECK (prompt_sha256 ~ '^[0-9a-f]{64}$')
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_analysis_cache_article
+    ON backtester.t_llm_analysis_cache (article_id);
+
+CREATE INDEX IF NOT EXISTS idx_llm_analysis_cache_instrument
+    ON backtester.t_llm_analysis_cache (ticker, exchange_code, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS backtester.t_backtest_trades (
     trade_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,

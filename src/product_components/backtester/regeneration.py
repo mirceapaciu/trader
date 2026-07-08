@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from src.product_components.market_data.context import build_market_context
@@ -21,6 +22,7 @@ from src.product_components.thesis_builder.service import InstrumentRegistry
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
 from .clients import CardsProvider, RegenerationProgress
+from .llm_analysis_cache import CachedThesisLlmClient, PostgresLlmAnalysisCache
 
 LOGGER = logging.getLogger("backtester.regeneration")
 
@@ -46,9 +48,11 @@ class ThesisRegenerationProvider:
         instrument_registry: InstrumentRegistry,
         market_data_service: MarketDataService,
         quote_max_age_seconds: int,
+        backtester_schema: str = "backtester",
         llm_client_factory: Callable[[], ThesisLlmClient] | None = None,
     ) -> None:
         self._dsn = dsn
+        self._backtester_schema = backtester_schema
         self._thesis_settings = thesis_settings
         self._instrument_registry = instrument_registry
         self._market_data_service = market_data_service
@@ -132,7 +136,7 @@ class ThesisRegenerationProvider:
         repository = PostgresThesisBuilderRepository(
             dsn=self._dsn, thesis_schema=sim_schema
         )
-        client = (
+        inner_client = (
             self._llm_client_factory()
             if self._llm_client_factory is not None
             else OpenAIThesisClient(
@@ -140,6 +144,13 @@ class ThesisRegenerationProvider:
                 request_timeout_seconds=s.llm_request_timeout_seconds,
                 max_retries=s.llm_max_retries,
             )
+        )
+        client = CachedThesisLlmClient(
+            inner=inner_client,
+            cache=PostgresLlmAnalysisCache(
+                dsn=self._dsn,
+                backtester_schema=self._backtester_schema,
+            ),
         )
         analyzer = ThesisAnalyzer(
             client=client,
@@ -163,8 +174,14 @@ class ThesisRegenerationProvider:
             card_delay_seconds=card_delay_seconds,
             progress=progress,
         )
-        return runner.run(
+        result = runner.run(
             window_start_at=window_start_at, window_end_at=window_end_at
+        )
+        return replace(
+            result,
+            llm_tokens_used=analyzer.tokens_used,
+            llm_cache_hits=client.cache_hits,
+            llm_calls=client.llm_calls,
         )
 
     def cards_provider(self, *, sim_schema: str) -> CardsProvider:

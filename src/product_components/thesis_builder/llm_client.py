@@ -92,6 +92,21 @@ class ThesisAnalyzer:
             exchange_code=exchange_code,
             market_context_snapshot=market_context_snapshot,
         )
+        cached = _get_cached_analysis(
+            self.client,
+            model=self.model,
+            prompt=prompt,
+            max_output_tokens=self.max_tokens_per_item,
+        )
+        if cached is not None:
+            result = parse_analysis_result(
+                cached, expected_ticker=ticker, expected_exchange_code=exchange_code
+            )
+            actual_tokens = _actual_tokens(cached, fallback_tokens=0)
+            return LlmAnalysisResult(
+                **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": self.model}
+            )
+
         estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
         self._reserve_tokens(estimated_tokens)
         try:
@@ -104,7 +119,7 @@ class ThesisAnalyzer:
             self._release_reserved_tokens(estimated_tokens)
             raise
         result = parse_analysis_result(raw, expected_ticker=ticker, expected_exchange_code=exchange_code)
-        actual_tokens = int(raw.get("estimated_tokens") or estimated_tokens)
+        actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
         self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
         return LlmAnalysisResult(
             **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": self.model}
@@ -214,7 +229,7 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "published_at": article.published_at.isoformat(),
                 "sentiment_source": article.sentiment_source,
             },
-            "market_context": market_context_snapshot,
+            "market_context": _prompt_market_context(market_context_snapshot),
             "required_json_fields": [
                 "ticker",
                 "exchange_code",
@@ -235,6 +250,38 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
         },
         sort_keys=True,
     )
+
+
+def _get_cached_analysis(
+    client: ThesisLlmClient, *, model: str, prompt: str, max_output_tokens: int
+) -> dict[str, Any] | None:
+    getter = getattr(client, "get_cached_analysis", None)
+    if getter is None:
+        return None
+    cached = getter(model=model, prompt=prompt, max_output_tokens=max_output_tokens)
+    if cached is None:
+        return None
+    if not isinstance(cached, dict):
+        raise ValueError("thesis_response_not_object")
+    return cached
+
+
+def _actual_tokens(raw: dict[str, Any], *, fallback_tokens: int) -> int:
+    value = raw.get("estimated_tokens")
+    return int(value) if value is not None else fallback_tokens
+
+
+def _prompt_market_context(value: Any) -> Any:
+    volatile_keys = {"as_of", "quote_fetched_at", "bars_fetched_at"}
+    if isinstance(value, dict):
+        return {
+            key: _prompt_market_context(item)
+            for key, item in value.items()
+            if key not in volatile_keys
+        }
+    if isinstance(value, list):
+        return [_prompt_market_context(item) for item in value]
+    return value
 
 
 def _parse_content_type(value: Any) -> ContentType:
