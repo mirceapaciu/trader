@@ -74,7 +74,20 @@
       "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_funnel.py\")",
       "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_funnel2.py\")",
       "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_counterfactual.py\")",
-      "PowerShell(git add docs/verification-runs/260708-bt_2373c76aac62411386f96c0771a20f75.md)"
+      "PowerShell(git add docs/verification-runs/260708-bt_2373c76aac62411386f96c0771a20f75.md)",
+      "PowerShell(git add docs/issues/issues-detail/260708-01.md docs/issues/issues-index.md)",
+      "PowerShell(uv run pytest -m \"not integration\" -q 2>$null)",
+      "PowerShell(Test-NetConnection -ComputerName 127.0.0.1 -Port 5432 -WarningAction SilentlyContinue)",
+      "PowerShell(Test-NetConnection -ComputerName 127.0.0.1 -Port 6379 -WarningAction SilentlyContinue)",
+      "PowerShell(uv run pytest tests/integration/test_thesis_builder_integration.py::test_rolling_window_ages_out_old_evidence_instead_of_swallowing_new -q 2>$null)",
+      "PowerShell(uv run pytest tests/integration/test_thesis_builder_integration.py -q 2>$null)",
+      "PowerShell(uv run pytest -m integration -q 2>$null)",
+      "Bash(grep -qE 'passed|failed|error' /c/Users/mirce/AppData/Local/Temp/claude/d--src-trader/7d9f2638-53f0-4f24-82e1-406ace46755d/tasks/b6owopvt5.output)",
+      "Bash(sleep 2)",
+      "Bash(tail -n 5 /c/Users/mirce/AppData/Local/Temp/claude/d--src-trader/7d9f2638-53f0-4f24-82e1-406ace46755d/tasks/b6owopvt5.output)",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -match 'python|pytest|uv' } | Select-Object Id, ProcessName, StartTime, CPU | Format-Table)",
+      "PowerShell(uv run pytest tests/integration/test_backtester_regeneration_integration.py -q 2>$null)",
+      "PowerShell(git add .claude/skills/verify-backtest.md docs/design/backtest-verification-methodology.md)"
     ]
   }
 }
