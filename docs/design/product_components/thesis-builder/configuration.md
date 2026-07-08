@@ -29,6 +29,7 @@ THESIS_BUILDER_RISK_MAX_LOSS_USD=120
 
 # Pipeline scheduling
 PIPELINE_INTERVAL=120        # seconds
+THESIS_BUILDER_CONSUMER_GROUP=thesis_builder_group
 
 # Historical reprocess (operator-triggered via Monitoring UI)
 REPROCESS_COMMAND_QUEUE=reprocess_command_queue

@@ -69,6 +69,7 @@ from src.product_components.thesis_builder.reprocess_gateway import (
     ReprocessRunAlreadyActive,
     ThesisReprocessGateway,
 )
+from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 from src.product_components.shared.instrument_lookup import (
     AlphaVantageInstrumentLookupProvider,
     DuplicateActiveWatchlistEntry,
@@ -101,11 +102,12 @@ def _run_with_infrastructure_mapping(operation: Callable[[], _T], *, detail: str
 
 def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     resolved_settings = settings or MonitoringUiSettings.from_env()
+    thesis_builder_settings = ThesisBuilderSettings.from_env()
     data_source = PostgresRedisMonitoringDataSource(
         dsn=resolved_settings.postgres_dsn,
         news_schema=resolved_settings.newsfetcher_db_schema,
         filter_quality_schema=resolved_settings.filter_quality_db_schema,
-        thesis_builder_schema=resolved_settings.thesis_builder_db_schema,
+        thesis_builder_schema=thesis_builder_settings.thesis_builder_db_schema,
         queue_url=resolved_settings.queue_url,
         news_raw_queue=resolved_settings.news_raw_queue,
         failed_messages_dlq=resolved_settings.failed_messages_dlq,
@@ -151,7 +153,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     reprocess_gateway = ThesisReprocessGateway(
         repository=PostgresThesisBuilderRepository(
             dsn=resolved_settings.postgres_dsn,
-            thesis_schema=resolved_settings.thesis_builder_db_schema,
+            thesis_schema=thesis_builder_settings.thesis_builder_db_schema,
         ),
         command_publisher=RedisReprocessCommandPublisher(
             queue_url=resolved_settings.queue_url,
@@ -161,6 +163,7 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
     service = MonitoringService(
         settings=resolved_settings,
         data_source=data_source,
+        thesis_builder_settings=thesis_builder_settings,
         filter_quality_runner=FilterQualityRunCoordinator(),
         watchlist_admin=watchlist_admin,
         reprocess_gateway=reprocess_gateway,

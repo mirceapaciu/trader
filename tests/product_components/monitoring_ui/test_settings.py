@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from src.product_components.monitoring_ui.backend.settings import MonitoringUiSettings
 
 
@@ -23,11 +21,9 @@ def test_settings_do_not_override_existing_credentials(monkeypatch) -> None:
     assert settings.queue_url == "redis://:already_set@127.0.0.1:6379/0"
 
 
-def test_settings_load_thesis_builder_monitoring_values(monkeypatch) -> None:
-    monkeypatch.setenv("THESIS_BUILDER_DB_SCHEMA", "thesis_builder_test")
-    monkeypatch.setenv("THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES", "90")
+def test_settings_load_ui_owned_thesis_builder_alert_threshold(monkeypatch) -> None:
+    monkeypatch.setenv("UI_THESIS_BUILDER_STALL_THRESHOLD_SECONDS", "90")
 
     settings = MonitoringUiSettings.from_env()
 
-    assert settings.thesis_builder_db_schema == "thesis_builder_test"
-    assert settings.thesis_builder_evidence_collection_max_minutes == 90
+    assert settings.ui_thesis_builder_stall_threshold_seconds == 90

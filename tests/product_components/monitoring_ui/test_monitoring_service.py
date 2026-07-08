@@ -59,6 +59,11 @@ from src.product_components.shared.instrument_lookup import (
 )
 
 
+class _ThesisBuilderRuntimeSettings:
+    evidence_collection_max_minutes = 120
+    consumer_group = "thesis_builder_group"
+
+
 class FakeDataSource:
     def __init__(
         self,
@@ -887,7 +892,11 @@ def test_get_throughput_rejects_invalid_window_token() -> None:
 
 def test_get_thesis_builder_metrics_forwards_supported_window() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
-    service = MonitoringService(settings=_settings(), data_source=data_source)
+    service = MonitoringService(
+        settings=_settings(),
+        data_source=data_source,
+        thesis_builder_settings=_ThesisBuilderRuntimeSettings(),
+    )
 
     response = service.get_thesis_builder_metrics(window="7d")
 
@@ -1614,14 +1623,11 @@ def _settings() -> MonitoringUiSettings:
         ui_export_max_rows=25,
         newsfetcher_db_schema="news_fetcher",
         filter_quality_db_schema="filter_quality_evaluator",
-        thesis_builder_db_schema="thesis_builder",
         backtester_db_schema="backtester",
         ui_backtest_refresh_interval_seconds=15,
         shared_db_schema="shared",
         watchlist_table="t_watchlist_tickers",
-        thesis_builder_evidence_collection_max_minutes=120,
-        thesis_builder_consumer_group="thesis_builder_group",
-        thesis_builder_stall_threshold_seconds=600,
+        ui_thesis_builder_stall_threshold_seconds=600,
         filter_quality_run_timeout_seconds=1800,
         queue_url="redis://127.0.0.1:6379/0",
         news_raw_queue="news_raw_queue",

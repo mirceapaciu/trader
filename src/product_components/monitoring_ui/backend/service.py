@@ -76,6 +76,7 @@ from .repository import (
     BacktesterTablesUnavailable,
 )
 from .settings import MonitoringUiSettings
+from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
 logger = logging.getLogger(__name__)
 
@@ -255,18 +256,25 @@ class InvalidThroughputWindow(ValueError):
     pass
 
 
+class ThesisBuilderRuntimeSettings(Protocol):
+    evidence_collection_max_minutes: int
+    consumer_group: str
+
+
 class MonitoringService:
     def __init__(
         self,
         *,
         settings: MonitoringUiSettings,
         data_source: MonitoringDataSource,
+        thesis_builder_settings: ThesisBuilderRuntimeSettings | None = None,
         filter_quality_runner: FilterQualityRunner | None = None,
         watchlist_admin: SharedInstrumentLookupAdminService | None = None,
         reprocess_gateway: ThesisReprocessGateway | None = None,
         backtest_runner: BacktestRunner | None = None,
     ) -> None:
         self._settings = settings
+        self._thesis_builder_settings = thesis_builder_settings or ThesisBuilderSettings.from_env()
         self._data_source = data_source
         self._filter_quality_runner = filter_quality_runner
         self._watchlist_admin = watchlist_admin
@@ -372,7 +380,9 @@ class MonitoringService:
         try:
             metrics = self._data_source.get_thesis_builder_metrics(
                 window=selected_window,
-                evidence_collection_max_minutes=self._settings.thesis_builder_evidence_collection_max_minutes,
+                evidence_collection_max_minutes=(
+                    self._thesis_builder_settings.evidence_collection_max_minutes
+                ),
             )
         except _INFRASTRUCTURE_ERRORS:
             logger.warning("thesis builder metrics unavailable for window %s", selected_window)
@@ -424,14 +434,14 @@ class MonitoringService:
     def _thesis_builder_consumer_health(self) -> ThesisBuilderConsumerHealth | None:
         try:
             health = self._data_source.get_thesis_builder_consumer_health(
-                consumer_group=self._settings.thesis_builder_consumer_group,
+                consumer_group=self._thesis_builder_settings.consumer_group,
             )
         except _INFRASTRUCTURE_ERRORS:
             logger.warning("thesis builder consumer health unavailable")
             return None
         return _evaluate_consumer_stall(
             health,
-            threshold_seconds=self._settings.thesis_builder_stall_threshold_seconds,
+            threshold_seconds=self._settings.ui_thesis_builder_stall_threshold_seconds,
         )
 
     def get_thesis_cards(self, *, window: str | None) -> ThesisCardListResponse:

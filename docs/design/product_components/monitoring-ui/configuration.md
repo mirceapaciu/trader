@@ -32,9 +32,8 @@ INSTRUMENT_LOOKUP_PROVIDER_DEBOUNCE_MS=300
 FILTER_QUALITY_DB_SCHEMA=filter_quality_evaluator
 FILTER_QUALITY_RUN_TIMEOUT_SECONDS=1800
 
-# ThesisBuilder panel
-THESIS_BUILDER_DB_SCHEMA=thesis_builder
-THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES=1000
+# ThesisBuilder panel alerts
+UI_THESIS_BUILDER_STALL_THRESHOLD_SECONDS=600
 
 # Backtest panel
 BACKTESTER_DB_SCHEMA=backtester
@@ -50,6 +49,8 @@ WATCHLIST_TABLE=t_watchlist_tickers
 
 Monitoring UI also depends on shared PostgreSQL connection, queue settings, and operational settings defined in `docs/design/shared/configuration.md`.
 This includes `QUEUE_URL`, `NEWS_RAW_QUEUE`, and `FAILED_MESSAGES_DLQ` for ThesisBuilder dead-letter telemetry shown in the ThesisBuilder tab.
+
+The ThesisBuilder panel reads ThesisBuilder-owned settings from `docs/design/product_components/thesis-builder/configuration.md` to interpret telemetry. This includes `THESIS_BUILDER_DB_SCHEMA`, `THESIS_BUILDER_CONSUMER_GROUP`, and `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES`. Monitoring UI does not own or redefine those values; it only uses them when querying ThesisBuilder-owned tables and calculating pending evidence-window status.
 
 At startup, the backend loads `.env.shared`, `.env.prod`, `.env.monitoring-ui`, `.env.news-fetcher`, optional `.env.filter-quality-evaluator`, optional `.env.thesis-builder`, optional `.env.backtester`, and `.env.secrets`. UI-triggered filter quality runs use `FilterQualityEvaluatorSettings.from_env()` and run inside the Monitoring UI backend process. UI-triggered backtest runs likewise use `BacktesterSettings.from_env()` and run as an in-process background run inside the Monitoring UI backend process.
 
@@ -68,4 +69,5 @@ The browser UI must use `UI_API_BASE_URL` to reach the Monitoring UI API. It mus
 
 - Variables prefixed with `UI_` are owned by Monitoring UI.
 - NewsFetcher variables remain owned by `docs/design/product_components/news-fetcher/configuration.md`.
+- ThesisBuilder variables remain owned by `docs/design/product_components/thesis-builder/configuration.md`.
 - Shared cross-process variables belong in `docs/design/shared/configuration.md`.
