@@ -141,10 +141,10 @@ Window satisfaction rules:
 
 Window terminal states:
 - `satisfied`: a valid thesis card was created.
-- `expired`: the collection horizon elapsed before sufficient evidence appeared.
 - `rejected`: evidence is structurally invalid, contradictory, below confidence, or otherwise non-actionable.
+- `expired`: legacy state from the anchored-window design; no longer produced (see below), retained only for pre-existing rows.
 
-The default collection horizon is `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES=1000`. This is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately.
+The collection span is rolling, not anchored to the first article. On each new eligible analysis, evidence whose article `published_at` is older than `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES` (default 1000) relative to the analysis time ages out of the window individually; the window itself stays `collecting` and `window_started_at` tracks the oldest retained article. This guarantees a new arrival always lands in live collecting state (it is never discarded into a window that expired underneath it) and that evidence clusters straddling an arbitrary first-article anchor still form cards. The span is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately. Card-level freshness is enforced separately by `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`.
 
 ## 5. Thesis-Card Creation
 

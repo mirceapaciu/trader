@@ -282,30 +282,44 @@ class PostgresThesisBuilderRepository:
         now = clock() if clock is not None else datetime.now(timezone.utc)
         real_now = datetime.now(timezone.utc)
         window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, required_evidence_count=required_evidence_count, reprocess_run_id=reprocess_run_id)
-        article_ids = list(dict.fromkeys([*window["article_ids"], article.id]))
-        analysis_ids = list(dict.fromkeys([*window["analysis_ids"], analysis_id]))
-        status = "collecting"
-        status_reason = None
-        if now - window["window_started_at"] > timedelta(minutes=evidence_collection_max_minutes):
-            status = "expired"
-            status_reason = "evidence_window_expired"
+        candidate_analysis_ids = list(dict.fromkeys([*window["analysis_ids"], analysis_id]))
+        analyses = self._load_valid_analyses(conn=conn, analysis_ids=candidate_analysis_ids)
+        # Rolling window: evidence published more than evidence_collection_max_minutes
+        # before `now` ages out individually; the window itself never expires, so a new
+        # arrival always lands in live collecting state instead of being swallowed by a
+        # window that expired underneath it. The arrival itself is always retained —
+        # card-level freshness is still enforced by max_evidence_age_minutes below.
+        cutoff = now - timedelta(minutes=evidence_collection_max_minutes)
+        retained = [
+            item
+            for item in analyses
+            if item.id == analysis_id or _to_utc(item.article.published_at) >= cutoff
+        ]
+        seen_article_ids: set[str] = set()
+        unique_by_article: list[PersistedAnalysis] = []
+        for item in retained:
+            if item.article_id in seen_article_ids:
+                continue
+            seen_article_ids.add(item.article_id)
+            unique_by_article.append(item)
+        article_ids = [item.article_id for item in unique_by_article]
+        analysis_ids = [item.id for item in retained]
+        published_ats = [_to_utc(item.article.published_at) for item in retained]
+        window_started_at = min(published_ats)
         self._update_window(
             conn=conn,
             window_id=int(window["id"]),
             article_ids=article_ids,
             analysis_ids=analysis_ids,
-            last_evidence_at=max(_to_utc(article.published_at), window["last_evidence_at"]),
-            status=status,
-            status_reason=status_reason,
+            window_started_at=window_started_at,
+            last_evidence_at=max(published_ats),
+            status="collecting",
+            status_reason=None,
         )
-        if status != "collecting" or len(set(article_ids)) < required_evidence_count:
+        if len(article_ids) < required_evidence_count or len(article_ids) < 2:
             return None
 
-        analyses = self._load_valid_analyses(conn=conn, analysis_ids=analysis_ids)
-        unique_article_ids = list(dict.fromkeys(analysis.article_id for analysis in analyses))
-        if len(unique_article_ids) < required_evidence_count or len(unique_article_ids) < 2:
-            return None
-        selected = analyses[:required_evidence_count]
+        selected = unique_by_article[:required_evidence_count]
         selected_article_ids = [analysis.article_id for analysis in selected]
         evidence = _evidence(selected=selected)
         max_age_seconds = max((now - _to_utc(item.article.published_at)).total_seconds() for item in selected)
@@ -349,7 +363,7 @@ class PostgresThesisBuilderRepository:
             created_at=created_at,
             default_time_horizon=default_time_horizon,
         )
-        self._update_window(conn=conn, window_id=int(window["id"]), article_ids=article_ids, analysis_ids=analysis_ids, last_evidence_at=now, status="satisfied", status_reason="thesis_card_created")
+        self._update_window(conn=conn, window_id=int(window["id"]), article_ids=article_ids, analysis_ids=analysis_ids, window_started_at=window_started_at, last_evidence_at=now, status="satisfied", status_reason="thesis_card_created")
         if validation_status is ValidationStatus.REJECTED:
             return None
         signal = self._load_unpublished_signal(conn=conn, card_id=card_id)
@@ -413,17 +427,18 @@ class PostgresThesisBuilderRepository:
         window_id: int,
         article_ids: list[str],
         analysis_ids: list[int],
+        window_started_at: datetime,
         last_evidence_at: datetime,
         status: str,
         status_reason: str | None,
     ) -> None:
         sql = (
             f"UPDATE {self._thesis_schema}.t_evidence_windows "
-            f"SET article_ids = %s, analysis_ids = %s, last_evidence_at = %s, status = %s, status_reason = %s, updated_at = NOW() "
+            f"SET article_ids = %s, analysis_ids = %s, window_started_at = %s, last_evidence_at = %s, status = %s, status_reason = %s, updated_at = NOW() "
             f"WHERE id = %s"
         )
         with conn.cursor() as cur:
-            cur.execute(sql, (Json(article_ids), Json(analysis_ids), _to_utc(last_evidence_at), status, status_reason, window_id))
+            cur.execute(sql, (Json(article_ids), Json(analysis_ids), _to_utc(window_started_at), _to_utc(last_evidence_at), status, status_reason, window_id))
 
     def _load_valid_analyses(self, *, conn: psycopg.Connection, analysis_ids: list[int]) -> list[PersistedAnalysis]:
         sql = (

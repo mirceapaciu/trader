@@ -125,9 +125,9 @@ Logical fields:
 - `direction`: candidate direction when known.
 - `article_ids`: unique article ids currently in the window.
 - `analysis_ids`: analysis ids currently in the window.
-- `window_started_at`: timestamp of first eligible article.
+- `window_started_at`: `published_at` of the oldest article still retained in the rolling window.
 - `last_evidence_at`: timestamp of most recent eligible article.
-- `status`: `collecting`, `satisfied`, `expired`, or `rejected`.
+- `status`: `collecting`, `satisfied`, or `rejected` (`expired` is a legacy value no longer produced).
 - `status_reason`: optional machine-readable reason for terminal states.
 - `created_at`: row creation timestamp.
 - `updated_at`: row update timestamp.
@@ -135,7 +135,7 @@ Logical fields:
 Behavioral constraints:
 - ThesisBuilder aggregates only until the product constraint has enough evidence for a trade decision.
 - A window becomes `satisfied` as soon as it can produce a valid thesis card under `docs/design/shared/product-constraint.md`.
-- A window becomes `expired` when the configured evidence collection horizon is exceeded.
+- The collection span is rolling: evidence older than the configured span relative to the latest analysis ages out of the window individually; the window itself never expires and keeps collecting.
 - Window rows are operational state, not executable trading inputs.
 
 ## Card-History Export Contract (Consumed by Backtester)

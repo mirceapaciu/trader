@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import psycopg
@@ -18,6 +18,8 @@ from src.product_components.shared.adapters import (
 from src.product_components.thesis_builder.llm_client import ThesisAnalyzer
 from src.product_components.thesis_builder.models import (
     ContentType,
+    LlmAnalysisResult,
+    NewsArticle,
     ThesisStrategy,
     TradeDirection,
 )
@@ -156,6 +158,104 @@ def test_opinion_is_retained_for_analyst_without_card() -> None:
     assert redis_client.xlen(settings.signal_queue) == 0
 
 
+def test_rolling_window_ages_out_old_evidence_instead_of_swallowing_new() -> None:
+    # Regression: an analysis arriving after the collection span used to be appended to
+    # the window it had just expired and then discarded, so a cluster of articles that
+    # straddled the anchor boundary could never form a card. With rolling semantics the
+    # oldest evidence ages out and the window keeps collecting.
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    runner = _runner(settings)
+    runner.bootstrap()
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+    )
+    base = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+
+    def persist(index: int, offset_minutes: int):
+        published_at = base + timedelta(minutes=offset_minutes)
+        article_id = f"article-{index}"
+        return repository.persist_analysis_and_update_evidence(
+            article=_news_article(article_id, published_at),
+            result=_buy_analysis(article_id),
+            market_context_snapshot=None,
+            required_evidence_count=3,
+            min_confidence=settings.min_confidence,
+            min_relevance=settings.min_relevance,
+            risk_max_loss_usd=settings.risk_max_loss_usd,
+            default_time_horizon=settings.default_time_horizon,
+            evidence_collection_max_minutes=120,
+            max_evidence_age_minutes=180,
+            clock=lambda: published_at + timedelta(seconds=30),
+        )
+
+    # Articles at +0, +60 and +130 minutes: the third arrival is past the 120-minute
+    # span of the first, so article-0 ages out and the window keeps collecting.
+    for index, offset_minutes in enumerate([0, 60, 130]):
+        assert persist(index, offset_minutes).signal is None
+    assert _evidence_window_rows(settings) == [("collecting", ["article-1", "article-2"])]
+
+    # The fourth article (+170) completes 3 pieces of evidence within 120 minutes.
+    outcome = persist(3, 170)
+    assert outcome.signal is not None
+    assert outcome.signal.ticker == "AAPL"
+    assert _count(settings, "t_thesis_cards") == 1
+    assert _evidence_window_rows(settings) == [
+        ("satisfied", ["article-1", "article-2", "article-3"])
+    ]
+
+
+def _news_article(article_id: str, published_at: datetime) -> NewsArticle:
+    return NewsArticle(
+        id=article_id,
+        source="integration",
+        headline=f"Apple raises guidance {article_id}",
+        summary="Apple raised revenue guidance.",
+        url=f"https://example.com/{article_id}",
+        tickers=["AAPL"],
+        published_at=published_at,
+        fetched_at=published_at,
+        sentiment_source=0.8,
+    )
+
+
+def _buy_analysis(article_id: str) -> LlmAnalysisResult:
+    return LlmAnalysisResult(
+        ticker="AAPL",
+        exchange_code="XNAS",
+        sentiment=0.8,
+        relevance=0.9,
+        urgency="today",
+        suggested_action="buy",
+        candidate_strategy=ThesisStrategy.EVENT_DRIVEN,
+        direction=TradeDirection.BUY,
+        confidence=0.75,
+        reasoning=f"{article_id} supports a bullish event-driven thesis.",
+        is_market_moving=True,
+        instrument_is_subject=True,
+        content_type=ContentType.NEWS_CATALYST,
+        event_type="guidance",
+        price_impact_magnitude="medium",
+        evidence_bullet_candidates=[article_id],
+        estimated_tokens=100,
+        llm_model="test-model",
+    )
+
+
+def _evidence_window_rows(settings: ThesisBuilderSettings) -> list[tuple[str, list[str]]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT status, article_ids FROM {settings.thesis_builder_db_schema}.t_evidence_windows "
+                f"ORDER BY id"
+            )
+            return [(row[0], list(row[1])) for row in cur.fetchall()]
+
+
 def _runner(
     settings: ThesisBuilderSettings, *, llm_client: "_FakeLlmClient | None" = None
 ) -> ThesisBuilderRunner:
@@ -235,6 +335,8 @@ def _settings() -> ThesisBuilderSettings:
         news_raw_queue=os.getenv("NEWS_RAW_QUEUE", "news_raw_queue"),
         signal_queue=os.getenv("SIGNAL_QUEUE", "signal_queue"),
         failed_messages_dlq=os.getenv("FAILED_MESSAGES_DLQ", "failed_messages_dlq"),
+        reprocess_command_queue=os.getenv("REPROCESS_COMMAND_QUEUE", "reprocess_command_queue"),
+        reprocess_max_articles=200,
         consumer_group="thesis_builder_integration_group",
         consumer_name="thesis_builder_integration_consumer",
         poll_interval_seconds=1,
