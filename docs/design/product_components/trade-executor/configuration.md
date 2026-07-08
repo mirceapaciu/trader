@@ -50,9 +50,9 @@ TIME_HORIZON_DAYS_MAP=swing_1d_5d=5    # time_horizon -> max holding days (force
 TRADING_DAY_TIMEZONE=America/New_York
 
 # Portfolio guardrails / kill-switch
-MAX_POSITION_SIZE=1000                 # max USD notional per single position
+MAX_POSITION_SIZE=3000                 # max USD notional per single position
 MAX_POSITIONS=5                        # max concurrent open positions
-MAX_PORTFOLIO_EXPOSURE=5000            # max total USD across open positions
+MAX_PORTFOLIO_EXPOSURE=10000           # max total USD across open positions
 MAX_SECTOR_EXPOSURE=2500               # max USD per sector (best-effort; skipped if sector unknown)
 DAILY_LOSS_LIMIT=200                   # halt new entries when day PnL <= -this
 MAX_DAILY_TRADES=10                    # max entries placed per trading day
