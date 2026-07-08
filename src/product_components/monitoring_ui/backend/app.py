@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from pathlib import Path
 
 from datetime import datetime
@@ -92,6 +93,26 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def _bootstrap_schemas_in_background(
+    *,
+    data_source: PostgresRedisMonitoringDataSource,
+    resolved_settings: MonitoringUiSettings,
+) -> None:
+    def _bootstrap() -> None:
+        try:
+            data_source.bootstrap_shared_schema(repo_root=_repo_root())
+            data_source.bootstrap_news_schema(repo_root=_repo_root())
+            data_source.bootstrap_thesis_builder_schema(repo_root=_repo_root())
+            bootstrap_backtester_schema(
+                dsn=resolved_settings.postgres_dsn,
+                repo_root=_repo_root(),
+            )
+        except Exception:
+            logger.exception("schema bootstrap failed — starting in degraded mode")
+
+    threading.Thread(target=_bootstrap, name="monitoring-ui-schema-bootstrap", daemon=True).start()
+
+
 def _run_with_infrastructure_mapping(operation: Callable[[], _T], *, detail: str) -> _T:
     try:
         return operation()
@@ -100,8 +121,13 @@ def _run_with_infrastructure_mapping(operation: Callable[[], _T], *, detail: str
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
 
 
-def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
+def create_app(
+    settings: MonitoringUiSettings | None = None,
+    *,
+    bootstrap_schemas: bool | None = None,
+) -> FastAPI:
     resolved_settings = settings or MonitoringUiSettings.from_env()
+    should_bootstrap_schemas = bootstrap_schemas if bootstrap_schemas is not None else settings is None
     thesis_builder_settings = ThesisBuilderSettings.from_env()
     data_source = PostgresRedisMonitoringDataSource(
         dsn=resolved_settings.postgres_dsn,
@@ -114,16 +140,6 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
         backtester_schema=resolved_settings.backtester_db_schema,
     )
-    try:
-        data_source.bootstrap_shared_schema(repo_root=_repo_root())
-        data_source.bootstrap_news_schema(repo_root=_repo_root())
-        data_source.bootstrap_thesis_builder_schema(repo_root=_repo_root())
-        bootstrap_backtester_schema(
-            dsn=resolved_settings.postgres_dsn,
-            repo_root=_repo_root(),
-        )
-    except Exception:
-        logger.exception("schema bootstrap failed — starting in degraded mode")
     watchlist_admin = SharedInstrumentLookupAdminService(
         registry=PostgresSharedInstrumentRegistry(
             dsn=resolved_settings.postgres_dsn,
@@ -178,6 +194,8 @@ def create_app(settings: MonitoringUiSettings | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
+    if should_bootstrap_schemas:
+        _bootstrap_schemas_in_background(data_source=data_source, resolved_settings=resolved_settings)
 
     @app.get("/api/health", response_model=HealthResponse)
     def get_health() -> HealthResponse:

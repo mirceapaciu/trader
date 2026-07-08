@@ -315,6 +315,7 @@ CORS middleware is necessary for local browser development but is not sufficient
 
 Failure-handling rules:
 - Route handlers and service entrypoints must catch infrastructure failures before they escape FastAPI. Relevant failure families include PostgreSQL driver errors, Redis client/connection errors, timeout/network failures from shared provider adapters, and expected degraded-startup repository bootstrap failures.
+- Startup schema bootstrap calls must use bounded database lock/statement timeouts so stale long-running sessions cannot prevent the HTTP server from binding its local port.
 - `GET /api/health` is always best-effort. It must degrade rather than fail when individual dependencies are unavailable.
 - Other read/dashboard endpoints must either:
   - return a degraded `200` response with explicit availability metadata such as `available=false`, `message`, safe empty collections, and `generated_at` when the response contract can represent degraded state without being misleading, or

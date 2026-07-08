@@ -22,6 +22,8 @@ from .models import (
 )
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BOOTSTRAP_LOCK_TIMEOUT_MS = 2_000
+_BOOTSTRAP_STATEMENT_TIMEOUT_MS = 10_000
 
 
 class BacktesterRepository:
@@ -384,6 +386,8 @@ def bootstrap_backtester_schema(*, dsn: str, repo_root: Path) -> None:
     with closing(psycopg.connect(dsn)) as connection:
         connection.autocommit = True
         with connection.cursor() as cursor:
+            cursor.execute(f"SET lock_timeout = '{_BOOTSTRAP_LOCK_TIMEOUT_MS}ms'")
+            cursor.execute(f"SET statement_timeout = '{_BOOTSTRAP_STATEMENT_TIMEOUT_MS}ms'")
             cursor.execute(schema_sql)
 
 

@@ -57,6 +57,8 @@ def test_bootstrap_backtester_schema_applies_schema_sql(monkeypatch) -> None:
     assert fake.autocommit is True
     assert fake.closed is True  # connection closed via contextlib.closing
     applied = "\n".join(executed)
+    assert "SET lock_timeout" in executed[0]
+    assert "SET statement_timeout" in executed[1]
     assert "CREATE SCHEMA IF NOT EXISTS backtester" in applied
     assert "t_backtest_runs" in applied
     assert "t_llm_analysis_cache" in applied
