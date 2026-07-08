@@ -144,7 +144,7 @@ Window terminal states:
 - `expired`: the collection horizon elapsed before sufficient evidence appeared.
 - `rejected`: evidence is structurally invalid, contradictory, below confidence, or otherwise non-actionable.
 
-The default collection horizon is `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES=120`. This is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately.
+The default collection horizon is `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES=1000`. This is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately.
 
 ## 5. Thesis-Card Creation
 
@@ -170,7 +170,7 @@ Initially, all valid cards are preapproved by system policy. ThesisBuilder write
 The physical review state is owned by the shared contract; ThesisBuilder code should use the shared review API/adapter instead of ad hoc SQL against shared tables.
 
 Freshness policy:
-- The maximum allowed age for evidence used in an executable thesis card is `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`, defaulting to 180 minutes.
+- The maximum allowed age for evidence used in an executable thesis card is `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`, defaulting to 1400 minutes.
 - `max_evidence_age_seconds` is the oldest evidence article age at validation time.
 - `allowed_max_evidence_age_seconds` is the configured freshness limit.
 - `evidence_age_exceeded_seconds` is `max(0, max_evidence_age_seconds - allowed_max_evidence_age_seconds)`.

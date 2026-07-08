@@ -75,7 +75,7 @@ class MonitoringUiSettings:
             watchlist_table=os.getenv("WATCHLIST_TABLE", "t_watchlist_tickers"),
             thesis_builder_evidence_collection_max_minutes=_int_env(
                 "THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES",
-                120,
+                1000,
             ),
             thesis_builder_consumer_group=os.getenv(
                 "THESIS_BUILDER_CONSUMER_GROUP", "thesis_builder_group"

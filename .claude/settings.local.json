@@ -68,7 +68,13 @@
       "Bash(uv remove *)",
       "Bash(uv add *)",
       "Bash(netstat -ano -p tcp)",
-      "PowerShell(Remove-Item -Recurse -Force \"d:\\\\src\\\\trader\\\\docs\\\\design\\\\product_components\\\\backtest-verifier\" -Confirm:$false)"
+      "PowerShell(Remove-Item -Recurse -Force \"d:\\\\src\\\\trader\\\\docs\\\\design\\\\product_components\\\\backtest-verifier\" -Confirm:$false)",
+      "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_schema.py\")",
+      "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_stage1.py\")",
+      "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_funnel.py\")",
+      "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_funnel2.py\")",
+      "Bash(PYTHONPATH=. uv run python \"C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\ca824ff8-33e1-4ced-894e-aa8159ce69c4\\\\scratchpad\\\\q_counterfactual.py\")",
+      "PowerShell(git add docs/verification-runs/260708-bt_2373c76aac62411386f96c0771a20f75.md)"
     ]
   }
 }
