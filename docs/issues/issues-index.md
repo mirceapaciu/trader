@@ -27,3 +27,4 @@
 | 260708-01 | Token-budget exhaustion in regeneration backtests must be visible, not silent | new | docs/issues/issues-detail/260708-01.md |
 | 260708-02 | Cache LLM article analyses so repeated regeneration backtests don't re-pay for identical prompts | resolved | docs/issues/issues-detail/260708-02.md |
 | 260708-03 | Historize live market-context snapshots so regeneration can replay the exact context live analyses saw | new | docs/issues/issues-detail/260708-03.md |
+| 260708-04 | Monitoring UI PowerShell start script does not capture backend process output | resolved | docs/issues/issues-detail/260708-04.md |
