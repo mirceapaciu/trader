@@ -43,7 +43,14 @@ MarketData bars via `MarketDataService.get_historical_bars`. Never write to any 
 ### Stage 1 — Integrity (always)
 
 1. Load the run row: population, timing scenario, model snapshots, `cards_skipped_no_price`,
-   counts.
+   counts. **For regeneration runs, check coverage before anything else:** a run can finish
+   `status = 'completed'` with its LLM token budget exhausted mid-window (issue 260708-01).
+   Read `summary_json -> 'regeneration' ->> 'budget_exhausted'`; if true, establish how far
+   analysis actually got via `MAX((article_snapshot->>'published_at'))` in the run's sim schema
+   (see Stage 3) or the `Regeneration token budget exhausted` line in
+   `logs/monitoring-ui-backend.log`, and scope every downstream conclusion to the covered
+   sub-window. Once 260708-01 is resolved, read the first-class columns
+   (`budget_exhausted`, `analysis_coverage_until_at`, `llm_tokens_used`) instead.
 2. SQL checks over `t_backtest_trades`: look-ahead (`entry_at >= news_ready_at` via card
    snapshots; `entry_at >= card_created_at` for actual-timing rows), share of trades from
    `card_decision_state = 'rejected'` and `card_was_live_expired = true`.
@@ -82,6 +89,16 @@ write it there first (spec in methodology doc §Stage 2), commit it, then run it
 these numbers inline in the session.
 
 ### Stage 3 — Counterfactual sweeps
+
+**Generation-side factors first, analytically, over the sim schema.** Every regeneration run
+leaves a surviving Postgres schema `sim_bt_<run_id>` holding the full generation funnel:
+`t_news_analyses` (validation_status, rejection_reason_code, tokens_used, article_snapshot),
+`t_evidence_windows` (collecting/expired/satisfied, article_ids), `t_thesis_cards`. Sweep
+generation thresholds (evidence-collection window, required evidence count, relevance/confidence
+gates) by re-simulating the grouping over the persisted valid analyses — zero LLM tokens, seconds
+per cell — and only pay for an engine re-run to confirm the chosen cell. (Validated 2026-07-08:
+the analytic sweep predicted 11 cards at a ~720-min window; the real 1000-min run produced 11.)
+Trading-side factors still require engine re-runs:
 
 One factor per re-run, via `BacktesterService.run` with `dataclasses.replace` on the baseline
 params (reconstructed from the run row snapshots). v1 matrix (methodology doc §Stage 3):

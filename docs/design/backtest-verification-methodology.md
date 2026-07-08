@@ -42,6 +42,12 @@ Every verification ends in exactly one verdict, with low/medium/high confidence:
 
 Trust the run before diagnosing it. Checks, with defaults:
 
+- **Run completeness (regeneration runs):** the LLM token budget can exhaust mid-window while the
+  run still finalizes `status = 'completed'` (issue 260708-01); the flag lives in
+  `summary_json.regeneration.budget_exhausted`. When set, determine the covered sub-window (last
+  analyzed article's `published_at`, from the run's sim schema) and scope every statistic and
+  card-yield conclusion to it — a low card count over an uncovered window is a run artifact, not
+  a pipeline property.
 - Bar coverage per closed trade ≥ **0.95** (`bar_coverage_ratio` on the trade row); below ⇒ flag
   and exclude from edge statistics.
 - Price sanity: no zero/negative/NaN prices, `high >= low`, monotone bar times in trade windows.
@@ -126,6 +132,13 @@ sample counts) and a paste-ready Markdown summary; deterministic given a seed fl
 
 Measured causes, not speculation: re-run the Backtester once per factor via
 `BacktesterService.run` with `dataclasses.replace` on the reconstructed baseline params.
+
+**Generation-side thresholds are swept analytically first.** Regeneration runs persist their full
+funnel in a surviving `sim_bt_<run_id>` schema (`t_news_analyses`, `t_evidence_windows`,
+`t_thesis_cards`). Evidence-window width, required evidence count, and relevance/confidence gates
+can be re-simulated over the persisted valid analyses at zero LLM cost; an engine re-run is then
+spent only to confirm the selected configuration. Trading-side factors (costs, brackets, time
+stops, tie-breaks) always require engine re-runs:
 
 | Factor | Change | Tests |
 |---|---|---|
