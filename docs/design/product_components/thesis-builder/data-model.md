@@ -50,6 +50,32 @@ Behavioral constraints:
 - Cards generated only to estimate missed opportunities from old news use `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the UI labels these as `stale`.
 - TradeExecutor must not infer approval from this table alone; executable state is determined by shared review state plus freshness.
 
+### `t_card_synthesis_verdicts`
+
+Purpose:
+- Durable audit trail for the optional card-synthesis LLM pass that runs after an evidence window
+  satisfies deterministic gates and before an executable thesis card is created.
+
+Logical fields:
+- `id` (primary key): verdict row identity.
+- `evidence_window_id`: ThesisBuilder evidence window that triggered synthesis.
+- `card_id`: nullable thesis card id; populated for approved synthesis verdicts that create a card.
+- `ticker`, `exchange_code`, `strategy`, `direction`: copied candidate identity.
+- `verdict`: `approve`, `reject`, `invalid`, or `unavailable`.
+- `reason_code`: optional machine-readable rejection or failure reason such as
+  `synthesis_rejected`, `synthesis_invalid`, or `synthesis_unavailable`.
+- `confidence`: synthesis confidence when the model returned one.
+- `llm_model`, `max_output_tokens`: configured synthesis call metadata.
+- `response_json`: raw structured synthesis response or failure payload for audit.
+- `created_at`: row creation timestamp.
+
+Behavioral constraints:
+- Reject, invalid, and unavailable verdicts must not create executable thesis cards by default.
+- Approved verdicts must be traceable to the card they created, and card confidence/risk/evidence
+  fields should reflect the synthesis output when synthesis is enabled.
+- This table is ThesisBuilder-owned audit data; downstream components consume executable card
+  signals and shared review state, not synthesis rows directly.
+
 ### `t_news_analyses`
 
 Purpose:

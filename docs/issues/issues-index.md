@@ -33,4 +33,4 @@
 | 260709-03 | Implement already-priced move suppression (close the documented §1.4 known gap) | resolved | docs/issues/issues-detail/260709-03.md |
 | 260709-04 | Confidence gates never bind — measure LLM confidence calibration, then recalibrate or replace them | resolved | docs/issues/issues-detail/260709-04.md |
 | 260709-05 | docs/trading-strategies.md describes a system that does not exist — align it with the implementation | resolved | docs/issues/issues-detail/260709-05.md |
-| 260709-06 | Add a strong-model card-synthesis pass at evidence-window satisfaction (tier 2) | new | docs/issues/issues-detail/260709-06.md |
+| 260709-06 | Add a strong-model card-synthesis pass at evidence-window satisfaction (tier 2) | resolved | docs/issues/issues-detail/260709-06.md |

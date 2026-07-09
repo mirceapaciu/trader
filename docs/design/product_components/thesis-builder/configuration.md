@@ -16,6 +16,10 @@ THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS=1200
 THESIS_BUILDER_TRIAGE_ENABLED=false
 THESIS_BUILDER_TRIAGE_MODEL=gpt-4o-mini
 THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS=200
+THESIS_BUILDER_SYNTHESIS_ENABLED=false
+THESIS_BUILDER_SYNTHESIS_MODEL=gpt-4o-mini
+THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS=1200
+THESIS_BUILDER_SYNTHESIS_FALLBACK_TO_MECHANICAL=false
 LLM_FALLBACK_PROVIDER=groq   # "groq" | "gemini" | "none"
 
 # Thesis-card policy
@@ -57,6 +61,23 @@ ThesisBuilder first resolves article/instrument pairs deterministically. Alias m
 `THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED` enables a conservative roundup heuristic. When enabled, an article tagged with more than `THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD` active watchlist instruments and no headline alias match is persisted as rejected analyses with `rejection_reason_code=prefiltered_roundup` without an LLM call. The default is disabled.
 
 `THESIS_BUILDER_TRIAGE_ENABLED` enables a recall-biased small-LLM triage call before full analysis. Triage returns only subjecthood and `content_type`; clear non-subjects persist as `triage_not_subject`, clear non-catalysts persist as `triage_not_catalyst`, and ambiguous cases pass through to the full analysis prompt. Triage tokens share the same ThesisBuilder run budget as full analysis and are stored on the rejected analysis rows when triage rejects a pair. The default is disabled until replay validation shows acceptable recall.
+
+## Card Synthesis
+
+`THESIS_BUILDER_SYNTHESIS_ENABLED` enables a second LLM pass when an evidence window satisfies
+deterministic card-creation gates. The synthesis prompt receives the selected evidence, market
+context snapshot, candidate strategy/direction/horizon, and mechanical risk box. It returns an
+`approve` or `reject` verdict plus synthesis confidence, selected evidence bullets, and risk text.
+
+The default is disabled, preserving the pre-synthesis mechanical assembly path. When enabled,
+synthesis failure or malformed output fails closed by default: the evidence window is marked
+`rejected` with `synthesis_unavailable` or `synthesis_invalid` and no executable card is created.
+`THESIS_BUILDER_SYNTHESIS_FALLBACK_TO_MECHANICAL=true` is an explicit operator override that falls
+back to the old mechanical assembly if synthesis is unavailable.
+
+Synthesis uses `THESIS_BUILDER_SYNTHESIS_MODEL` and
+`THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS`; tokens count against the ThesisBuilder LLM budget.
+Synthesis verdicts are persisted in `thesis_builder.t_card_synthesis_verdicts` for audit.
 
 ## Confidence Thresholds
 

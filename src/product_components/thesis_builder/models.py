@@ -83,6 +83,22 @@ class LlmAnalysisResult:
 
 
 @dataclass(frozen=True)
+class LlmSynthesisResult:
+    verdict: str
+    confidence: float
+    thesis_summary: str
+    evidence_bullets: list[str]
+    risk_stop_condition: str
+    risk_invalidation_condition: str
+    risk_rationale: str
+    reasoning: str
+    reason_code: str | None = None
+    estimated_tokens: int = 0
+    llm_model: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class PersistedAnalysis:
     id: int
     article_id: str

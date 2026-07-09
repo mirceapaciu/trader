@@ -44,6 +44,10 @@ class ThesisBuilderSettings:
     triage_enabled: bool
     triage_model: str
     triage_max_output_tokens: int
+    synthesis_enabled: bool
+    synthesis_model: str
+    synthesis_max_output_tokens: int
+    synthesis_fallback_to_mechanical: bool
     listicle_prefilter_enabled: bool
     listicle_prefilter_tag_threshold: int
     already_priced_event_driven_atr_multiple: float
@@ -105,6 +109,12 @@ class ThesisBuilderSettings:
             triage_enabled=_bool_env("THESIS_BUILDER_TRIAGE_ENABLED", False),
             triage_model=os.getenv("THESIS_BUILDER_TRIAGE_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
             triage_max_output_tokens=_int_env("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", 200),
+            synthesis_enabled=_bool_env("THESIS_BUILDER_SYNTHESIS_ENABLED", False),
+            synthesis_model=os.getenv("THESIS_BUILDER_SYNTHESIS_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
+            synthesis_max_output_tokens=_int_env("THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS", 1200),
+            synthesis_fallback_to_mechanical=_bool_env(
+                "THESIS_BUILDER_SYNTHESIS_FALLBACK_TO_MECHANICAL", False
+            ),
             listicle_prefilter_enabled=_bool_env("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", False),
             listicle_prefilter_tag_threshold=_int_env("THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD", 6),
             already_priced_event_driven_atr_multiple=_float_env(

@@ -173,13 +173,21 @@ ThesisBuilder may emit longer trend-following cards when the evidence indicates 
 
 Card creation steps:
 1. Select the best evidence set from the satisfied window.
-2. Generate exactly the canonical card fields required by `docs/design/shared/product-constraint.md`.
-3. Generate ThesisBuilder-owned initial risk fields: max loss, stop condition, and invalidation condition.
-4. Measure evidence freshness from each article `published_at` to the card validation decision time.
-5. Validate the card deterministically.
-6. Persist the thesis card.
-7. Write the initial shared review state.
-8. Publish the card signal only if validation passes and review state is approved.
+2. Measure evidence freshness from each article `published_at` to the card validation decision time.
+3. Apply deterministic gates such as freshness and already-priced suppression.
+4. If card synthesis is enabled, send the full evidence dossier and market-context snapshot to the
+   configured synthesis model for an `approve` / `reject` verdict. Reject, malformed output, or
+   synthesis unavailability fails closed by default and creates no executable card; the verdict is
+   persisted for audit. The explicit fallback flag may restore the mechanical assembly path.
+5. Generate exactly the canonical card fields required by `docs/design/shared/product-constraint.md`.
+   With synthesis enabled and approved, confidence, evidence bullets, summary, and risk text come
+   from the synthesis output. With synthesis disabled, these fields are assembled mechanically from
+   per-article analyses as before.
+6. Generate ThesisBuilder-owned initial risk fields: max loss, stop condition, and invalidation condition.
+7. Validate the card deterministically.
+8. Persist the thesis card.
+9. Write the initial shared review state.
+10. Publish the card signal only if validation passes and review state is approved.
 
 Initially, all valid cards are preapproved by system policy. ThesisBuilder writes `shared.t_thesis_card_reviews.decision_state=approved`, `reviewed_by=system_policy`, and a review reason identifying the ThesisBuilder policy version. If `THESIS_BUILDER_INITIAL_REVIEW_POLICY=manual` is enabled later, valid cards are persisted but not published as executable signals until a UI/user approval exists.
 The physical review state is owned by the shared contract; ThesisBuilder code should use the shared review API/adapter instead of ad hoc SQL against shared tables.

@@ -6,6 +6,7 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     monkeypatch.delenv("THESIS_BUILDER_CONSUMER_GROUP", raising=False)
     monkeypatch.delenv("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_TRIAGE_ENABLED", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_SYNTHESIS_ENABLED", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", raising=False)
 
     settings = ThesisBuilderSettings.from_env()
@@ -24,6 +25,10 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.triage_enabled is False
     assert settings.triage_model == "gpt-4o-mini"
     assert settings.triage_max_output_tokens == 200
+    assert settings.synthesis_enabled is False
+    assert settings.synthesis_model == "gpt-4o-mini"
+    assert settings.synthesis_max_output_tokens == 1200
+    assert settings.synthesis_fallback_to_mechanical is False
     assert settings.listicle_prefilter_enabled is False
     assert settings.listicle_prefilter_tag_threshold == 6
     assert settings.already_priced_event_driven_atr_multiple == 1.5
@@ -49,6 +54,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_ENABLED", "true")
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MODEL", "gpt-4o-mini-triage")
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", "80")
+    monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_ENABLED", "true")
+    monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_MODEL", "gpt-5.5")
+    monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS", "700")
+    monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_FALLBACK_TO_MECHANICAL", "true")
     monkeypatch.setenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", "1")
     monkeypatch.setenv("THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD", "8")
     monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_ATR_MULTIPLE", "1.2")
@@ -74,6 +83,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.triage_enabled is True
     assert settings.triage_model == "gpt-4o-mini-triage"
     assert settings.triage_max_output_tokens == 80
+    assert settings.synthesis_enabled is True
+    assert settings.synthesis_model == "gpt-5.5"
+    assert settings.synthesis_max_output_tokens == 700
+    assert settings.synthesis_fallback_to_mechanical is True
     assert settings.listicle_prefilter_enabled is True
     assert settings.listicle_prefilter_tag_threshold == 8
     assert settings.already_priced_event_driven_atr_multiple == 1.2

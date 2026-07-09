@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from .models import (
     ContentType,
     LlmAnalysisResult,
+    LlmSynthesisResult,
     LlmTriageResult,
     ThesisStrategy,
     TradeDirection,
@@ -80,6 +81,25 @@ class OpenAIThesisClient:
             instructions="Return only a JSON object that matches the requested schema.",
             max_output_tokens=max_output_tokens,
             text={"format": _TRIAGE_RESPONSE_FORMAT},
+            temperature=0,
+            store=False,
+        )
+        result = _load_json_object(getattr(response, "output_text", ""))
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            actual = getattr(usage, "total_tokens", None) or getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)
+            if actual:
+                result["estimated_tokens"] = int(actual)
+        return result
+
+    def analyze_synthesis(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
+        client = self._get_client()
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            instructions="Return only a JSON object that matches the requested schema.",
+            max_output_tokens=max_output_tokens,
+            text={"format": _SYNTHESIS_RESPONSE_FORMAT},
             temperature=0,
             store=False,
         )
@@ -203,6 +223,65 @@ class ThesisAnalyzer:
             self.tokens_used += actual_tokens - reserved_tokens
 
 
+@dataclass
+class ThesisCardSynthesizer:
+    client: ThesisLlmClient
+    model: str
+    max_tokens_per_run: int
+    max_tokens_per_item: int
+    tokens_used: int = 0
+
+    def __post_init__(self) -> None:
+        self._budget_lock = threading.Lock()
+
+    def synthesize(self, *, dossier: dict[str, Any]) -> LlmSynthesisResult:
+        prompt = _build_synthesis_prompt(dossier=dossier)
+        estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
+        self._reserve_tokens(estimated_tokens)
+        try:
+            caller = getattr(self.client, "analyze_synthesis", None)
+            if caller is None:
+                raw = self.client.analyze(
+                    model=self.model,
+                    prompt=prompt,
+                    max_output_tokens=self.max_tokens_per_item,
+                )
+            else:
+                raw = caller(
+                    model=self.model,
+                    prompt=prompt,
+                    max_output_tokens=self.max_tokens_per_item,
+                )
+        except Exception:
+            self._release_reserved_tokens(estimated_tokens)
+            raise
+        result = parse_synthesis_result(raw)
+        actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        return LlmSynthesisResult(
+            **{
+                **result.__dict__,
+                "estimated_tokens": actual_tokens,
+                "llm_model": self.model,
+                "raw_response": dict(raw),
+            }
+        )
+
+    def _reserve_tokens(self, estimated_tokens: int) -> None:
+        with self._budget_lock:
+            if self.tokens_used + estimated_tokens > self.max_tokens_per_run:
+                raise TokenBudgetExhausted("token_budget_exhausted")
+            self.tokens_used += estimated_tokens
+
+    def _release_reserved_tokens(self, reserved_tokens: int) -> None:
+        with self._budget_lock:
+            self.tokens_used -= reserved_tokens
+
+    def _settle_tokens(self, *, reserved_tokens: int, actual_tokens: int) -> None:
+        with self._budget_lock:
+            self.tokens_used += actual_tokens - reserved_tokens
+
+
 def parse_analysis_result(
     raw: dict[str, Any],
     *,
@@ -260,6 +339,38 @@ def parse_triage_result(
         instrument_is_subject=bool(raw.get("instrument_is_subject", True)),
         content_type=_parse_content_type_recall_biased(raw.get("content_type")),
         reasoning=str(raw.get("reasoning") or ""),
+    )
+
+
+def parse_synthesis_result(raw: dict[str, Any]) -> LlmSynthesisResult:
+    verdict = str(raw.get("verdict") or "").strip().lower()
+    if verdict not in {"approve", "reject"}:
+        raise ValueError("invalid_synthesis_verdict")
+    confidence = _float_in_range(raw.get("confidence"), minimum=0.0, maximum=1.0, field="confidence")
+    bullets = raw.get("evidence_bullets")
+    if not isinstance(bullets, list):
+        raise ValueError("invalid_synthesis_evidence_bullets")
+    evidence_bullets = [str(item).strip() for item in bullets if str(item).strip()]
+    if verdict == "approve" and not evidence_bullets:
+        raise ValueError("invalid_synthesis_evidence_bullets")
+    thesis_summary = str(raw.get("thesis_summary") or "").strip()
+    risk_stop_condition = str(raw.get("risk_stop_condition") or "").strip()
+    risk_invalidation_condition = str(raw.get("risk_invalidation_condition") or "").strip()
+    if verdict == "approve" and (
+        not thesis_summary or not risk_stop_condition or not risk_invalidation_condition
+    ):
+        raise ValueError("invalid_synthesis_approve_payload")
+    return LlmSynthesisResult(
+        verdict=verdict,
+        confidence=confidence,
+        thesis_summary=thesis_summary,
+        evidence_bullets=evidence_bullets,
+        risk_stop_condition=risk_stop_condition,
+        risk_invalidation_condition=risk_invalidation_condition,
+        risk_rationale=str(raw.get("risk_rationale") or "").strip(),
+        reasoning=str(raw.get("reasoning") or "").strip(),
+        reason_code=str(raw["reason_code"]).strip() if raw.get("reason_code") else None,
+        raw_response=dict(raw),
     )
 
 
@@ -370,6 +481,36 @@ def _build_triage_prompt(*, article, ticker: str, exchange_code: str) -> str:
                 "reasoning",
                 "estimated_tokens",
             ],
+        },
+        sort_keys=True,
+    )
+
+
+def _build_synthesis_prompt(*, dossier: dict[str, Any]) -> str:
+    return json.dumps(
+        {
+            "task": (
+                "Given a satisfied ThesisBuilder evidence window, decide whether the full "
+                "evidence dossier justifies creating an executable thesis card. Consider "
+                "coherence, corroboration, whether articles merely repeat each other, market "
+                "context, deterministic gate results, and whether the move still appears actionable. "
+                "Fail closed: reject when the evidence set is weak, stale, contradictory, already "
+                "priced, or lacks deterministic risk text."
+            ),
+            "allowed_verdicts": ["approve", "reject"],
+            "required_json_fields": [
+                "verdict",
+                "confidence",
+                "thesis_summary",
+                "evidence_bullets",
+                "risk_stop_condition",
+                "risk_invalidation_condition",
+                "risk_rationale",
+                "reasoning",
+                "reason_code",
+                "estimated_tokens",
+            ],
+            "dossier": dossier,
         },
         sort_keys=True,
     )
@@ -533,6 +674,41 @@ _TRIAGE_RESPONSE_FORMAT: dict[str, Any] = {
             "instrument_is_subject": {"type": "boolean"},
             "content_type": {"type": "string", "enum": ["news_catalyst", "opinion"]},
             "reasoning": {"type": "string"},
+            "estimated_tokens": {"type": "integer", "minimum": 0},
+        },
+    },
+}
+
+
+_SYNTHESIS_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "name": "thesis_builder_card_synthesis",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "verdict",
+            "confidence",
+            "thesis_summary",
+            "evidence_bullets",
+            "risk_stop_condition",
+            "risk_invalidation_condition",
+            "risk_rationale",
+            "reasoning",
+            "reason_code",
+            "estimated_tokens",
+        ],
+        "properties": {
+            "verdict": {"type": "string", "enum": ["approve", "reject"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "thesis_summary": {"type": "string"},
+            "evidence_bullets": {"type": "array", "items": {"type": "string"}},
+            "risk_stop_condition": {"type": "string"},
+            "risk_invalidation_condition": {"type": "string"},
+            "risk_rationale": {"type": "string"},
+            "reasoning": {"type": "string"},
+            "reason_code": {"type": ["string", "null"]},
             "estimated_tokens": {"type": "integer", "minimum": 0},
         },
     },

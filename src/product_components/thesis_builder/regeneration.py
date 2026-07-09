@@ -48,6 +48,10 @@ class RegenerationThresholds:
     triage_enabled: bool = False
     listicle_prefilter_enabled: bool = False
     listicle_prefilter_tag_threshold: int = 6
+    synthesis_enabled: bool = False
+    synthesis_model: str = "gpt-4o-mini"
+    synthesis_max_output_tokens: int = 1200
+    synthesis_fallback_to_mechanical: bool = False
     already_priced_event_driven_atr_multiple: float = 1.5
     already_priced_event_driven_return_threshold: float = 0.04
     already_priced_sentiment_momentum_atr_multiple: float = 2.0
@@ -257,6 +261,10 @@ class RegenerationRunner:
                     already_priced_event_driven_return_threshold=self._thresholds.already_priced_event_driven_return_threshold,
                     already_priced_sentiment_momentum_atr_multiple=self._thresholds.already_priced_sentiment_momentum_atr_multiple,
                     already_priced_sentiment_momentum_return_threshold=self._thresholds.already_priced_sentiment_momentum_return_threshold,
+                    synthesis_enabled=self._thresholds.synthesis_enabled,
+                    synthesis_model=self._thresholds.synthesis_model,
+                    synthesis_max_output_tokens=self._thresholds.synthesis_max_output_tokens,
+                    synthesis_fallback_to_mechanical=self._thresholds.synthesis_fallback_to_mechanical,
                     clock=clock,
                     reprocess_run_id=self._run_id,
                 )

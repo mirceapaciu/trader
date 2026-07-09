@@ -6,6 +6,7 @@ from src.product_components.thesis_builder.llm_client import (
     _build_prompt,
     _build_triage_prompt,
     parse_analysis_result,
+    parse_synthesis_result,
     parse_triage_result,
 )
 from src.product_components.thesis_builder.models import (
@@ -283,6 +284,69 @@ def test_parse_triage_result_defaults_missing_content_type_to_pass_through() -> 
     )
 
     assert result.content_type is ContentType.NEWS_CATALYST
+
+
+def test_parse_synthesis_result_accepts_approve_payload() -> None:
+    result = parse_synthesis_result(
+        {
+            "verdict": "approve",
+            "confidence": 0.82,
+            "thesis_summary": "Guidance raise supports a swing buy thesis.",
+            "evidence_bullets": ["Guidance was raised.", "Management cited durable demand."],
+            "risk_stop_condition": "close_below_post_guidance_support",
+            "risk_invalidation_condition": "company_reverses_guidance",
+            "risk_rationale": "Invalidation is tied to the reported catalyst.",
+            "reasoning": "Evidence corroborates across sources.",
+            "reason_code": None,
+            "estimated_tokens": 321,
+        }
+    )
+
+    assert result.verdict == "approve"
+    assert result.confidence == 0.82
+    assert result.evidence_bullets == [
+        "Guidance was raised.",
+        "Management cited durable demand.",
+    ]
+    assert result.risk_stop_condition == "close_below_post_guidance_support"
+
+
+def test_parse_synthesis_result_accepts_reject_payload() -> None:
+    result = parse_synthesis_result(
+        {
+            "verdict": "reject",
+            "confidence": 0.2,
+            "thesis_summary": "",
+            "evidence_bullets": [],
+            "risk_stop_condition": "",
+            "risk_invalidation_condition": "",
+            "risk_rationale": "",
+            "reasoning": "Articles repeat the same weak opinion.",
+            "reason_code": "weak_corroboration",
+            "estimated_tokens": 111,
+        }
+    )
+
+    assert result.verdict == "reject"
+    assert result.reason_code == "weak_corroboration"
+
+
+def test_parse_synthesis_result_rejects_malformed_approve_payload() -> None:
+    with pytest.raises(ValueError, match="invalid_synthesis_approve_payload"):
+        parse_synthesis_result(
+            {
+                "verdict": "approve",
+                "confidence": 0.8,
+                "thesis_summary": "",
+                "evidence_bullets": ["evidence"],
+                "risk_stop_condition": "",
+                "risk_invalidation_condition": "",
+                "risk_rationale": "",
+                "reasoning": "Missing risk fields.",
+                "reason_code": None,
+                "estimated_tokens": 1,
+            }
+        )
 
 
 def test_triage_uses_same_token_budget_counter() -> None:

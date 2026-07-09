@@ -16,7 +16,7 @@ from src.product_components.shared.adapters import (
 )
 from src.product_components.shared.text_match import contains_term
 
-from .llm_client import OpenAIThesisClient, ThesisAnalyzer
+from .llm_client import OpenAIThesisClient, ThesisAnalyzer, ThesisCardSynthesizer
 from .models import ContentType, InstrumentIdentity, LlmTriageResult, NewsArticle
 from .redis_io import NewsStreamMessage, RedisThesisBuilderIo, ReprocessCommandMessage
 from .repository import PostgresThesisBuilderRepository
@@ -81,9 +81,22 @@ class ThesisBuilderRunner:
         reprocessor_factory: Callable[[], "ReprocessorProtocol"] | None = None,
     ) -> None:
         self._settings = settings
+        synthesis_client = None
+        if settings.synthesis_enabled:
+            synthesis_client = ThesisCardSynthesizer(
+                client=OpenAIThesisClient(
+                    api_key=settings.openai_api_key,
+                    request_timeout_seconds=settings.llm_request_timeout_seconds,
+                    max_retries=settings.llm_max_retries,
+                ),
+                model=settings.synthesis_model,
+                max_tokens_per_run=settings.llm_daily_token_budget,
+                max_tokens_per_item=settings.synthesis_max_output_tokens,
+            )
         self._repository = repository or PostgresThesisBuilderRepository(
             dsn=settings.postgres_dsn,
             thesis_schema=settings.thesis_builder_db_schema,
+            card_synthesizer=synthesis_client,
         )
         self._redis = redis_io or RedisThesisBuilderIo(
             queue_url=settings.queue_url,
@@ -372,6 +385,10 @@ class ThesisBuilderRunner:
                 already_priced_event_driven_return_threshold=self._settings.already_priced_event_driven_return_threshold,
                 already_priced_sentiment_momentum_atr_multiple=self._settings.already_priced_sentiment_momentum_atr_multiple,
                 already_priced_sentiment_momentum_return_threshold=self._settings.already_priced_sentiment_momentum_return_threshold,
+                synthesis_enabled=self._settings.synthesis_enabled,
+                synthesis_model=self._settings.synthesis_model,
+                synthesis_max_output_tokens=self._settings.synthesis_max_output_tokens,
+                synthesis_fallback_to_mechanical=self._settings.synthesis_fallback_to_mechanical,
             )
             analyses_created += 1
             if result.signal is not None:

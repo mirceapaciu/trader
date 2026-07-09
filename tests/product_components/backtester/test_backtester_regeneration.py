@@ -349,6 +349,10 @@ def test_provider_resolves_threshold_defaults_and_overrides():
         triage_enabled=False,
         triage_model="triage-model",
         triage_max_output_tokens=200,
+        synthesis_enabled=False,
+        synthesis_model="synthesis-model",
+        synthesis_max_output_tokens=1200,
+        synthesis_fallback_to_mechanical=False,
         listicle_prefilter_enabled=False,
         listicle_prefilter_tag_threshold=6,
         already_priced_event_driven_atr_multiple=1.5,
@@ -368,6 +372,8 @@ def test_provider_resolves_threshold_defaults_and_overrides():
     assert default_cfg["required_evidence_count"] == 3
     assert default_cfg["evidence_collection_max_minutes"] == 120
     assert default_cfg["triage_enabled"] is False
+    assert default_cfg["synthesis_enabled"] is False
+    assert default_cfg["synthesis_model"] == "synthesis-model"
     assert default_cfg["already_priced_event_driven_atr_multiple"] == 1.5
     # explicit overrides win
     override_cfg = provider.thesis_config_snapshot(

@@ -11,6 +11,7 @@ from src.product_components.thesis_builder.export import ThesisCardHistoryExport
 from src.product_components.thesis_builder.llm_client import (
     OpenAIThesisClient,
     ThesisAnalyzer,
+    ThesisCardSynthesizer,
     ThesisLlmClient,
 )
 from src.product_components.thesis_builder.regeneration import (
@@ -88,6 +89,10 @@ class ThesisRegenerationProvider:
             "triage_enabled": thresholds.triage_enabled,
             "triage_model": s.triage_model,
             "triage_max_output_tokens": s.triage_max_output_tokens,
+            "synthesis_enabled": thresholds.synthesis_enabled,
+            "synthesis_model": thresholds.synthesis_model,
+            "synthesis_max_output_tokens": thresholds.synthesis_max_output_tokens,
+            "synthesis_fallback_to_mechanical": thresholds.synthesis_fallback_to_mechanical,
             "listicle_prefilter_enabled": thresholds.listicle_prefilter_enabled,
             "listicle_prefilter_tag_threshold": thresholds.listicle_prefilter_tag_threshold,
             "already_priced_event_driven_atr_multiple": thresholds.already_priced_event_driven_atr_multiple,
@@ -120,6 +125,10 @@ class ThesisRegenerationProvider:
             ),
             max_evidence_age_minutes=s.max_evidence_age_minutes,
             triage_enabled=s.triage_enabled,
+            synthesis_enabled=s.synthesis_enabled,
+            synthesis_model=s.synthesis_model,
+            synthesis_max_output_tokens=s.synthesis_max_output_tokens,
+            synthesis_fallback_to_mechanical=s.synthesis_fallback_to_mechanical,
             listicle_prefilter_enabled=s.listicle_prefilter_enabled,
             listicle_prefilter_tag_threshold=s.listicle_prefilter_tag_threshold,
             already_priced_event_driven_atr_multiple=s.already_priced_event_driven_atr_multiple,
@@ -149,9 +158,6 @@ class ThesisRegenerationProvider:
         )
 
         s = self._thesis_settings
-        repository = PostgresThesisBuilderRepository(
-            dsn=self._dsn, thesis_schema=sim_schema
-        )
         inner_client = (
             self._llm_client_factory()
             if self._llm_client_factory is not None
@@ -167,6 +173,19 @@ class ThesisRegenerationProvider:
                 dsn=self._dsn,
                 backtester_schema=self._backtester_schema,
             ),
+        )
+        synthesizer = None
+        if s.synthesis_enabled:
+            synthesizer = ThesisCardSynthesizer(
+                client=client,
+                model=s.synthesis_model,
+                max_tokens_per_run=token_budget,
+                max_tokens_per_item=s.synthesis_max_output_tokens,
+            )
+        repository = PostgresThesisBuilderRepository(
+            dsn=self._dsn,
+            thesis_schema=sim_schema,
+            card_synthesizer=synthesizer,
         )
         analyzer = ThesisAnalyzer(
             client=client,

@@ -15,6 +15,7 @@ from .models import (
     ContentType,
     InstrumentIdentity,
     LlmAnalysisResult,
+    LlmSynthesisResult,
     LlmTriageResult,
     NewsArticle,
     PersistedAnalysis,
@@ -66,9 +67,11 @@ class PostgresThesisBuilderRepository:
         *,
         dsn: str,
         thesis_schema: str,
+        card_synthesizer: Any | None = None,
     ) -> None:
         self._dsn = dsn
         self._thesis_schema = _safe_identifier(thesis_schema)
+        self._card_synthesizer = card_synthesizer
 
     def persist_rejected_analysis(
         self,
@@ -136,6 +139,10 @@ class PostgresThesisBuilderRepository:
         already_priced_event_driven_return_threshold: float,
         already_priced_sentiment_momentum_atr_multiple: float,
         already_priced_sentiment_momentum_return_threshold: float,
+        synthesis_enabled: bool = False,
+        synthesis_model: str | None = None,
+        synthesis_max_output_tokens: int | None = None,
+        synthesis_fallback_to_mechanical: bool = False,
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
@@ -170,6 +177,10 @@ class PostgresThesisBuilderRepository:
                     already_priced_event_driven_return_threshold=already_priced_event_driven_return_threshold,
                     already_priced_sentiment_momentum_atr_multiple=already_priced_sentiment_momentum_atr_multiple,
                     already_priced_sentiment_momentum_return_threshold=already_priced_sentiment_momentum_return_threshold,
+                    synthesis_enabled=synthesis_enabled,
+                    synthesis_model=synthesis_model,
+                    synthesis_max_output_tokens=synthesis_max_output_tokens,
+                    synthesis_fallback_to_mechanical=synthesis_fallback_to_mechanical,
                     clock=clock,
                     reprocess_run_id=reprocess_run_id,
                 )
@@ -302,6 +313,10 @@ class PostgresThesisBuilderRepository:
         already_priced_event_driven_return_threshold: float,
         already_priced_sentiment_momentum_atr_multiple: float,
         already_priced_sentiment_momentum_return_threshold: float,
+        synthesis_enabled: bool = False,
+        synthesis_model: str | None = None,
+        synthesis_max_output_tokens: int | None = None,
+        synthesis_fallback_to_mechanical: bool = False,
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> ThesisCardSignal | None:
@@ -381,6 +396,76 @@ class PostgresThesisBuilderRepository:
             "stop_condition": _stop_condition(result),
             "invalidation_condition": _invalidation_condition(result),
         }
+        synthesis_result: LlmSynthesisResult | None = None
+        if validation_status is ValidationStatus.VALID and synthesis_enabled:
+            try:
+                if self._card_synthesizer is None:
+                    raise RuntimeError("synthesis_unavailable")
+                synthesis_result = self._card_synthesizer.synthesize(
+                    dossier=_synthesis_dossier(
+                        result=result,
+                        selected=selected,
+                        evidence=evidence,
+                        market_context_snapshot=market_context_snapshot,
+                        risk_box=risk_box,
+                        default_time_horizon=default_time_horizon,
+                    )
+                )
+            except ValueError as exc:
+                if not synthesis_fallback_to_mechanical:
+                    self._insert_synthesis_verdict(
+                        conn=conn,
+                        evidence_window_id=int(window["id"]),
+                        card_id=None,
+                        result=result,
+                        verdict="invalid",
+                        reason_code=str(exc) or "synthesis_invalid",
+                        confidence=None,
+                        llm_model=synthesis_model,
+                        max_output_tokens=synthesis_max_output_tokens,
+                        response_json={},
+                    )
+                    self._update_window(conn=conn, window_id=int(window["id"]), article_ids=article_ids, analysis_ids=analysis_ids, window_started_at=window_started_at, last_evidence_at=now, status="rejected", status_reason="synthesis_invalid")
+                    return None
+            except Exception as exc:
+                if not synthesis_fallback_to_mechanical:
+                    self._insert_synthesis_verdict(
+                        conn=conn,
+                        evidence_window_id=int(window["id"]),
+                        card_id=None,
+                        result=result,
+                        verdict="unavailable",
+                        reason_code=str(exc) or "synthesis_unavailable",
+                        confidence=None,
+                        llm_model=synthesis_model,
+                        max_output_tokens=synthesis_max_output_tokens,
+                        response_json={},
+                    )
+                    self._update_window(conn=conn, window_id=int(window["id"]), article_ids=article_ids, analysis_ids=analysis_ids, window_started_at=window_started_at, last_evidence_at=now, status="rejected", status_reason="synthesis_unavailable")
+                    return None
+            if synthesis_result is not None:
+                if synthesis_result.verdict == "reject":
+                    self._insert_synthesis_verdict(
+                        conn=conn,
+                        evidence_window_id=int(window["id"]),
+                        card_id=None,
+                        result=result,
+                        verdict="reject",
+                        reason_code=synthesis_result.reason_code or "synthesis_rejected",
+                        confidence=synthesis_result.confidence,
+                        llm_model=synthesis_result.llm_model or synthesis_model,
+                        max_output_tokens=synthesis_max_output_tokens,
+                        response_json=synthesis_result.raw_response,
+                    )
+                    self._update_window(conn=conn, window_id=int(window["id"]), article_ids=article_ids, analysis_ids=analysis_ids, window_started_at=window_started_at, last_evidence_at=now, status="rejected", status_reason="synthesis_rejected")
+                    return None
+                confidence = synthesis_result.confidence
+                evidence = _synthesized_evidence(synthesis_result)
+                risk_box = {
+                    "max_loss_usd": risk_max_loss_usd,
+                    "stop_condition": synthesis_result.risk_stop_condition,
+                    "invalidation_condition": synthesis_result.risk_invalidation_condition,
+                }
         inserted = self._insert_card(
             conn=conn,
             card_id=card_id,
@@ -400,6 +485,19 @@ class PostgresThesisBuilderRepository:
             created_at=created_at,
             default_time_horizon=default_time_horizon,
         )
+        if synthesis_result is not None:
+            self._insert_synthesis_verdict(
+                conn=conn,
+                evidence_window_id=int(window["id"]),
+                card_id=card_id,
+                result=result,
+                verdict="approve",
+                reason_code=synthesis_result.reason_code,
+                confidence=synthesis_result.confidence,
+                llm_model=synthesis_result.llm_model or synthesis_model,
+                max_output_tokens=synthesis_max_output_tokens,
+                response_json=synthesis_result.raw_response,
+            )
         self._update_window(conn=conn, window_id=int(window["id"]), article_ids=article_ids, analysis_ids=analysis_ids, window_started_at=window_started_at, last_evidence_at=now, status="satisfied", status_reason="thesis_card_created")
         if validation_status is ValidationStatus.REJECTED:
             return None
@@ -530,6 +628,45 @@ class PostgresThesisBuilderRepository:
                 ),
             )
             return cur.rowcount == 1
+
+    def _insert_synthesis_verdict(
+        self,
+        *,
+        conn: psycopg.Connection,
+        evidence_window_id: int,
+        card_id: str | None,
+        result: LlmAnalysisResult,
+        verdict: str,
+        reason_code: str | None,
+        confidence: float | None,
+        llm_model: str | None,
+        max_output_tokens: int | None,
+        response_json: dict[str, Any],
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._thesis_schema}.t_card_synthesis_verdicts "
+            f"(evidence_window_id, card_id, ticker, exchange_code, strategy, direction, verdict, "
+            f"reason_code, confidence, llm_model, max_output_tokens, response_json) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    evidence_window_id,
+                    card_id,
+                    result.ticker,
+                    result.exchange_code,
+                    result.candidate_strategy.value,
+                    result.direction.value,
+                    verdict,
+                    reason_code,
+                    confidence,
+                    llm_model or "",
+                    max_output_tokens,
+                    Json(response_json),
+                ),
+            )
 
     def _load_unpublished_signal(self, *, conn: psycopg.Connection, card_id: str) -> ThesisCardSignal | None:
         sql = (
@@ -783,6 +920,58 @@ def _evidence(*, selected: list[PersistedAnalysis]) -> list[dict[str, Any]]:
                 "published_at": _to_utc(article.published_at).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
         )
+    return evidence
+
+
+def _synthesis_dossier(
+    *,
+    result: LlmAnalysisResult,
+    selected: list[PersistedAnalysis],
+    evidence: list[dict[str, Any]],
+    market_context_snapshot: dict[str, Any] | None,
+    risk_box: dict[str, Any],
+    default_time_horizon: str,
+) -> dict[str, Any]:
+    return {
+        "candidate": {
+            "ticker": result.ticker,
+            "exchange_code": result.exchange_code,
+            "strategy": result.candidate_strategy.value,
+            "direction": result.direction.value,
+            "time_horizon": default_time_horizon,
+            "per_article_confidence_mean": (
+                sum(item.confidence for item in selected) / len(selected)
+            ),
+        },
+        "deterministic_gate_results": {
+            "evidence_count_satisfied": True,
+            "freshness_satisfied": True,
+            "already_priced_satisfied": True,
+        },
+        "evidence": evidence,
+        "analyses": [
+            {
+                "analysis_id": item.id,
+                "article_id": item.article_id,
+                "confidence": item.confidence,
+                "reasoning": item.reasoning,
+                "article": _article_snapshot(item.article),
+            }
+            for item in selected
+        ],
+        "market_context": market_context_snapshot,
+        "mechanical_risk_box": risk_box,
+    }
+
+
+def _synthesized_evidence(result: LlmSynthesisResult) -> list[dict[str, Any]]:
+    evidence = [{"summary": result.thesis_summary, "source": "card_synthesis"}]
+    evidence.extend(
+        {"text": bullet, "source": "card_synthesis"}
+        for bullet in result.evidence_bullets
+    )
+    if result.risk_rationale:
+        evidence.append({"risk_rationale": result.risk_rationale, "source": "card_synthesis"})
     return evidence
 
 
