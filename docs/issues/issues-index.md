@@ -32,5 +32,5 @@
 | 260709-02 | Two-tier pre-filter (deterministic screen + small-LLM triage) before paying for full LLM analysis | resolved | docs/issues/issues-detail/260709-02.md |
 | 260709-03 | Implement already-priced move suppression (close the documented §1.4 known gap) | resolved | docs/issues/issues-detail/260709-03.md |
 | 260709-04 | Confidence gates never bind — measure LLM confidence calibration, then recalibrate or replace them | new | docs/issues/issues-detail/260709-04.md |
-| 260709-05 | docs/trading-strategies.md describes a system that does not exist — align it with the implementation | new | docs/issues/issues-detail/260709-05.md |
+| 260709-05 | docs/trading-strategies.md describes a system that does not exist — align it with the implementation | resolved | docs/issues/issues-detail/260709-05.md |
 | 260709-06 | Add a strong-model card-synthesis pass at evidence-window satisfaction (tier 2) | new | docs/issues/issues-detail/260709-06.md |

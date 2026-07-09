@@ -529,7 +529,7 @@ The UI (`src/product_components/monitoring_ui/frontend`) provides:
 - [ib_async documentation](https://ib-api-reloaded.github.io/ib_async/)
 - [IBKR API reference](https://interactivebrokers.github.io/tws-api/)
 - [OpenAI API pricing](https://openai.com/api/pricing/)
-- Trading strategies: see [trading-strategies.md](../trading-strategies.md)
+- Current runtime trading-strategy contract: see [trading-strategies.md](../trading-strategies.md)
 - Database deployment spec: `docs/design/deployment/postgres-container.md`
 - Queue deployment spec: `docs/design/deployment/redis-queue-container.md`
 - Data model details: `docs/design/data-model.md`
