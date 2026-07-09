@@ -1,6 +1,6 @@
 ---
 name: verify-backtest
-description: Diagnose why a backtest run shows the P&L it shows — integrity checks, P&L attribution, counterfactual sweeps, ex-ante card judging, and a verdict report with ranked recommendations. Use when the user asks to verify, diagnose, or explain a backtest run's results.
+description: Diagnose why a backtest run shows the P&L it shows — integrity checks, P&L attribution, counterfactual sweeps, funnel opportunity-cost analysis (missed opportunities dropped by filter/validation/admission/risk gates), ex-ante card judging, and a verdict report with ranked recommendations. Use when the user asks to verify, diagnose, or explain a backtest run's results.
 ---
 
 # verify-backtest
@@ -9,7 +9,7 @@ Diagnose why a backtest run shows the P&L it shows. Verify the run is trustworth
 P&L, measure suspected causes with single-factor counterfactual re-runs, judge thesis-card and
 news-analysis quality ex-ante, and produce a verdict with ranked recommendations.
 
-The canonical methodology — the 14-suspect catalog, verdict decision tree, judging discipline,
+The canonical methodology — the 15-suspect catalog, verdict decision tree, judging discipline,
 and default thresholds — is `docs/design/backtest-verification-methodology.md`. Read it before
 starting. This file is the operational protocol.
 
@@ -118,9 +118,37 @@ window) — a factor is confirmed only if the improvement sign agrees in both ha
 min-confidence gate is estimated analytically over the baseline trade set (state the portfolio-
 interaction caveat).
 
+### Stage 3b — Funnel opportunity cost (missed opportunities, S15)
+
+Stages 1–3 explain the trades that happened; Stage 3b measures what each gate dropped
+(methodology §Stage 3b). Produce one funnel-table row per gate: dropped count, near-miss count,
+forgone-value estimate, method.
+
+1. **News filter:** run the committed evaluator over the run's news window —
+   `uv run python -m src.product_components.filter_quality_evaluator
+   --news-window-start-at <start> --news-window-end-at <end>
+   --run-note "verify-backtest:<run_id>"` — and report `incorrectly_rejected_count`,
+   `rejection_precision_proxy`, and the top rejection-reason error drivers from its summary.
+   Its labels are LLM judgments, not outcomes — carry the caveat.
+2. **Analysis validation + evidence window:** over `sim_bt_<run_id>` — histogram of
+   `t_news_analyses.rejection_reason_code`; count of `t_evidence_windows` expired at
+   (required − 1) articles. Quantify recovered cards with the same analytic grouping
+   re-simulation as Stage 3 (loosened gates / wider window), zero LLM cost.
+3. **Admission:** re-read the Stage 2 `card_decision_state = 'rejected'` slice as forgone P&L,
+   not only as S1 contamination — flag if its net P&L is positive with a hit rate at or above
+   the approved slice.
+4. **Risk sizing:** `t_backtest_trades` rows with `exit_reason = 'risk_blocked'`, sliced by
+   `risk_block_rule` × ticker; estimate hypothetical value from card direction × bar horizon
+   returns (these rows have no fills), or one engine re-run relaxing the single binding rule.
+
+Counts and reason histograms are always reported; forgone-P&L estimates are analytic first, with
+at most one confirming regeneration re-run on an amended config (same one-factor discipline as
+Stage 3). State the explicit non-goal: watchlist membership and non-ingested sources are out of
+scope.
+
 ### Stage 4 — Card and analysis judging (you are the judge)
 
-Sample per methodology §Stage 4: 15 worst losers + 10 best winners + 15 random closed
+Sample per methodology §Stage 4: e.g. 15 worst losers + 10 best winners + 15 random closed
 live-executable trades, joined to `t_backtest_card_snapshots`.
 
 **Hard ordering rule (hindsight-bias control): write down all ex-ante judgments before looking at
@@ -145,12 +173,13 @@ Apply the decision tree from the methodology doc (insufficient_data → simulati
 edge-destroyed-by-execution → no-edge sub-verdicts) with its default thresholds. Write the report
 to `docs/verification-runs/<YYMMDD>-<run_id>.md`:
 
-- verdict + confidence + headline numbers (including edge at both 2 h and the cards' stated
-  horizon),
-- findings table: all 14 suspects, confirmed/refuted/inconclusive, measured statistic, $ impact,
+- verdict + confidence + headline numbers (including edge),
+- findings table: all suspects, confirmed/refuted/inconclusive, measured statistic, $ impact,
 - configuration critique: every incoherent parameter pair and unvalidated default found, with
   the evidence and the concrete parameter change proposed,
 - counterfactual table (baseline vs each child run, split-sample agreement),
+- funnel opportunity-cost table (per gate: dropped count, near-misses, forgone-value estimate,
+  method) and the S15 verdict-scoping note when material,
 - judge tables (ex-ante scores, failure-mode histogram, correlation),
 - top generation recommendations and top trading recommendations, each traceable to a finding,
 - appendix: integrity flags, excluded trades, caveats (sample size, 1-minute-bar bounds,

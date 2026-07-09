@@ -161,6 +161,31 @@ Discipline:
   exploratory counterfactuals, but do not report S11 as a rule-reimplementation gap for
   `live_parity` unless a documented approximation explains the difference.
 
+### Stage 3b — Funnel opportunity cost (missed opportunities)
+
+Stages 1–3 explain the P&L of what the pipeline produced. Stage 3b walks the funnel top-down and
+asks the symmetric question: what did each gate drop, and what was it plausibly worth? Feeds S15.
+One row per gate — dropped count, near-miss count, forgone-value estimate, measurement method:
+
+| Gate | Dropped population | Measurement |
+|---|---|---|
+| News filter | articles rejected by the NewsFetcher filter | `filter_quality_evaluator` run over the same news window (`uv run python -m src.product_components.filter_quality_evaluator --news-window-start-at … --news-window-end-at …`): `incorrectly_rejected_count` / `rejection_precision_proxy`, top rejection-reason error drivers, grouped recommendations |
+| Analysis validation | `sim_bt_<run_id>.t_news_analyses` with `validation_status = 'rejected'` | histogram by `rejection_reason_code`; near-misses = analyses just under the relevance/confidence gates — count recovered cards via the Stage 3 analytic grouping re-simulation with loosened gates |
+| Evidence window | `sim_bt_<run_id>.t_evidence_windows` expired unsatisfied | count expired at (required − 1) articles; analytic sweep of required count / window width quantifies recovered cards |
+| Admission | trades with `card_decision_state = 'rejected'` (simulated under `card_population = all`) | read the Stage 2 rejected slice as forgone P&L, not only as S1 contamination: positive net P&L with hit rate ≥ the approved slice ⇒ the gate discards winners |
+| Risk sizing | `t_backtest_trades` rows with `exit_reason = 'risk_blocked'` | slice count by `risk_block_rule` × ticker; hypothetical value from card direction × persisted-bar horizon returns (no fills exist), or one engine re-run relaxing the single binding rule |
+
+Discipline:
+- **Counts and reason histograms are cheap and always reported; forgone-P&L estimates are scoped.**
+  Recovered articles/analyses have no downstream trades, so their dollar value is only measurable
+  by re-running generation on them (LLM cost) — estimate analytically first (cards recovered ×
+  observed per-card economics of the nearest existing population) and pay for at most one
+  confirming regeneration re-run on the amended config, same one-factor rule as Stage 3.
+- The filter evaluator's `incorrectly_rejected` labels come from an LLM classifier, a judgment
+  proxy, not realized outcomes — carry that caveat into any S15 confirmation.
+- **Explicit non-goal:** universe-level misses (tickers not on the watchlist, news sources not
+  ingested) are out of scope; state this in the report rather than leaving it silent.
+
 ## 5. Stage 4 — Ex-ante judging
 
 The agent judges card and analysis quality independently of the generation model (gpt-4o-mini).
@@ -204,7 +229,7 @@ discrimination ⇒ generation gates can be tightened (the histogram names which)
 
 ## 6. The Suspect Catalog
 
-Every verification reports all fourteen, each `confirmed | refuted | inconclusive` with its
+Every verification reports all fifteen, each `confirmed | refuted | inconclusive` with its
 statistic and a dollar-impact estimate.
 
 | # | Suspect | Confirming evidence |
@@ -223,6 +248,7 @@ statistic and a dollar-impact estimate.
 | S12 | Reversal churn | reversal exits with positive forgone return; loss concentration in high-churn tickers |
 | S13 | Unquantified analysis (qualitative reasoning, no magnitude estimate) | loss-weighted share of `unquantified_impact`/`channel_only_reasoning`; win rate worse for unquantified-backed trades |
 | S14 | Horizon/config incoherence (thesis claims `swing_1d_5d`; time stop 4 h, expiry 6 h, targets sized for intraday) | day-scale `edge_gross` positive while 2 h edge ≈ 0; day-scale time-stop counterfactual delta > 0; target rarely reachable within the time stop; configuration-critique findings |
+| S15 | Gate over-tightness (false negatives — filter, validation, evidence window, admission, risk sizing drop profitable opportunities) | Stage 3b: material `incorrectly_rejected` share from the filter evaluator; rejected-card slice with positive net P&L and hit rate ≥ approved; risk-blocked rows with positive hypothetical horizon returns; loosened-gate analytic sweep recovering cards at equal-or-better per-card economics, confirmed by one regeneration re-run |
 
 ## 7. Verdict decision tree
 
@@ -241,6 +267,13 @@ Evaluated in order; defaults in bold:
 4. Otherwise no average edge at any measured horizon; sub-verdict by judge discrimination:
    |ρ| ≥ **0.4** (p < 0.05) ⇒ `no_edge_but_judge_discriminates`, else
    `no_edge_discernible_by_judge`.
+
+The no-edge verdicts describe the population the gates let through, not the news window. If
+Stage 3b confirms S15 at material scale, scope the verdict accordingly ("no edge in the traded
+population; the gates dropped N candidate opportunities of unmeasured/positive estimated value")
+and rank the gate change alongside the pipeline recommendations — the current data cannot
+distinguish "the news has no alpha" from "the gates are eating the alpha" until the dropped
+population is measured.
 
 Confidence (low/medium/high) from sample size, CI widths, and agreement between the independent
 evidence lines (attribution, counterfactuals, judge).
@@ -270,3 +303,7 @@ and re-verify. Never tune and validate on the same window.
 - Day-scale horizons and day-scale time-stop counterfactuals need bars (and a run window)
   extending past the last card entry by up to 5 trading days; when they come back mostly null,
   widen the window rather than concluding from the intraday horizons alone.
+- Stage 3b forgone-value estimates are upper-bound-flavored: dropped articles/analyses never ran
+  the full downstream chain, filter-evaluator labels are LLM judgments rather than outcomes, and
+  risk-blocked hypothetical returns assume fills that portfolio constraints might have prevented.
+  Treat S15 dollar impacts as order-of-magnitude until a holdout regeneration run confirms them.
