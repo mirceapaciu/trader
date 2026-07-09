@@ -190,6 +190,10 @@ def test_rolling_window_ages_out_old_evidence_instead_of_swallowing_new() -> Non
             default_time_horizon=settings.default_time_horizon,
             evidence_collection_max_minutes=120,
             max_evidence_age_minutes=180,
+            already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
             clock=lambda: published_at + timedelta(seconds=30),
         )
 
@@ -362,6 +366,10 @@ def _settings() -> ThesisBuilderSettings:
         triage_max_output_tokens=200,
         listicle_prefilter_enabled=False,
         listicle_prefilter_tag_threshold=6,
+        already_priced_event_driven_atr_multiple=1.5,
+        already_priced_event_driven_return_threshold=0.04,
+        already_priced_sentiment_momentum_atr_multiple=2.0,
+        already_priced_sentiment_momentum_return_threshold=0.06,
         llm_request_timeout_seconds=60.0,
         llm_max_retries=2,
         openai_api_key="test-key",

@@ -62,6 +62,10 @@ from src.product_components.shared.instrument_lookup import (
 class _ThesisBuilderRuntimeSettings:
     evidence_collection_max_minutes = 120
     consumer_group = "thesis_builder_group"
+    already_priced_event_driven_atr_multiple = 1.25
+    already_priced_event_driven_return_threshold = 0.03
+    already_priced_sentiment_momentum_atr_multiple = 1.75
+    already_priced_sentiment_momentum_return_threshold = 0.05
 
 
 class FakeDataSource:
@@ -922,6 +926,22 @@ def test_get_thesis_builder_throughput_forwards_supported_window() -> None:
     assert response.buckets[0].processed_articles_count == 5
     assert response.buckets[0].news_catalyst_articles_count == 2
     assert response.buckets[0].market_moving_articles_count == 3
+
+
+def test_get_thesis_builder_config_exposes_owned_gate_thresholds() -> None:
+    data_source = FakeDataSource(dependencies=[], providers=[])
+    service = MonitoringService(
+        settings=_settings(),
+        data_source=data_source,
+        thesis_builder_settings=_ThesisBuilderRuntimeSettings(),
+    )
+
+    response = service.get_thesis_builder_config()
+
+    assert [(item.strategy, item.atr_multiple, item.return_threshold) for item in response.already_priced_gate] == [
+        ("event_driven", 1.25, 0.03),
+        ("sentiment_momentum", 1.75, 0.05),
+    ]
 
 
 def test_get_thesis_builder_metrics_attaches_consumer_health() -> None:

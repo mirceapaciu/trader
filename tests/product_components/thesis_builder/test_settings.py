@@ -26,6 +26,10 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.triage_max_output_tokens == 200
     assert settings.listicle_prefilter_enabled is False
     assert settings.listicle_prefilter_tag_threshold == 6
+    assert settings.already_priced_event_driven_atr_multiple == 1.5
+    assert settings.already_priced_event_driven_return_threshold == 0.04
+    assert settings.already_priced_sentiment_momentum_atr_multiple == 2.0
+    assert settings.already_priced_sentiment_momentum_return_threshold == 0.06
     assert settings.llm_request_timeout_seconds == 60.0
     assert settings.llm_max_retries == 2
 
@@ -47,6 +51,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", "80")
     monkeypatch.setenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", "1")
     monkeypatch.setenv("THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD", "8")
+    monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_ATR_MULTIPLE", "1.2")
+    monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_RETURN_THRESHOLD", "0.03")
+    monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_ATR_MULTIPLE", "1.8")
+    monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_RETURN_THRESHOLD", "0.05")
     monkeypatch.setenv("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_RETRIES", "1")
 
@@ -68,5 +76,9 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.triage_max_output_tokens == 80
     assert settings.listicle_prefilter_enabled is True
     assert settings.listicle_prefilter_tag_threshold == 8
+    assert settings.already_priced_event_driven_atr_multiple == 1.2
+    assert settings.already_priced_event_driven_return_threshold == 0.03
+    assert settings.already_priced_sentiment_momentum_atr_multiple == 1.8
+    assert settings.already_priced_sentiment_momentum_return_threshold == 0.05
     assert settings.llm_request_timeout_seconds == 30.0
     assert settings.llm_max_retries == 1

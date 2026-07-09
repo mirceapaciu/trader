@@ -348,6 +348,23 @@ def test_throughput_endpoint_accepts_custom_range(monkeypatch) -> None:
     assert data_source.end_at == datetime(2026, 6, 12, 10, 0, tzinfo=timezone.utc)
 
 
+def test_thesis_builder_config_endpoint_returns_gate_thresholds(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FakeMonitoringDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    client = TestClient(create_app(settings=_settings()))
+
+    response = client.get("/api/thesis-builder/config")
+
+    assert response.status_code == 200
+    assert response.json()["already_priced_gate"][0]["strategy"] == "event_driven"
+
+
 def test_throughput_endpoint_rejects_invalid_window(monkeypatch) -> None:
     monkeypatch.setattr(
         "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",

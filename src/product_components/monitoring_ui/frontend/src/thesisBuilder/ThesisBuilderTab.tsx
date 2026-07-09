@@ -4,6 +4,7 @@ import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Toolti
 
 import {
   fetchNewsAnalyses,
+  fetchThesisBuilderConfig,
   fetchReprocessStatus,
   fetchThesisBuilderMetrics,
   fetchThesisBuilderThroughput,
@@ -13,6 +14,7 @@ import {
   reprocessThesisBuilder,
   type NewsAnalysisItem,
   type ThesisBuilderConsumerHealth,
+  type ThesisBuilderConfigResponse,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderThroughputResponse,
@@ -47,6 +49,11 @@ export function ThesisBuilderTab() {
     queryKey: ["thesis-builder", "throughput", window],
     queryFn: () => fetchThesisBuilderThroughput(window),
     refetchInterval: 15000
+  });
+  const config = useQuery({
+    queryKey: ["thesis-builder", "config"],
+    queryFn: fetchThesisBuilderConfig,
+    staleTime: 60000
   });
   const reprocess = useMutation({
     mutationFn: () => reprocessThesisBuilder({ days_back: daysBack }),
@@ -130,6 +137,7 @@ export function ThesisBuilderTab() {
       {metrics.isError && <div className="inline-error">{metrics.error.message}</div>}
       {data && !data.available && <div className="inline-error">{data.message ?? "ThesisBuilder telemetry unavailable."}</div>}
       <ConsumerHealthBanner health={data?.consumer_health} />
+      <ThesisBuilderConfigPanel data={config.data} error={config.error} />
 
       <section className="panel panel-large">
         <div className="panel-heading">
@@ -248,6 +256,29 @@ function ConsumerHealthBanner({ health }: { health?: ThesisBuilderConsumerHealth
         <span>Last analysis: {formatDuration(health.last_analysis_age_seconds)} ago</span>
       </div>
     </div>
+  );
+}
+
+function ThesisBuilderConfigPanel({ data, error }: { data?: ThesisBuilderConfigResponse; error: Error | null }) {
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Already-Priced Gate</h2>
+          <span>ThesisBuilder-owned thresholds</span>
+        </div>
+      </div>
+      {error && <div className="inline-error">{error.message}</div>}
+      <div className="quality-grid thesis-stale-grid">
+        {(data?.already_priced_gate ?? []).map((gate) => (
+          <div className="quality-value" key={gate.strategy}>
+            <span>{formatToken(gate.strategy)}</span>
+            <strong>{gate.atr_multiple.toFixed(1)} ATR / {formatPercent(gate.return_threshold)}</strong>
+          </div>
+        ))}
+        {!data && !error ? <EmptyState text="Loading gate config" /> : null}
+      </div>
+    </section>
   );
 }
 
@@ -1174,6 +1205,10 @@ function ThesisBuilderThroughputTooltip({
 
 function formatInteger(value?: number | null) {
   return value == null ? "n/a" : value.toLocaleString();
+}
+
+function formatPercent(value?: number | null) {
+  return value == null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }
 
 function formatDuration(seconds?: number | null) {

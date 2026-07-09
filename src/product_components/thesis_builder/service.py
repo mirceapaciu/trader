@@ -232,6 +232,10 @@ class ThesisBuilderRunner:
             triage_enabled=self._settings.triage_enabled,
             listicle_prefilter_enabled=self._settings.listicle_prefilter_enabled,
             listicle_prefilter_tag_threshold=self._settings.listicle_prefilter_tag_threshold,
+            already_priced_event_driven_atr_multiple=self._settings.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=self._settings.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=self._settings.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=self._settings.already_priced_sentiment_momentum_return_threshold,
         )
 
     def status(self) -> ThesisBuilderRuntimeStatus:
@@ -364,6 +368,10 @@ class ThesisBuilderRunner:
                 default_time_horizon=self._settings.default_time_horizon,
                 evidence_collection_max_minutes=self._settings.evidence_collection_max_minutes,
                 max_evidence_age_minutes=self._settings.max_evidence_age_minutes,
+                already_priced_event_driven_atr_multiple=self._settings.already_priced_event_driven_atr_multiple,
+                already_priced_event_driven_return_threshold=self._settings.already_priced_event_driven_return_threshold,
+                already_priced_sentiment_momentum_atr_multiple=self._settings.already_priced_sentiment_momentum_atr_multiple,
+                already_priced_sentiment_momentum_return_threshold=self._settings.already_priced_sentiment_momentum_return_threshold,
             )
             analyses_created += 1
             if result.signal is not None:

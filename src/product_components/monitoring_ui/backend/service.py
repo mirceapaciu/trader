@@ -52,6 +52,8 @@ from .models import (
     NewsAnalysesResponse,
     ProvidersResponse,
     ThesisBuilderConsumerHealth,
+    ThesisBuilderAlreadyPricedGateConfig,
+    ThesisBuilderConfigResponse,
     ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
     ThesisCardListResponse,
@@ -259,6 +261,10 @@ class InvalidThroughputWindow(ValueError):
 class ThesisBuilderRuntimeSettings(Protocol):
     evidence_collection_max_minutes: int
     consumer_group: str
+    already_priced_event_driven_atr_multiple: float
+    already_priced_event_driven_return_threshold: float
+    already_priced_sentiment_momentum_atr_multiple: float
+    already_priced_sentiment_momentum_return_threshold: float
 
 
 class MonitoringService:
@@ -430,6 +436,24 @@ class MonitoringService:
                 buckets=[],
                 generated_at=now,
             )
+
+    def get_thesis_builder_config(self) -> ThesisBuilderConfigResponse:
+        settings = self._thesis_builder_settings
+        return ThesisBuilderConfigResponse(
+            already_priced_gate=[
+                ThesisBuilderAlreadyPricedGateConfig(
+                    strategy="event_driven",
+                    atr_multiple=settings.already_priced_event_driven_atr_multiple,
+                    return_threshold=settings.already_priced_event_driven_return_threshold,
+                ),
+                ThesisBuilderAlreadyPricedGateConfig(
+                    strategy="sentiment_momentum",
+                    atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+                    return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+                ),
+            ],
+            generated_at=_utc_now(),
+        )
 
     def _thesis_builder_consumer_health(self) -> ThesisBuilderConsumerHealth | None:
         try:

@@ -119,13 +119,13 @@ the edge.
 
 **Implications (guardrails this posture requires).**
 
-- **Suppress already-priced moves — KNOWN GAP, not yet implemented.**
-  `event_driven` cards should use market context to avoid entering after the move
-  is spent (see thesis-builder behavior §3.2 / §5.1). As of this writing this is
-  *not* enforced: market context is provided to the LLM and persisted, but no
-  deterministic gate or prompt instruction suppresses already-priced moves, so a
-  card on a spent spike can still be emitted as `valid`. Closing this gap is
-  required for the posture to hold in practice.
+- **Suppress already-priced moves.**
+  `event_driven` and `sentiment_momentum` cards use market context to avoid
+  entering after the move is spent (see thesis-builder behavior §3.2 / §5.1).
+  ThesisBuilder rejects card candidates whose direction-aligned 1-day move
+  exceeds configured return or ATR-20 thresholds, persists the rejected audit
+  card with `rejection_reason_code=already_priced`, and fails closed with
+  `market_context_unavailable` when required market context is missing or stale.
 - **Regime-fit, not just speed, in the backtester.** The backtester's
   `ideal_pnl − actual_pnl` "cost of latency" is a **regime-fit diagnostic**: a
   large, irrecoverable gap signals a fast-regime event we should not have been

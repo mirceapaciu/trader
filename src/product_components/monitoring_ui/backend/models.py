@@ -106,6 +106,21 @@ class ThesisBuilderThroughputResponse(BaseModel):
     generated_at: datetime
 
 
+class ThesisBuilderAlreadyPricedGateConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    strategy: str
+    atr_multiple: float
+    return_threshold: float
+
+
+class ThesisBuilderConfigResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    already_priced_gate: list[ThesisBuilderAlreadyPricedGateConfig]
+    generated_at: datetime
+
+
 class ThesisBuilderEvidenceWindow(BaseModel):
     model_config = ConfigDict(frozen=True)
 

@@ -90,6 +90,10 @@ class ThesisRegenerationProvider:
             "triage_max_output_tokens": s.triage_max_output_tokens,
             "listicle_prefilter_enabled": thresholds.listicle_prefilter_enabled,
             "listicle_prefilter_tag_threshold": thresholds.listicle_prefilter_tag_threshold,
+            "already_priced_event_driven_atr_multiple": thresholds.already_priced_event_driven_atr_multiple,
+            "already_priced_event_driven_return_threshold": thresholds.already_priced_event_driven_return_threshold,
+            "already_priced_sentiment_momentum_atr_multiple": thresholds.already_priced_sentiment_momentum_atr_multiple,
+            "already_priced_sentiment_momentum_return_threshold": thresholds.already_priced_sentiment_momentum_return_threshold,
         }
 
     def _resolve_thresholds(
@@ -118,6 +122,10 @@ class ThesisRegenerationProvider:
             triage_enabled=s.triage_enabled,
             listicle_prefilter_enabled=s.listicle_prefilter_enabled,
             listicle_prefilter_tag_threshold=s.listicle_prefilter_tag_threshold,
+            already_priced_event_driven_atr_multiple=s.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=s.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=s.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=s.already_priced_sentiment_momentum_return_threshold,
         )
 
     def regenerate(

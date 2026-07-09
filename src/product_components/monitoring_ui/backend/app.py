@@ -37,6 +37,7 @@ from .models import (
     NewsAnalysesResponse,
     NewsFilterConfigPayload,
     ProvidersResponse,
+    ThesisBuilderConfigResponse,
     ThesisBuilderMetricsResponse,
     ThesisBuilderThroughputResponse,
     ThesisCardListResponse,
@@ -241,6 +242,10 @@ def create_app(
             )
         except InvalidThroughputWindow as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get("/api/thesis-builder/config", response_model=ThesisBuilderConfigResponse)
+    def get_thesis_builder_config() -> ThesisBuilderConfigResponse:
+        return service.get_thesis_builder_config()
 
     @app.get("/api/thesis-builder/cards", response_model=ThesisCardListResponse)
     def get_thesis_cards(window: str | None = Query(default=None)) -> ThesisCardListResponse:

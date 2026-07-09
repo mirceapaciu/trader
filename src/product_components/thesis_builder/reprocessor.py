@@ -51,6 +51,10 @@ class ThesisBuilderReprocessor:
         triage_enabled: bool = False,
         listicle_prefilter_enabled: bool = False,
         listicle_prefilter_tag_threshold: int = 6,
+        already_priced_event_driven_atr_multiple: float = 1.5,
+        already_priced_event_driven_return_threshold: float = 0.04,
+        already_priced_sentiment_momentum_atr_multiple: float = 2.0,
+        already_priced_sentiment_momentum_return_threshold: float = 0.06,
     ) -> None:
         self._dsn = dsn
         self._news_fetcher_schema = news_fetcher_schema
@@ -68,6 +72,10 @@ class ThesisBuilderReprocessor:
         self._triage_enabled = triage_enabled
         self._listicle_prefilter_enabled = listicle_prefilter_enabled
         self._listicle_prefilter_tag_threshold = listicle_prefilter_tag_threshold
+        self._already_priced_event_driven_atr_multiple = already_priced_event_driven_atr_multiple
+        self._already_priced_event_driven_return_threshold = already_priced_event_driven_return_threshold
+        self._already_priced_sentiment_momentum_atr_multiple = already_priced_sentiment_momentum_atr_multiple
+        self._already_priced_sentiment_momentum_return_threshold = already_priced_sentiment_momentum_return_threshold
 
     def reprocess(self, *, days_back: int, max_articles: int = 200) -> ReprocessResult:
         run_id = str(uuid.uuid4())
@@ -202,6 +210,10 @@ class ThesisBuilderReprocessor:
                     default_time_horizon=self._default_time_horizon,
                     evidence_collection_max_minutes=self._evidence_collection_max_minutes,
                     max_evidence_age_minutes=self._max_evidence_age_minutes,
+                    already_priced_event_driven_atr_multiple=self._already_priced_event_driven_atr_multiple,
+                    already_priced_event_driven_return_threshold=self._already_priced_event_driven_return_threshold,
+                    already_priced_sentiment_momentum_atr_multiple=self._already_priced_sentiment_momentum_atr_multiple,
+                    already_priced_sentiment_momentum_return_threshold=self._already_priced_sentiment_momentum_return_threshold,
                     clock=clock,
                     reprocess_run_id=run_id,
                 )

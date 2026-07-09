@@ -48,6 +48,10 @@ class RegenerationThresholds:
     triage_enabled: bool = False
     listicle_prefilter_enabled: bool = False
     listicle_prefilter_tag_threshold: int = 6
+    already_priced_event_driven_atr_multiple: float = 1.5
+    already_priced_event_driven_return_threshold: float = 0.04
+    already_priced_sentiment_momentum_atr_multiple: float = 2.0
+    already_priced_sentiment_momentum_return_threshold: float = 0.06
 
 
 @dataclass(frozen=True)
@@ -249,6 +253,10 @@ class RegenerationRunner:
                     default_time_horizon=self._thresholds.default_time_horizon,
                     evidence_collection_max_minutes=self._thresholds.evidence_collection_max_minutes,
                     max_evidence_age_minutes=self._thresholds.max_evidence_age_minutes,
+                    already_priced_event_driven_atr_multiple=self._thresholds.already_priced_event_driven_atr_multiple,
+                    already_priced_event_driven_return_threshold=self._thresholds.already_priced_event_driven_return_threshold,
+                    already_priced_sentiment_momentum_atr_multiple=self._thresholds.already_priced_sentiment_momentum_atr_multiple,
+                    already_priced_sentiment_momentum_return_threshold=self._thresholds.already_priced_sentiment_momentum_return_threshold,
                     clock=clock,
                     reprocess_run_id=self._run_id,
                 )

@@ -46,6 +46,10 @@ class ThesisBuilderSettings:
     triage_max_output_tokens: int
     listicle_prefilter_enabled: bool
     listicle_prefilter_tag_threshold: int
+    already_priced_event_driven_atr_multiple: float
+    already_priced_event_driven_return_threshold: float
+    already_priced_sentiment_momentum_atr_multiple: float
+    already_priced_sentiment_momentum_return_threshold: float
     llm_request_timeout_seconds: float
     llm_max_retries: int
     openai_api_key: str
@@ -103,6 +107,18 @@ class ThesisBuilderSettings:
             triage_max_output_tokens=_int_env("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", 200),
             listicle_prefilter_enabled=_bool_env("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", False),
             listicle_prefilter_tag_threshold=_int_env("THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD", 6),
+            already_priced_event_driven_atr_multiple=_float_env(
+                "THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_ATR_MULTIPLE", 1.5
+            ),
+            already_priced_event_driven_return_threshold=_float_env(
+                "THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_RETURN_THRESHOLD", 0.04
+            ),
+            already_priced_sentiment_momentum_atr_multiple=_float_env(
+                "THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_ATR_MULTIPLE", 2.0
+            ),
+            already_priced_sentiment_momentum_return_threshold=_float_env(
+                "THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_RETURN_THRESHOLD", 0.06
+            ),
             llm_request_timeout_seconds=_float_env("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", 60.0),
             llm_max_retries=_int_env("THESIS_BUILDER_LLM_MAX_RETRIES", 2),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),

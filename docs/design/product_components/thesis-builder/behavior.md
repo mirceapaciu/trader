@@ -107,13 +107,19 @@ Market context may include:
 - Optional sector, index, or peer relative movement.
 
 Strategy market-data requirements:
-- `event_driven`: market context is optional, but should be used when available to improve risk-box precision and avoid already-priced moves.
-- `sentiment_momentum`: market context is recommended; missing context should lower confidence unless the news evidence is unusually strong and time-sensitive.
+- `event_driven`: market context is required at card creation for the already-priced gate. Missing, stale, or unusable context rejects the card candidate with `market_context_unavailable`.
+- `sentiment_momentum`: market context is required at card creation for the already-priced gate. Missing, stale, or unusable context rejects the card candidate with `market_context_unavailable`.
 - `sector_rotation`: requires enough peer, sector, or index context returned by the MarketData API to support any rotation claim.
 - `contrarian_reversal`: requires usable recent and historical market context. ThesisBuilder must not create a contrarian reversal card unless price evolution shows an overextended move, stabilization or reversal evidence, and a deterministic tight risk box.
 - `trend_follow`: requires usable historical market context sufficient to establish that the move is a durable trend rather than a short-lived news reaction.
 
 When a strategy requires market context and that context is unavailable, stale, or insufficient, ThesisBuilder must fail closed for that strategy. It may still create a different strategy card from the same news evidence only if that alternate strategy satisfies its own requirements.
+
+Already-priced gate:
+- `event_driven` and `sentiment_momentum` cards are rejected when the direction-aligned 1-day return exceeds the configured return threshold or the direction-aligned price move exceeds the configured ATR-20 multiple.
+- Rejected candidates are persisted as non-executable audit cards with `validation_status=rejected` and `rejection_reason_code=already_priced`.
+- The triggering market-context snapshot is copied onto the card for audit.
+- Thresholds are owned by ThesisBuilder configuration and surfaced read-only in Monitoring UI.
 
 ## 3.3 LLM Analysis Contract
 
@@ -196,12 +202,13 @@ clean fast news is structurally unreachable. ThesisBuilder should fail closed on
 already-priced moves rather than chase them. See "Target Regime & Latency
 Posture" in `docs/design/overview.md` §1.4 for the full rationale.
 
-**Implementation status:** the already-priced suppression implied here and in
-§3.2 is **not yet enforced**. Market context is fetched, passed to the LLM, and
-persisted, but no deterministic gate or prompt instruction suppresses a card
-whose move is already spent — such a card can still be emitted as `valid`. Until
-this gap is closed, the regime posture is documented intent, not enforced
-behavior.
+**Implementation status:** already-priced suppression is enforced for
+`event_driven` and `sentiment_momentum` cards. ThesisBuilder rejects a card
+candidate when market context shows the direction-aligned 1-day move exceeds the
+configured return threshold or ATR-20 multiple. Missing or stale market context
+fails closed with `market_context_unavailable`. The LLM prompt also includes an
+advisory instruction to lower confidence or prefer `hold` when market context
+shows the move is already realized; the deterministic gate remains authoritative.
 
 ## 6. Strategy Policy
 

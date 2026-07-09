@@ -4,7 +4,10 @@ from src.product_components.thesis_builder.models import (
     ThesisStrategy,
     TradeDirection,
 )
-from src.product_components.thesis_builder.repository import _analysis_rejection
+from src.product_components.thesis_builder.repository import (
+    _already_priced_rejection,
+    _analysis_rejection,
+)
 
 
 def _result(**overrides) -> LlmAnalysisResult:
@@ -96,3 +99,85 @@ def test_content_type_gate_precedes_threshold_gates() -> None:
         min_relevance=0.5,
     )
     assert rejection == "routed_to_analyst"
+
+
+def test_already_priced_rejects_buy_after_directional_runup() -> None:
+    rejection = _already_priced_rejection(
+        result=_result(candidate_strategy=ThesisStrategy.EVENT_DRIVEN, direction=TradeDirection.BUY),
+        market_context_snapshot=_context(return_1d=0.05, current_price=105.0, previous_close=100.0, atr_20d=2.0),
+        event_driven_atr_multiple=1.5,
+        event_driven_return_threshold=0.04,
+        sentiment_momentum_atr_multiple=2.0,
+        sentiment_momentum_return_threshold=0.06,
+    )
+
+    assert rejection == "already_priced"
+
+
+def test_already_priced_rejects_sell_after_directional_drop() -> None:
+    rejection = _already_priced_rejection(
+        result=_result(candidate_strategy=ThesisStrategy.SENTIMENT_MOMENTUM, direction=TradeDirection.SELL),
+        market_context_snapshot=_context(return_1d=-0.07, current_price=93.0, previous_close=100.0, atr_20d=4.0),
+        event_driven_atr_multiple=1.5,
+        event_driven_return_threshold=0.04,
+        sentiment_momentum_atr_multiple=2.0,
+        sentiment_momentum_return_threshold=0.06,
+    )
+
+    assert rejection == "already_priced"
+
+
+def test_already_priced_boundary_and_opposite_move_are_accepted() -> None:
+    boundary = _already_priced_rejection(
+        result=_result(candidate_strategy=ThesisStrategy.EVENT_DRIVEN, direction=TradeDirection.BUY),
+        market_context_snapshot=_context(return_1d=0.04, current_price=104.0, previous_close=100.0, atr_20d=10.0),
+        event_driven_atr_multiple=1.5,
+        event_driven_return_threshold=0.04,
+        sentiment_momentum_atr_multiple=2.0,
+        sentiment_momentum_return_threshold=0.06,
+    )
+    opposite = _already_priced_rejection(
+        result=_result(candidate_strategy=ThesisStrategy.EVENT_DRIVEN, direction=TradeDirection.BUY),
+        market_context_snapshot=_context(return_1d=-0.08, current_price=92.0, previous_close=100.0, atr_20d=2.0),
+        event_driven_atr_multiple=1.5,
+        event_driven_return_threshold=0.04,
+        sentiment_momentum_atr_multiple=2.0,
+        sentiment_momentum_return_threshold=0.06,
+    )
+
+    assert boundary is None
+    assert opposite is None
+
+
+def test_already_priced_fails_closed_when_context_unusable() -> None:
+    missing = _already_priced_rejection(
+        result=_result(candidate_strategy=ThesisStrategy.EVENT_DRIVEN, direction=TradeDirection.BUY),
+        market_context_snapshot=None,
+        event_driven_atr_multiple=1.5,
+        event_driven_return_threshold=0.04,
+        sentiment_momentum_atr_multiple=2.0,
+        sentiment_momentum_return_threshold=0.06,
+    )
+    stale = _already_priced_rejection(
+        result=_result(candidate_strategy=ThesisStrategy.EVENT_DRIVEN, direction=TradeDirection.BUY),
+        market_context_snapshot=_context(source_status="stale"),
+        event_driven_atr_multiple=1.5,
+        event_driven_return_threshold=0.04,
+        sentiment_momentum_atr_multiple=2.0,
+        sentiment_momentum_return_threshold=0.06,
+    )
+
+    assert missing == "market_context_unavailable"
+    assert stale == "market_context_unavailable"
+
+
+def _context(**overrides):
+    base = {
+        "source_status": "fresh",
+        "return_1d": 0.0,
+        "current_price": 100.0,
+        "previous_close": 100.0,
+        "atr_20d": 2.0,
+    }
+    base.update(overrides)
+    return base

@@ -232,6 +232,18 @@ def test_build_prompt_keeps_market_context_numbers_cache_sensitive() -> None:
     assert prompt_a != prompt_b
 
 
+def test_build_prompt_includes_already_priced_advisory() -> None:
+    prompt = _build_prompt(
+        article=_article(),
+        ticker="AAPL",
+        exchange_code="XNAS",
+        market_context_snapshot={"source_status": "fresh", "return_1d": 0.08},
+    )
+
+    assert "already had a sharp positive move" in prompt
+    assert "deterministic ThesisBuilder gate is authoritative" in prompt
+
+
 def test_cached_analysis_does_not_reserve_or_consume_token_budget() -> None:
     analyzer = ThesisAnalyzer(
         client=_CachedClient(),

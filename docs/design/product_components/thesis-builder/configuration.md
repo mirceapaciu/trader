@@ -32,6 +32,10 @@ THESIS_BUILDER_TREND_FOLLOW_MIN_CONFIDENCE=0.68
 THESIS_BUILDER_RISK_MAX_LOSS_USD=150
 THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED=false
 THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD=6
+THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_ATR_MULTIPLE=1.5
+THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_RETURN_THRESHOLD=0.04
+THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_ATR_MULTIPLE=2.0
+THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_RETURN_THRESHOLD=0.06
 
 # Pipeline scheduling
 PIPELINE_INTERVAL=120        # seconds
@@ -53,6 +57,12 @@ ThesisBuilder first resolves article/instrument pairs deterministically. Alias m
 `THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED` enables a conservative roundup heuristic. When enabled, an article tagged with more than `THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD` active watchlist instruments and no headline alias match is persisted as rejected analyses with `rejection_reason_code=prefiltered_roundup` without an LLM call. The default is disabled.
 
 `THESIS_BUILDER_TRIAGE_ENABLED` enables a recall-biased small-LLM triage call before full analysis. Triage returns only subjecthood and `content_type`; clear non-subjects persist as `triage_not_subject`, clear non-catalysts persist as `triage_not_catalyst`, and ambiguous cases pass through to the full analysis prompt. Triage tokens share the same ThesisBuilder run budget as full analysis and are stored on the rejected analysis rows when triage rejects a pair. The default is disabled until replay validation shows acceptable recall.
+
+## Already-Priced Gate
+
+At thesis-card creation time, ThesisBuilder rejects `event_driven` and `sentiment_momentum` cards when the market-context snapshot shows the instrument has already moved too far in the thesis direction. The gate checks both 1-day direction-aligned return and direction-aligned price move measured in ATR-20 units. Exceeding either configured threshold persists the candidate as a rejected audit card with `rejection_reason_code=already_priced`; missing or stale context persists `market_context_unavailable` for gated strategies. The same thresholds are used by live processing, historical reprocess, and regeneration backtests.
+
+Thresholds are ThesisBuilder-owned configuration. Monitoring UI exposes them read-only in the ThesisBuilder tab.
 
 ## Shared Dependencies
 

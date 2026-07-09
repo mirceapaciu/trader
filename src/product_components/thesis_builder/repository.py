@@ -132,6 +132,10 @@ class PostgresThesisBuilderRepository:
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
+        already_priced_event_driven_atr_multiple: float,
+        already_priced_event_driven_return_threshold: float,
+        already_priced_sentiment_momentum_atr_multiple: float,
+        already_priced_sentiment_momentum_return_threshold: float,
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
@@ -162,6 +166,10 @@ class PostgresThesisBuilderRepository:
                     default_time_horizon=default_time_horizon,
                     evidence_collection_max_minutes=evidence_collection_max_minutes,
                     max_evidence_age_minutes=max_evidence_age_minutes,
+                    already_priced_event_driven_atr_multiple=already_priced_event_driven_atr_multiple,
+                    already_priced_event_driven_return_threshold=already_priced_event_driven_return_threshold,
+                    already_priced_sentiment_momentum_atr_multiple=already_priced_sentiment_momentum_atr_multiple,
+                    already_priced_sentiment_momentum_return_threshold=already_priced_sentiment_momentum_return_threshold,
                     clock=clock,
                     reprocess_run_id=reprocess_run_id,
                 )
@@ -290,6 +298,10 @@ class PostgresThesisBuilderRepository:
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
+        already_priced_event_driven_atr_multiple: float,
+        already_priced_event_driven_return_threshold: float,
+        already_priced_sentiment_momentum_atr_multiple: float,
+        already_priced_sentiment_momentum_return_threshold: float,
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> ThesisCardSignal | None:
@@ -341,6 +353,17 @@ class PostgresThesisBuilderRepository:
         stale_seconds = max(0.0, max_age_seconds - allowed_age_seconds)
         validation_status = ValidationStatus.REJECTED if stale_seconds > 0 else ValidationStatus.VALID
         rejection_reason = "stale_evidence" if stale_seconds > 0 else None
+        already_priced_rejection = _already_priced_rejection(
+            result=result,
+            market_context_snapshot=market_context_snapshot,
+            event_driven_atr_multiple=already_priced_event_driven_atr_multiple,
+            event_driven_return_threshold=already_priced_event_driven_return_threshold,
+            sentiment_momentum_atr_multiple=already_priced_sentiment_momentum_atr_multiple,
+            sentiment_momentum_return_threshold=already_priced_sentiment_momentum_return_threshold,
+        )
+        if validation_status is ValidationStatus.VALID and already_priced_rejection is not None:
+            validation_status = ValidationStatus.REJECTED
+            rejection_reason = already_priced_rejection
         confidence = sum(item.confidence for item in selected) / len(selected)
         idempotency_key = _card_idempotency_key(
             ticker=result.ticker,
@@ -676,6 +699,77 @@ def _analysis_rejection(
     return None
 
 
+def _already_priced_rejection(
+    *,
+    result: LlmAnalysisResult,
+    market_context_snapshot: dict[str, Any] | None,
+    event_driven_atr_multiple: float,
+    event_driven_return_threshold: float,
+    sentiment_momentum_atr_multiple: float,
+    sentiment_momentum_return_threshold: float,
+) -> str | None:
+    thresholds = _already_priced_thresholds(
+        result.candidate_strategy,
+        event_driven_atr_multiple=event_driven_atr_multiple,
+        event_driven_return_threshold=event_driven_return_threshold,
+        sentiment_momentum_atr_multiple=sentiment_momentum_atr_multiple,
+        sentiment_momentum_return_threshold=sentiment_momentum_return_threshold,
+    )
+    if thresholds is None:
+        return None
+    atr_multiple, return_threshold = thresholds
+    metrics = _direction_aligned_market_move(result, market_context_snapshot)
+    if metrics is None:
+        return "market_context_unavailable"
+    aligned_return, aligned_price_move, atr_20d = metrics
+    if aligned_return > return_threshold:
+        return "already_priced"
+    if atr_20d is not None and atr_20d > 0 and aligned_price_move > atr_multiple * atr_20d:
+        return "already_priced"
+    return None
+
+
+def _already_priced_thresholds(
+    strategy: ThesisStrategy,
+    *,
+    event_driven_atr_multiple: float,
+    event_driven_return_threshold: float,
+    sentiment_momentum_atr_multiple: float,
+    sentiment_momentum_return_threshold: float,
+) -> tuple[float, float] | None:
+    if strategy is ThesisStrategy.EVENT_DRIVEN:
+        return event_driven_atr_multiple, event_driven_return_threshold
+    if strategy is ThesisStrategy.SENTIMENT_MOMENTUM:
+        return sentiment_momentum_atr_multiple, sentiment_momentum_return_threshold
+    return None
+
+
+def _direction_aligned_market_move(
+    result: LlmAnalysisResult,
+    market_context_snapshot: dict[str, Any] | None,
+) -> tuple[float, float, float | None] | None:
+    if market_context_snapshot is None:
+        return None
+    status = str(market_context_snapshot.get("source_status") or "").lower()
+    if status not in {"fresh", "delayed"}:
+        return None
+    sign = 1.0 if result.direction is TradeDirection.BUY else -1.0 if result.direction is TradeDirection.SELL else 0.0
+    if sign == 0:
+        return None
+
+    raw_return = _float_or_none(market_context_snapshot.get("return_1d"))
+    current_price = _float_or_none(market_context_snapshot.get("current_price"))
+    previous_close = _float_or_none(market_context_snapshot.get("previous_close"))
+    if raw_return is None and current_price is not None and previous_close not in {None, 0.0}:
+        raw_return = (current_price - previous_close) / previous_close
+    if raw_return is None or current_price is None or previous_close is None:
+        return None
+    atr_20d = _float_or_none(market_context_snapshot.get("atr_20d"))
+    aligned_return = sign * raw_return
+    aligned_price_move = sign * (current_price - previous_close)
+    return aligned_return, aligned_price_move, atr_20d
+
+
 def _evidence(*, selected: list[PersistedAnalysis]) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     for analysis in selected:
@@ -725,6 +819,15 @@ def _market_context_as_of(snapshot: dict[str, Any] | None) -> datetime | None:
         return None
     value = snapshot["as_of"]
     return _to_utc(value) if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _window(row: dict[str, Any]) -> dict[str, Any]:

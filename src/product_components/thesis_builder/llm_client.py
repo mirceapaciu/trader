@@ -294,6 +294,11 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "An opinion or valuation piece with no catalyst for this instrument must be opinion even if it "
                 "reads bullishly. Do NOT label it news_catalyst.",
             ],
+            "already_priced_rules": [
+                "Use market_context when present to detect whether the thesis-direction move has already been realized.",
+                "If a buy thesis already had a sharp positive move, or a sell thesis already had a sharp negative move, lower confidence and prefer suggested_action=hold.",
+                "The deterministic ThesisBuilder gate is authoritative; this prompt instruction is advisory signal-quality guidance.",
+            ],
             "strategy_scope_v1": ["event_driven", "sentiment_momentum"],
             "unsupported_strategies_must_still_be_labeled_if_best_fit": [
                 "sector_rotation",

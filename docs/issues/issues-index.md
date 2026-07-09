@@ -30,7 +30,7 @@
 | 260708-04 | Monitoring UI PowerShell start script does not capture backend process output | resolved | docs/issues/issues-detail/260708-04.md |
 | 260709-01 | High-price tickers are structurally unsizeable; generation produces cards the executor can never trade | new | docs/issues/issues-detail/260709-01.md |
 | 260709-02 | Two-tier pre-filter (deterministic screen + small-LLM triage) before paying for full LLM analysis | resolved | docs/issues/issues-detail/260709-02.md |
-| 260709-03 | Implement already-priced move suppression (close the documented §1.4 known gap) | new | docs/issues/issues-detail/260709-03.md |
+| 260709-03 | Implement already-priced move suppression (close the documented §1.4 known gap) | resolved | docs/issues/issues-detail/260709-03.md |
 | 260709-04 | Confidence gates never bind — measure LLM confidence calibration, then recalibrate or replace them | new | docs/issues/issues-detail/260709-04.md |
 | 260709-05 | docs/trading-strategies.md describes a system that does not exist — align it with the implementation | new | docs/issues/issues-detail/260709-05.md |
 | 260709-06 | Add a strong-model card-synthesis pass at evidence-window satisfaction (tier 2) | new | docs/issues/issues-detail/260709-06.md |

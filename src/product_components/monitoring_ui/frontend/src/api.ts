@@ -217,6 +217,17 @@ export type ThesisBuilderMetricsResponse = {
   generated_at: string;
 };
 
+export type ThesisBuilderAlreadyPricedGateConfig = {
+  strategy: string;
+  atr_multiple: number;
+  return_threshold: number;
+};
+
+export type ThesisBuilderConfigResponse = {
+  already_priced_gate: ThesisBuilderAlreadyPricedGateConfig[];
+  generated_at: string;
+};
+
 export type ThesisBuilderThroughputBucket = {
   window_start: string;
   consumed_messages_count: number;
@@ -901,6 +912,10 @@ export function fetchThesisBuilderThroughput(
   return getJson<ThesisBuilderThroughputResponse>(
     `/api/thesis-builder/throughput?window=${encodeURIComponent(window)}`
   );
+}
+
+export function fetchThesisBuilderConfig(): Promise<ThesisBuilderConfigResponse> {
+  return getJson<ThesisBuilderConfigResponse>("/api/thesis-builder/config");
 }
 
 export function fetchThesisCards(window: ThroughputPresetWindow): Promise<ThesisCardListResponse> {
