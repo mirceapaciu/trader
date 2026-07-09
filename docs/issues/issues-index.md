@@ -26,7 +26,7 @@
 | 260707-02 | Backtester must persist per-trade excursion diagnostics required by backtest verification | resolved | docs/issues/issues-detail/260707-02.md |
 | 260708-01 | Token-budget exhaustion in regeneration backtests must be visible, not silent | resolved | docs/issues/issues-detail/260708-01.md |
 | 260708-02 | Cache LLM article analyses so repeated regeneration backtests don't re-pay for identical prompts | resolved | docs/issues/issues-detail/260708-02.md |
-| 260708-03 | Historize live market-context snapshots so regeneration can replay the exact context live analyses saw | new | docs/issues/issues-detail/260708-03.md |
+| 260708-03 | Historize live market-context snapshots so regeneration can replay the exact context live analyses saw | resolved | docs/issues/issues-detail/260708-03.md |
 | 260708-04 | Monitoring UI PowerShell start script does not capture backend process output | resolved | docs/issues/issues-detail/260708-04.md |
 | 260709-01 | High-price tickers are structurally unsizeable; generation produces cards the executor can never trade | resolved | docs/issues/issues-detail/260709-01.md |
 | 260709-02 | Two-tier pre-filter (deterministic screen + small-LLM triage) before paying for full LLM analysis | resolved | docs/issues/issues-detail/260709-02.md |

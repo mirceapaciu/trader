@@ -535,13 +535,38 @@ def _actual_tokens(raw: dict[str, Any], *, fallback_tokens: int) -> int:
     return int(value) if value is not None else fallback_tokens
 
 
+# Snapshot keys excluded from the analysis prompt. Two groups:
+#  * volatile timestamps that are never analytical signal, and
+#  * quote-provenanced fields — the ones whose value depends on the live intraday
+#    quote (current_price and everything derived from it) rather than on closed
+#    daily bars. The live pipeline feeds a quote-bearing snapshot; the regeneration
+#    backtester reconstructs context from bars only (quote=None). Dropping the
+#    quote-provenanced fields makes the live and regeneration prompts byte-identical
+#    for identical bar inputs, eliminating the live-vs-backtest context divergence by
+#    construction. This is safe because the intraday quote was measured to be inert in
+#    production (see issue 260708-03): it was absent in ~89% of analyses, never fresh,
+#    and its return_1d was 0.0 in 100% of the analyses that had it — so the deterministic
+#    already-priced gate (which keys off return_1d on the stored snapshot) never diverged.
+_PROMPT_EXCLUDED_CONTEXT_KEYS = {
+    "as_of",
+    "quote_fetched_at",
+    "bars_fetched_at",
+    "source_status",
+    "current_price",
+    "previous_close",
+    "return_1d",
+    "return_5d",
+    "return_20d",
+    "drawdown_from_high_20d",
+}
+
+
 def _prompt_market_context(value: Any) -> Any:
-    volatile_keys = {"as_of", "quote_fetched_at", "bars_fetched_at"}
     if isinstance(value, dict):
         return {
             key: _prompt_market_context(item)
             for key, item in value.items()
-            if key not in volatile_keys
+            if key not in _PROMPT_EXCLUDED_CONTEXT_KEYS
         }
     if isinstance(value, list):
         return [_prompt_market_context(item) for item in value]

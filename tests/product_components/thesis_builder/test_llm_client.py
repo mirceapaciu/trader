@@ -233,6 +233,91 @@ def test_build_prompt_keeps_market_context_numbers_cache_sensitive() -> None:
     assert prompt_a != prompt_b
 
 
+def test_build_prompt_identical_for_quote_bearing_and_bar_only_context() -> None:
+    # Issue 260708-03: the live path builds market context from a quote + bars, while
+    # the regeneration backtester reconstructs it from bars only (quote=None). The
+    # analysis prompt must be byte-identical for identical bars so live and backtest
+    # analyses never diverge on context. Use a fresh realtime quote whose last_price
+    # differs from the last bar close (the worst case for divergence).
+    import json
+    from dataclasses import asdict
+    from datetime import datetime, timedelta, timezone
+
+    from src.product_components.market_data.context import build_market_context
+    from src.product_components.market_data.models import (
+        MarketBar,
+        MarketQuote,
+        QuoteDataType,
+    )
+
+    now = datetime(2025, 1, 2, 14, 0, tzinfo=timezone.utc)
+    bars = [
+        MarketBar(
+            ticker="AAPL",
+            exchange_code="XNAS",
+            provider="test",
+            bar_interval="1d",
+            bar_start_at=now - timedelta(days=30 - i),
+            currency="USD",
+            open_price=100.0 + i,
+            high_price=101.0 + i,
+            low_price=99.0 + i,
+            close_price=100.0 + i,
+            volume=1_000 + i,
+            adjusted=False,
+            fetched_at=now,
+            provider_metadata={},
+        )
+        for i in range(30)
+    ]
+    quote = MarketQuote(
+        ticker="AAPL",
+        exchange_code="XNAS",
+        provider="test",
+        data_type=QuoteDataType.REALTIME,
+        currency="USD",
+        bid_price=128.0,
+        ask_price=128.2,
+        last_price=128.1,  # deliberately far from the last bar close (129.0)
+        previous_close=127.0,
+        volume=2_000,
+        provider_timestamp=now,
+        fetched_at=now,
+        provider_metadata={},
+    )
+
+    def _ctx(quote_arg):
+        snap = build_market_context(
+            ticker="AAPL",
+            exchange_code="XNAS",
+            quote=quote_arg,
+            bars=bars,
+            now=now,
+            quote_max_age_seconds=300,
+        )
+        return json.loads(json.dumps(asdict(snap), default=str, sort_keys=True))
+
+    live_ctx = _ctx(quote)
+    backtest_ctx = _ctx(None)
+    # The raw snapshots differ on the quote-provenanced fields...
+    assert live_ctx["current_price"] != backtest_ctx["current_price"]
+    assert live_ctx["source_status"] != backtest_ctx["source_status"]
+
+    article = _article()
+    live_prompt = _build_prompt(
+        article=article, ticker="AAPL", exchange_code="XNAS", market_context_snapshot=live_ctx
+    )
+    backtest_prompt = _build_prompt(
+        article=article, ticker="AAPL", exchange_code="XNAS", market_context_snapshot=backtest_ctx
+    )
+    # ...but the prompts fed to the LLM are byte-identical.
+    assert live_prompt == backtest_prompt
+    # The bar-derived features survive; the quote-provenanced ones are gone.
+    assert '"sma_20d"' in live_prompt
+    assert "current_price" not in live_prompt
+    assert "return_1d" not in live_prompt
+
+
 def test_build_prompt_includes_already_priced_advisory() -> None:
     prompt = _build_prompt(
         article=_article(),
