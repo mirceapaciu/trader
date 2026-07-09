@@ -2,7 +2,7 @@
 
 How to determine whether the news→thesis-card pipeline produces cards that make money, why a
 backtest's P&L is what it is, and what to change first. This is the canonical reference for the
-`verify-backtest` Claude Code skill (`.claude/skills/verify-backtest.md`), which executes this
+`verify-backtest` agent skill (`.agents/skills/verify-backtest/SKILL.md`), which executes this
 methodology as a development/audit workflow.
 
 **Execution model.** Verification is not an application component. It runs as an agent-driven

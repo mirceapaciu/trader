@@ -1,3 +1,8 @@
+---
+name: fix-and-verify
+description: Drive a feature to working state end-to-end — start infrastructure, exercise the real endpoint or UI path, read logs and DB state, fix the root cause, restart, and repeat until the golden path passes. Use when the user asks to fix, debug, or verify a feature against the running system.
+---
+
 # fix-and-verify
 
 Drive a feature to working state by running it, reading what breaks, fixing it, and repeating. Stop when the golden path produces the expected result with no errors.

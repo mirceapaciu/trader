@@ -21,7 +21,7 @@ Two execution styles coexist, chosen per module by what the work is:
   fixes it recommends. Deterministic statistics used by a skill live in committed scripts, and
   simulation-time facts are pushed down into the owning component, so numbers stay reproducible.
   The backtest verification workflow is the template
-  (`docs/design/backtest-verification-methodology.md` + `.claude/skills/verify-backtest.md`).
+  (`docs/design/backtest-verification-methodology.md` + `.agents/skills/verify-backtest/SKILL.md`).
 
 ## 2. Module Map
 

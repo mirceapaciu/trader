@@ -1,3 +1,8 @@
+---
+name: verify-backtest
+description: Diagnose why a backtest run shows the P&L it shows — integrity checks, P&L attribution, counterfactual sweeps, ex-ante card judging, and a verdict report with ranked recommendations. Use when the user asks to verify, diagnose, or explain a backtest run's results.
+---
+
 # verify-backtest
 
 Diagnose why a backtest run shows the P&L it shows. Verify the run is trustworthy, attribute the
