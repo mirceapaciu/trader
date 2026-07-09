@@ -131,3 +131,14 @@ caught every problem above with evidence.
 
 Until those land, no statement about profitability — positive or negative — is supported
 by evidence.
+
+## Tracked issues
+
+| Finding | Issue |
+|---|---|
+| 1 — risk-box / universe mismatch | [260709-01](../issues/issues-detail/260709-01.md) |
+| 2 — already-priced suppression gap | [260709-03](../issues/issues-detail/260709-03.md) |
+| 3 — evidence gate selects news-dense mega-caps | not tracked — config already widened; residual is a strategy observation to revisit once an n≥30 holdout sample exists |
+| 4 — confidence gates never bind | [260709-04](../issues/issues-detail/260709-04.md) |
+| 5 — trading-strategies.md stale | [260709-05](../issues/issues-detail/260709-05.md) |
+| 6 — validation loop starved | visibility: [260708-01](../issues/issues-detail/260708-01.md) (pre-existing); wasted LLM spend: [260709-02](../issues/issues-detail/260709-02.md); budget default already raised to 5M (79d4b89) |
