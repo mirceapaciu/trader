@@ -194,6 +194,9 @@ Behavioral constraints:
 - All copied ids are lineage fields and must not be enforced with cross-schema foreign keys; the
   ThesisBuilder-owned tables remain private to ThesisBuilder.
 - At most one snapshot per `(run_id, thesis_card_id)`.
+- Backtester confidence-calibration reports consume `confidence` from this table joined to closed
+  rows in `t_backtest_trades`; no separate calibration table is required for the first measurement
+  slice.
 
 ## Write Semantics
 

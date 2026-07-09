@@ -71,6 +71,11 @@ TRADE_EXECUTOR_LOG_FILE=logs/trade-executor.log
 - **Fail closed.** If the execution-time IBKR quote is missing/older than
   `TRADE_EXECUTOR_QUOTE_MAX_AGE_SECONDS`, `atr_20d` is unavailable, or the card's `time_horizon` has
   no `TIME_HORIZON_DAYS_MAP` entry, the card is rejected and no order is placed.
+- **Confidence gate is uncalibrated.** `TRADE_EXECUTOR_MIN_CONFIDENCE=0.6` is still enforced, but
+  current regeneration evidence shows it has not been a binding safety control. Treat it as a
+  measured compatibility gate until the Backtester confidence-calibration report has enough closed
+  trades to prove whether confidence discriminates outcomes; do not tune it upward or rely on it for
+  sizing without that evidence.
 - **Bracket orders.** Each entry is submitted with an attached protective stop and take-profit sharing
   an OCA group; `TIME_HORIZON_DAYS_MAP` drives the time-based force-flatten.
 - **Shorts allowed.** `direction=sell` cards open short positions; notional caps apply to absolute

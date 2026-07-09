@@ -277,6 +277,12 @@ run window and the no-look-ahead rules relative to the simulated clock.
 Per-strategy breakdown of the same trade-level metrics is produced for each `strategy` present in the
 card set, enabling the strategy-tuning workflow in `docs/trading-strategies.md` Section 7.
 
+The Backtester also owns a repeatable confidence-calibration report over completed runs. The report
+joins Backtester-owned card snapshots to closed simulated trades, buckets card confidence, and emits
+hit rate, P&L, return, profit-factor, and exit-reason metrics per bucket. Buckets with too few closed
+trades are explicitly marked as insufficient sample; confidence gates must not be recalibrated from
+descriptive bucket output until the holdout sample is large enough for the decision being made.
+
 Additional required breakdowns:
 
 - By card status: `approved`, `rejected`, and `stale_evidence`, plus the `card_was_live_expired`

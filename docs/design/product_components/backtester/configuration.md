@@ -101,6 +101,11 @@ BACKTESTER_LOG_LEVEL=INFO
   the horizons that match the default `swing_1d_5d` card `time_horizon`. Excursion diagnostics
   are always computed for filled trades; a horizon return is null when the run window ends before
   the horizon is reached.
+- Confidence calibration is an operator report, not an environment setting. Run it with
+  `uv run python -m src.product_components.backtester.confidence_calibration_report` and optional
+  CLI arguments such as `--run-id`, `--entry-timing-scenario`, `--bucket-edges`, and
+  `--format json`. The default bucket edges are `0,0.6,0.7,0.75,0.8,0.85,0.9,1` so the report
+  exposes the currently observed 0.78-0.85 confidence cluster.
 
 ## Shared Dependencies
 

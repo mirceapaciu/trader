@@ -58,6 +58,17 @@ ThesisBuilder first resolves article/instrument pairs deterministically. Alias m
 
 `THESIS_BUILDER_TRIAGE_ENABLED` enables a recall-biased small-LLM triage call before full analysis. Triage returns only subjecthood and `content_type`; clear non-subjects persist as `triage_not_subject`, clear non-catalysts persist as `triage_not_catalyst`, and ambiguous cases pass through to the full analysis prompt. Triage tokens share the same ThesisBuilder run budget as full analysis and are stored on the rejected analysis rows when triage rejects a pair. The default is disabled until replay validation shows acceptable recall.
 
+## Confidence Thresholds
+
+`THESIS_BUILDER_MIN_CONFIDENCE`, `THESIS_BUILDER_CONTRARIAN_MIN_CONFIDENCE`, and
+`THESIS_BUILDER_TREND_FOLLOW_MIN_CONFIDENCE` are syntactic admission thresholds over the LLM's
+self-reported confidence. They are not currently a calibrated safety signal: recent regeneration
+runs showed reported confidence clustering above the default 0.6 floor. Keep these thresholds
+documented and measurable, but do not treat 0.6 as a proven risk-control boundary until the
+Backtester confidence-calibration report has enough closed trades to show discrimination. If the
+report remains non-discriminative at the holdout sample size, confidence-derived gating and
+risk-box scaling should be neutralized rather than tuned by intuition.
+
 ## Already-Priced Gate
 
 At thesis-card creation time, ThesisBuilder rejects `event_driven` and `sentiment_momentum` cards when the market-context snapshot shows the instrument has already moved too far in the thesis direction. The gate checks both 1-day direction-aligned return and direction-aligned price move measured in ATR-20 units. Exceeding either configured threshold persists the candidate as a rejected audit card with `rejection_reason_code=already_priced`; missing or stale context persists `market_context_unavailable` for gated strategies. The same thresholds are used by live processing, historical reprocess, and regeneration backtests.
