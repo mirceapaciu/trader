@@ -5,6 +5,8 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from .clients import BarsProvider, CardsProvider, RegenerationProvider
@@ -159,6 +161,12 @@ class BacktesterService:
             )
             self._prefetch_market_data(cards, params)
 
+            coverage_until = regen.analysis_coverage_until_at
+            coverage_fraction = _window_coverage_fraction(
+                window_start_at=params.window_start_at,
+                window_end_at=params.window_end_at,
+                coverage_until_at=coverage_until,
+            )
             regen_stats = {
                 "articles_found": regen.articles_found,
                 "articles_relevant": regen.articles_relevant,
@@ -166,18 +174,35 @@ class BacktesterService:
                 "analyses_created": regen.analyses_created,
                 "cards_created": regen.cards_created,
                 "llm_tokens_used": regen.llm_tokens_used,
+                "llm_token_budget_limit": token_budget,
                 "llm_cache_hits": regen.llm_cache_hits,
                 "llm_calls": regen.llm_calls,
                 "evidence_windows_created": self._repository.count_sim_evidence_windows(
                     sim_schema=sim_schema
                 ),
                 "budget_exhausted": regen.budget_exhausted,
+                "analysis_coverage_until_at": (
+                    coverage_until.isoformat() if coverage_until is not None else None
+                ),
+                "analysis_coverage_fraction": coverage_fraction,
             }
+            summary_md_suffix = _budget_exhaustion_summary_suffix(
+                budget_exhausted=regen.budget_exhausted,
+                window_start_at=params.window_start_at,
+                coverage_until_at=coverage_until,
+                coverage_fraction=coverage_fraction,
+            )
 
             self._report_progress("simulating", 0, 0, None)
             LOGGER.info("regeneration simulating run_id=%s", params.run_id)
             self._run_engine_and_persist(
-                params, sim_cards, extra_summary={"regeneration": regen_stats}
+                params,
+                sim_cards,
+                extra_summary={"regeneration": regen_stats},
+                summary_md_suffix=summary_md_suffix,
+                llm_tokens_used=regen.llm_tokens_used,
+                budget_exhausted=regen.budget_exhausted,
+                analysis_coverage_until_at=coverage_until,
             )
             LOGGER.info("regeneration run completed run_id=%s", params.run_id)
         except Exception as error:
@@ -197,6 +222,10 @@ class BacktesterService:
         cards_provider: CardsProvider,
         *,
         extra_summary: dict | None = None,
+        summary_md_suffix: str | None = None,
+        llm_tokens_used: int | None = None,
+        budget_exhausted: bool | None = None,
+        analysis_coverage_until_at: datetime | None = None,
     ) -> None:
         result = BacktesterEngine(
             params=params,
@@ -208,6 +237,12 @@ class BacktesterService:
             # Merge regeneration counters into the run summary the UI reads.
             result.metrics.summary_json.update(extra_summary)
 
+        metrics = result.metrics
+        if summary_md_suffix:
+            # summary_md is produced by the (regeneration-agnostic) engine; append the
+            # coverage note so the run's persisted narrative states the partial coverage.
+            metrics = replace(metrics, summary_md=metrics.summary_md + summary_md_suffix)
+
         if self._settings.persist_card_snapshots:
             self._repository.insert_card_snapshots(
                 run_id=params.run_id, snapshots=result.card_snapshots
@@ -218,7 +253,11 @@ class BacktesterService:
                 run_id=params.run_id, points=result.equity_points
             )
         self._repository.finalize_run_success(
-            run_id=params.run_id, metrics=result.metrics
+            run_id=params.run_id,
+            metrics=metrics,
+            llm_tokens_used=llm_tokens_used,
+            budget_exhausted=budget_exhausted,
+            analysis_coverage_until_at=analysis_coverage_until_at,
         )
 
     def _prefetch_market_data(self, cards: list, params: BacktestRunParams) -> None:
@@ -273,6 +312,45 @@ class BacktesterService:
                 raise ValueError("invalid_llm_model")
             if params.llm_max_tokens_per_run <= 0:
                 raise ValueError("invalid_token_budget")
+
+
+def _window_coverage_fraction(
+    *,
+    window_start_at: datetime,
+    window_end_at: datetime,
+    coverage_until_at: datetime | None,
+) -> float | None:
+    """Fraction of the run window analyzed before analysis stopped.
+
+    None when coverage is complete (no boundary). Clamped to [0, 1] so a boundary
+    at or before the window start reads as 0% and one at/after the end reads as 100%.
+    """
+    if coverage_until_at is None:
+        return None
+    span = (window_end_at - window_start_at).total_seconds()
+    if span <= 0:
+        return None
+    covered = (coverage_until_at - window_start_at).total_seconds()
+    return max(0.0, min(1.0, covered / span))
+
+
+def _budget_exhaustion_summary_suffix(
+    *,
+    budget_exhausted: bool,
+    window_start_at: datetime,
+    coverage_until_at: datetime | None,
+    coverage_fraction: float | None,
+) -> str | None:
+    """Human note appended to summary_md when a regeneration ran out of token budget."""
+    if not budget_exhausted:
+        return None
+    if coverage_until_at is None:
+        return " Token budget exhausted before any article was analyzed (0% of window)."
+    pct = "" if coverage_fraction is None else f" ({coverage_fraction:.0%} of window)"
+    return (
+        f" Token budget exhausted: analysis covers "
+        f"{window_start_at:%Y-%m-%d} → {coverage_until_at:%Y-%m-%d}{pct}."
+    )
 
 
 def _regeneration_dataset_hash(

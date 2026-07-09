@@ -136,6 +136,8 @@ def test_regeneration_analyzes_articles_and_creates_cards(monkeypatch):
     assert result.analyses_created == 2
     assert result.cards_created == 1
     assert not result.budget_exhausted
+    # A fully-covered run reports no coverage boundary.
+    assert result.analysis_coverage_until_at is None
     # Every persisted analysis is tagged with the run id (isolates it in the sim schema).
     assert [p["run"] for p in repo.persisted] == ["bt_run1", "bt_run1"]
 
@@ -154,6 +156,9 @@ def test_regeneration_stops_on_token_budget_exhaustion(monkeypatch):
     assert result.articles_relevant == 2  # article 1 and 2 matched; 3rd never reached
     assert result.articles_analyzed == 1  # only article 1 got a persisted analysis
     assert len(repo.persisted) == 1
+    # Coverage boundary is the last analyzed article (article 0); article 1 exhausted
+    # the budget before any of its instruments produced an analysis.
+    assert result.analysis_coverage_until_at == articles[0].published_at
 
 
 def test_regeneration_records_rejected_analysis(monkeypatch):

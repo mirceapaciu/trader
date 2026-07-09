@@ -72,6 +72,10 @@ class RegenerationResult:
     llm_tokens_used: int = 0
     llm_cache_hits: int = 0
     llm_calls: int = 0
+    # published_at of the last article analyzed before the token budget died; the
+    # boundary up to which the window was actually covered. None when the run
+    # covered the whole window (no exhaustion).
+    analysis_coverage_until_at: datetime | None = None
 
 
 class RegenerationRunner:
@@ -135,6 +139,9 @@ class RegenerationRunner:
         articles_relevant = 0
         articles_analyzed = 0
         budget_exhausted = False
+        # published_at of the last article that produced any analysis; on budget
+        # exhaustion this becomes the coverage boundary reported to the caller.
+        last_analyzed_published_at: datetime | None = None
 
         for index, article in enumerate(articles, start=1):
             if budget_exhausted:
@@ -173,6 +180,7 @@ class RegenerationRunner:
                 if article_analyzed:
                     articles_relevant += 1
                     articles_analyzed += 1
+                    last_analyzed_published_at = article.published_at
                 self._report(index, articles_found, None)
                 continue
             # This article matched at least one watchlisted instrument.
@@ -227,6 +235,11 @@ class RegenerationRunner:
                         analyses_created,
                     )
                     budget_exhausted = True
+                    # If earlier instruments on this same article were analyzed, the
+                    # article counts as covered; otherwise the boundary stays at the
+                    # previous fully-analyzed article.
+                    if article_analyzed:
+                        last_analyzed_published_at = article.published_at
                     break
                 except ValueError as exc:
                     self._repository.persist_rejected_analysis(
@@ -279,6 +292,7 @@ class RegenerationRunner:
 
             if article_analyzed:
                 articles_analyzed += 1
+                last_analyzed_published_at = article.published_at
             self._report(index, articles_found, label)
             # Heartbeat so a long run visibly progresses in the logs even when the
             # per-article DEBUG lines are suppressed.
@@ -310,6 +324,9 @@ class RegenerationRunner:
             analyses_created=analyses_created,
             cards_created=cards_created,
             budget_exhausted=budget_exhausted,
+            analysis_coverage_until_at=(
+                last_analyzed_published_at if budget_exhausted else None
+            ),
         )
 
     def _market_context(

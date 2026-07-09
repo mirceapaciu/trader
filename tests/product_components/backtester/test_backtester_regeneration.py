@@ -141,9 +141,23 @@ class _RecordingRepo:
     def insert_equity_points(self, *, run_id, points):
         self.calls.append("insert_equity_points")
 
-    def finalize_run_success(self, *, run_id, metrics):
+    def finalize_run_success(
+        self,
+        *,
+        run_id,
+        metrics,
+        llm_tokens_used=None,
+        budget_exhausted=None,
+        analysis_coverage_until_at=None,
+    ):
         self.finalized_success = True
         self.finalized_summary_json = dict(metrics.summary_json)
+        self.finalized_summary_md = metrics.summary_md
+        self.finalized_coverage = {
+            "llm_tokens_used": llm_tokens_used,
+            "budget_exhausted": budget_exhausted,
+            "analysis_coverage_until_at": analysis_coverage_until_at,
+        }
         self.calls.append("finalize_success")
 
     def finalize_run_failure(self, *, run_id, error_code, details=None):
@@ -152,9 +166,10 @@ class _RecordingRepo:
 
 
 class _RecordingRegeneration:
-    def __init__(self, cards, *, raise_error: Exception | None = None):
+    def __init__(self, cards, *, raise_error: Exception | None = None, result=None):
         self._cards = cards
         self._raise = raise_error
+        self._result = result
         self.regenerate_kwargs: dict | None = None
         self.config_model: str | None = None
 
@@ -182,6 +197,8 @@ class _RecordingRegeneration:
         }
         if self._raise is not None:
             raise self._raise
+        if self._result is not None:
+            return self._result
         return RegenerationResult(
             run_id=run_id, articles_found=1, articles_relevant=1, articles_analyzed=1,
             analyses_created=1, cards_created=len(self._cards), budget_exhausted=False,
@@ -255,6 +272,61 @@ def test_regeneration_happy_path_populates_sim_and_simulates():
     assert regen["articles_analyzed"] == 1
     assert regen["evidence_windows_created"] == 0
     assert regen["cards_created"] == 1
+    assert regen["llm_token_budget_limit"] == 12345
+    # A fully-covered run records no exhaustion and no coverage boundary.
+    assert regen["budget_exhausted"] is False
+    assert regen["analysis_coverage_until_at"] is None
+    assert repo.finalized_coverage == {
+        "llm_tokens_used": 0,
+        "budget_exhausted": False,
+        "analysis_coverage_until_at": None,
+    }
+    # summary_md is unchanged (no exhaustion note).
+    assert "budget exhausted" not in repo.finalized_summary_md.lower()
+
+
+def test_regeneration_budget_exhaustion_persists_coverage_and_summary():
+    repo = _RecordingRepo()
+    entry = T0 + timedelta(seconds=180)
+    # Window is [T0 - 5m, T0 + 6h]; coverage stops ~halfway through.
+    coverage_until = T0 + timedelta(hours=3)
+    exhausted = RegenerationResult(
+        run_id="bt_run1",
+        articles_found=10,
+        articles_relevant=6,
+        articles_analyzed=4,
+        analyses_created=4,
+        cards_created=1,
+        budget_exhausted=True,
+        llm_tokens_used=12000,
+        analysis_coverage_until_at=coverage_until,
+    )
+    regeneration = _RecordingRegeneration([_card()], result=exhausted)
+    service = BacktesterService(
+        settings=_settings(),
+        repository=repo,
+        cards_provider=_FakeCards([]),
+        bars_provider=_FakeBars(_rising_bars(entry)),
+        regeneration_provider=regeneration,
+        repo_root=Path("."),
+    )
+
+    service.run(_params())
+
+    assert repo.finalized_success is True
+    # First-class coverage facts are persisted on the run row.
+    assert repo.finalized_coverage["budget_exhausted"] is True
+    assert repo.finalized_coverage["llm_tokens_used"] == 12000
+    assert repo.finalized_coverage["analysis_coverage_until_at"] == coverage_until
+    # summary_json carries the boundary + fraction for the detail projection.
+    regen = repo.finalized_summary_json["regeneration"]
+    assert regen["budget_exhausted"] is True
+    assert regen["analysis_coverage_until_at"] == coverage_until.isoformat()
+    # Window span is 6h5m; ~3h5m covered -> ~50%.
+    assert 0.45 <= regen["analysis_coverage_fraction"] <= 0.55
+    # summary_md states the exhaustion + covered range.
+    assert "token budget exhausted" in repo.finalized_summary_md.lower()
+    assert "of window" in repo.finalized_summary_md.lower()
 
 
 def test_regeneration_passes_evidence_threshold_overrides():

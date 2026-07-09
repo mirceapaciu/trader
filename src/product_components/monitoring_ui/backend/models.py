@@ -652,6 +652,10 @@ class BacktestRunSummary(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     error_code: str | None = None
+    # Token-budget coverage flags so the runs list can mark a partial-window run
+    # without fetching each detail. Null for replay runs and legacy rows.
+    budget_exhausted: bool | None = None
+    analysis_coverage_until_at: datetime | None = None
     progress: BacktestRunProgress | None = None
 
 
@@ -760,6 +764,10 @@ class BacktestRegenerationStats(BaseModel):
     cards_created: int | None = None
     evidence_windows_created: int | None = None
     budget_exhausted: bool | None = None
+    llm_tokens_used: int | None = None
+    llm_token_budget_limit: int | None = None
+    analysis_coverage_until_at: datetime | None = None
+    analysis_coverage_fraction: float | None = None
 
 
 class BacktestRunDetailResponse(BaseModel):

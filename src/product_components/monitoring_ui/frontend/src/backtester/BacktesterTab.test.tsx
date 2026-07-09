@@ -369,6 +369,68 @@ describe("BacktesterTab", () => {
     expect(screen.queryByText("Select a card to see details.")).not.toBeInTheDocument();
   });
 
+  it("flags a budget-exhausted run in the runs table with a partial chip", () => {
+    const run = makeRun({
+      run_id: "partial-1",
+      budget_exhausted: true,
+      analysis_coverage_until_at: "2026-06-16T09:30:00Z"
+    });
+    installQueryRouter({ backtests: backtestsResult([run]), detail: emptyResult });
+    render(<BacktesterTab />);
+
+    // A warning "partial" chip sits next to the status chip.
+    expect(screen.getByText("partial")).toBeInTheDocument();
+    // Window 09:00→10:00, coverage at 09:30 -> 50% of window.
+    expect(screen.getAllByText(/token budget exhausted.*50% of window/).length).toBeGreaterThan(0);
+  });
+
+  it("does not flag a fully-covered run", () => {
+    const run = makeRun({ run_id: "full-1", budget_exhausted: false });
+    installQueryRouter({ backtests: backtestsResult([run]), detail: emptyResult });
+    render(<BacktesterTab />);
+
+    expect(screen.queryByText("partial")).not.toBeInTheDocument();
+    expect(screen.queryByText(/token budget exhausted/)).not.toBeInTheDocument();
+  });
+
+  it("surfaces budget exhaustion in the run summary header and regeneration tiles", () => {
+    const run = makeRun({
+      run_id: "partial-2",
+      mode: "regeneration",
+      budget_exhausted: true,
+      analysis_coverage_until_at: "2026-06-16T09:30:00Z"
+    });
+    const detail = {
+      ...makeDetail(run),
+      regeneration: {
+        articles_found: 10,
+        articles_relevant: 6,
+        articles_analyzed: 4,
+        analyses_created: 4,
+        evidence_windows_created: 2,
+        cards_created: 1,
+        budget_exhausted: true,
+        llm_tokens_used: 12000,
+        llm_token_budget_limit: 12345,
+        analysis_coverage_until_at: "2026-06-16T09:30:00Z",
+        analysis_coverage_fraction: 0.5
+      }
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: detail }
+    });
+    render(<BacktesterTab />);
+
+    // Regeneration panel exposes tokens-used-vs-budget and window-coverage tiles.
+    expect(screen.getByText("LLM tokens used")).toBeInTheDocument();
+    // Tolerate locale-dependent grouping separators in the formatted counts.
+    expect(screen.getByText(/12[\s,.]?000\s*\/\s*12[\s,.]?345/)).toBeInTheDocument();
+    expect(screen.getByText("Window coverage")).toBeInTheDocument();
+    // The Run Summary header carries the same warning inline.
+    expect(screen.getAllByText(/token budget exhausted/).length).toBeGreaterThan(0);
+  });
+
   it("renders a degraded empty state when backtests are unavailable", () => {
     installQueryRouter({
       backtests: backtestsResult([], { available: false, message: "Backtester telemetry unavailable." }),

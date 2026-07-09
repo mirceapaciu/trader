@@ -455,10 +455,19 @@ function RunListPanel({
                   </td>
                   <td>
                     <span className={statusChipClass(run.status)}>{run.status}</span>
+                    {run.budget_exhausted ? (
+                      <span className="chip warning" title={budgetExhaustionNote(run)}>
+                        {" "}
+                        partial
+                      </span>
+                    ) : null}
                   </td>
                   <td>
                     {formatDate(run.window_start_at)}
                     <span className="table-subtext">to {formatDate(run.window_end_at)}</span>
+                    {run.budget_exhausted ? (
+                      <span className="table-subtext">{budgetExhaustionNote(run)}</span>
+                    ) : null}
                   </td>
                   <td>{formatToken(run.mode)}</td>
                   <td>{run.llm_model ?? "—"}</td>
@@ -553,6 +562,9 @@ function SummaryTilesPanel({
           <span>
             {run.run_id} · <span className={statusChipClass(run.status)}>{run.status}</span>
             {run.error_code ? ` · ${run.error_code}` : ""}
+            {run.budget_exhausted ? (
+              <span className="text-warning"> · ⚠ {budgetExhaustionNote(run)}</span>
+            ) : null}
           </span>
         </div>
       </div>
@@ -573,17 +585,31 @@ function SummaryTilesPanel({
 }
 
 function RegenerationPanel({ stats }: { stats: BacktestRegenerationStats }) {
+  const tokensUsed = formatInteger(stats.llm_tokens_used);
+  const tokenBudget = formatInteger(stats.llm_token_budget_limit);
+  const coverage =
+    stats.analysis_coverage_fraction == null
+      ? stats.budget_exhausted
+        ? "0%"
+        : "100%"
+      : `${Math.round(stats.analysis_coverage_fraction * 100)}%`;
   return (
     <section className="panel">
       <div className="panel-heading">
         <div>
           <h2>Regeneration</h2>
-          <span>
-            Article analysis funnel for this run
-            {stats.budget_exhausted ? " · token budget exhausted (window not fully covered)" : ""}
-          </span>
+          <span>Article analysis funnel for this run</span>
         </div>
       </div>
+      {stats.budget_exhausted ? (
+        <div className="inline-warning compact">
+          ⚠ Token budget exhausted — the window was not fully covered
+          {stats.analysis_coverage_until_at
+            ? ` (analysis covers through ${formatDate(stats.analysis_coverage_until_at)}, ${coverage} of window)`
+            : ""}
+          .
+        </div>
+      ) : null}
       <div className="thesis-kpi-grid">
         <MetricTile label="Articles in window" value={formatInteger(stats.articles_found)} />
         <MetricTile label="Articles relevant" value={formatInteger(stats.articles_relevant)} />
@@ -591,6 +617,8 @@ function RegenerationPanel({ stats }: { stats: BacktestRegenerationStats }) {
         <MetricTile label="Analyses (LLM calls)" value={formatInteger(stats.analyses_created)} />
         <MetricTile label="Evidence windows" value={formatInteger(stats.evidence_windows_created)} />
         <MetricTile label="Cards created" value={formatInteger(stats.cards_created)} />
+        <MetricTile label="LLM tokens used" value={`${tokensUsed} / ${tokenBudget}`} />
+        <MetricTile label="Window coverage" value={coverage} />
       </div>
     </section>
   );
@@ -1238,6 +1266,33 @@ function statusChipClass(status: string) {
     return "chip warning";
   }
   return "chip";
+}
+
+// Fraction of the run window analyzed before a token-budget exhaustion stopped it,
+// derived from the coverage boundary and the window bounds. Null when coverage is
+// complete or the boundary is unknown.
+function windowCoverageFraction(run: BacktestRunSummary): number | null {
+  if (!run.analysis_coverage_until_at) {
+    return null;
+  }
+  const start = new Date(run.window_start_at).getTime();
+  const end = new Date(run.window_end_at).getTime();
+  const covered = new Date(run.analysis_coverage_until_at).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || Number.isNaN(covered) || end <= start) {
+    return null;
+  }
+  return Math.max(0, Math.min(1, (covered - start) / (end - start)));
+}
+
+// One-line note describing a partial-coverage run, shown in the runs table tooltip,
+// the window subtext, and the Run Summary header.
+function budgetExhaustionNote(run: BacktestRunSummary): string {
+  const through = run.analysis_coverage_until_at
+    ? ` — analyzed through ${formatDate(run.analysis_coverage_until_at)}`
+    : "";
+  const fraction = windowCoverageFraction(run);
+  const pct = fraction == null ? "" : `, ${Math.round(fraction * 100)}% of window`;
+  return `token budget exhausted${through}${pct}`;
 }
 
 function formatInteger(value?: number | null) {

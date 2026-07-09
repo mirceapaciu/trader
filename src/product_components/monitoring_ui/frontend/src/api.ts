@@ -561,6 +561,8 @@ export type BacktestRunSummary = {
   started_at?: string | null;
   finished_at?: string | null;
   error_code?: string | null;
+  budget_exhausted?: boolean | null;
+  analysis_coverage_until_at?: string | null;
   progress?: BacktestRunProgress | null;
 };
 
@@ -655,6 +657,10 @@ export type BacktestRegenerationStats = {
   cards_created?: number | null;
   evidence_windows_created?: number | null;
   budget_exhausted?: boolean | null;
+  llm_tokens_used?: number | null;
+  llm_token_budget_limit?: number | null;
+  analysis_coverage_until_at?: string | null;
+  analysis_coverage_fraction?: number | null;
 };
 
 export type BacktestDetailResponse = {

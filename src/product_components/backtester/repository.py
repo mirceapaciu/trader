@@ -228,11 +228,20 @@ class BacktesterRepository:
                 )
             conn.commit()
 
-    def finalize_run_success(self, *, run_id: str, metrics: RunMetrics) -> None:
+    def finalize_run_success(
+        self,
+        *,
+        run_id: str,
+        metrics: RunMetrics,
+        llm_tokens_used: int | None = None,
+        budget_exhausted: bool | None = None,
+        analysis_coverage_until_at: datetime | None = None,
+    ) -> None:
         sql = (
             f"UPDATE {self._backtester_schema}.t_backtest_runs SET "
             f"status = 'completed', finished_at = NOW(), error_code = NULL, "
             f"error_details_json = '{{}}'::jsonb, "
+            f"llm_tokens_used = %s, budget_exhausted = %s, analysis_coverage_until_at = %s, "
             f"cards_considered = %s, cards_in_population = %s, cards_live_executable = %s, "
             f"cards_skipped_no_price = %s, trades_opened = %s, trades_closed = %s, "
             f"trades_risk_blocked = %s, net_pnl = %s, gross_profit = %s, gross_loss = %s, "
@@ -249,6 +258,9 @@ class BacktesterRepository:
             f"WHERE run_id = %s"
         )
         params = (
+            llm_tokens_used,
+            budget_exhausted,
+            _opt_utc(analysis_coverage_until_at),
             metrics.cards_considered,
             metrics.cards_in_population,
             metrics.cards_live_executable,

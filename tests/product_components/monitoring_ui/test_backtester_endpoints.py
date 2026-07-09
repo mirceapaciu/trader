@@ -26,7 +26,17 @@ def _now() -> datetime:
     return datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
 
 
-def _run_row(*, run_id: str = "bt_1", status: str = "completed", timing_scenario: str = "ideal", summary_json: dict | None = None) -> BacktestRunRow:
+def _run_row(
+    *,
+    run_id: str = "bt_1",
+    status: str = "completed",
+    timing_scenario: str = "ideal",
+    summary_json: dict | None = None,
+    llm_token_budget_limit: int | None = None,
+    llm_tokens_used: int | None = None,
+    budget_exhausted: bool | None = None,
+    analysis_coverage_until_at: datetime | None = None,
+) -> BacktestRunRow:
     return BacktestRunRow(
         run_id=run_id,
         status=status,
@@ -77,6 +87,10 @@ def _run_row(*, run_id: str = "bt_1", status: str = "completed", timing_scenario
         pnl_gap=5.0,
         win_rate_gap=0.02,
         trades_flipped_by_delay=2,
+        llm_token_budget_limit=llm_token_budget_limit,
+        llm_tokens_used=llm_tokens_used,
+        budget_exhausted=budget_exhausted,
+        analysis_coverage_until_at=analysis_coverage_until_at,
         summary_json=summary_json or {},
     )
 
@@ -302,6 +316,49 @@ def test_detail_projects_summary_json_into_per_strategy_and_card_status() -> Non
     buckets = [m.bucket for m in detail.card_status_breakdown]
     assert buckets == ["approved", "rejected", "card_was_live_expired", "card_unexpired_at_entry"]
     assert detail.metrics.cards_considered == 10
+
+
+def test_list_flags_budget_exhausted_run_from_row_columns() -> None:
+    ds = FakeBacktestDataSource()
+    coverage = datetime(2026, 6, 20, 13, tzinfo=timezone.utc)
+    ds.runs = [
+        _run_row(run_id="bt_partial", budget_exhausted=True, analysis_coverage_until_at=coverage),
+        _run_row(run_id="bt_full", budget_exhausted=False),
+        _run_row(run_id="bt_replay"),  # legacy/replay row: nulls
+    ]
+    runs = {r.run_id: r for r in _service(ds).get_backtests(window="7d").runs}
+    assert runs["bt_partial"].budget_exhausted is True
+    assert runs["bt_partial"].analysis_coverage_until_at == coverage
+    assert runs["bt_full"].budget_exhausted is False
+    # A legacy/replay row (null columns) never claims partial coverage.
+    assert runs["bt_replay"].budget_exhausted is None
+    assert runs["bt_replay"].analysis_coverage_until_at is None
+
+
+def test_detail_projects_regeneration_budget_and_coverage() -> None:
+    ds = FakeBacktestDataSource()
+    coverage_iso = "2026-06-20T13:00:00+00:00"
+    summary = {
+        "regeneration": {
+            "articles_found": 10,
+            "analyses_created": 4,
+            "cards_created": 1,
+            "budget_exhausted": True,
+            "llm_tokens_used": 12000,
+            "llm_token_budget_limit": 12345,
+            "analysis_coverage_until_at": coverage_iso,
+            "analysis_coverage_fraction": 0.5,
+        }
+    }
+    ds.run_by_id["bt_1"] = _run_row(run_id="bt_1", summary_json=summary)
+    detail = _service(ds).get_backtest_detail(run_id="bt_1")
+    regen = detail.regeneration
+    assert regen is not None
+    assert regen.budget_exhausted is True
+    assert regen.llm_tokens_used == 12000
+    assert regen.llm_token_budget_limit == 12345
+    assert regen.analysis_coverage_until_at == datetime(2026, 6, 20, 13, tzinfo=timezone.utc)
+    assert regen.analysis_coverage_fraction == 0.5
 
 
 def test_detail_gap_gated_by_timing_scenario_both() -> None:

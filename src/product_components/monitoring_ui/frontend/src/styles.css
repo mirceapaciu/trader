@@ -548,6 +548,11 @@ h2 {
   margin-bottom: 12px;
 }
 
+.text-warning {
+  color: #8e3f2b;
+  font-weight: 600;
+}
+
 .chart {
   width: 100%;
   height: 290px;

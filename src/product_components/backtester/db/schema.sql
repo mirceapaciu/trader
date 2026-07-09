@@ -141,6 +141,16 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_runs (
 ALTER TABLE backtester.t_backtest_runs
     ADD COLUMN IF NOT EXISTS llm_model TEXT;
 
+-- Token-budget coverage facts for regeneration runs. A run whose LLM token budget
+-- is exhausted mid-window only analyzed part of the window; these columns make the
+-- partial coverage a first-class, queryable fact instead of a buried summary_json
+-- fragment. All NULL for replay runs (no LLM usage) and for regeneration runs that
+-- covered the whole window (budget_exhausted = FALSE, analysis_coverage_until_at NULL).
+ALTER TABLE backtester.t_backtest_runs
+    ADD COLUMN IF NOT EXISTS llm_tokens_used INTEGER,
+    ADD COLUMN IF NOT EXISTS budget_exhausted BOOLEAN,
+    ADD COLUMN IF NOT EXISTS analysis_coverage_until_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_status_created
     ON backtester.t_backtest_runs (status, created_at DESC, run_id);
 

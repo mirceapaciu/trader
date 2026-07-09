@@ -69,7 +69,9 @@ _BACKTEST_RUN_COLUMNS = (
     "avg_news_fetch_delay_seconds, p95_news_fetch_delay_seconds, max_news_fetch_delay_seconds, "
     "avg_thesis_build_delay_seconds, p95_thesis_build_delay_seconds, max_thesis_build_delay_seconds, "
     "avg_total_pipeline_delay_seconds, p95_total_pipeline_delay_seconds, max_total_pipeline_delay_seconds, "
-    "pnl_gap, win_rate_gap, trades_flipped_by_delay, llm_model, summary_json"
+    "pnl_gap, win_rate_gap, trades_flipped_by_delay, llm_model, "
+    "llm_token_budget_limit, llm_tokens_used, budget_exhausted, analysis_coverage_until_at, "
+    "summary_json"
 )
 
 
@@ -1824,6 +1826,10 @@ class BacktestRunRow:
     win_rate_gap: float | None
     trades_flipped_by_delay: int | None
     llm_model: str | None
+    llm_token_budget_limit: int | None
+    llm_tokens_used: int | None
+    budget_exhausted: bool | None
+    analysis_coverage_until_at: datetime | None
     summary_json: dict[str, Any]
 
 
@@ -1943,6 +1949,22 @@ def _backtest_run_row(row: dict[str, Any]) -> BacktestRunRow:
             else None
         ),
         llm_model=row.get("llm_model"),
+        llm_token_budget_limit=(
+            int(row["llm_token_budget_limit"])
+            if row.get("llm_token_budget_limit") is not None
+            else None
+        ),
+        llm_tokens_used=(
+            int(row["llm_tokens_used"]) if row.get("llm_tokens_used") is not None else None
+        ),
+        budget_exhausted=(
+            bool(row["budget_exhausted"]) if row.get("budget_exhausted") is not None else None
+        ),
+        analysis_coverage_until_at=(
+            _to_utc(row["analysis_coverage_until_at"])
+            if row.get("analysis_coverage_until_at")
+            else None
+        ),
         summary_json=dict(row.get("summary_json") or {}),
     )
 

@@ -1236,6 +1236,8 @@ def _backtest_run_summary(
         started_at=row.started_at,
         finished_at=row.finished_at,
         error_code=row.error_code,
+        budget_exhausted=row.budget_exhausted,
+        analysis_coverage_until_at=row.analysis_coverage_until_at,
     )
 
 
@@ -1303,6 +1305,10 @@ def _project_regeneration(summary_json: dict) -> BacktestRegenerationStats | Non
         cards_created=regen.get("cards_created"),
         evidence_windows_created=regen.get("evidence_windows_created"),
         budget_exhausted=regen.get("budget_exhausted"),
+        llm_tokens_used=regen.get("llm_tokens_used"),
+        llm_token_budget_limit=regen.get("llm_token_budget_limit"),
+        analysis_coverage_until_at=regen.get("analysis_coverage_until_at"),
+        analysis_coverage_fraction=regen.get("analysis_coverage_fraction"),
     )
 
 
