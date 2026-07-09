@@ -15,6 +15,7 @@ from .models import (
     ContentType,
     InstrumentIdentity,
     LlmAnalysisResult,
+    LlmTriageResult,
     NewsArticle,
     PersistedAnalysis,
     ThesisCardSignal,
@@ -76,8 +77,18 @@ class PostgresThesisBuilderRepository:
         instrument: InstrumentIdentity,
         rejection_reason_code: str,
         llm_model: str,
-        validation_errors: list[str],
+        validation_errors: list[Any],
+        triage_result: LlmTriageResult | None = None,
     ) -> int:
+        reasoning = rejection_reason_code
+        estimated_tokens = 0
+        content_type = ContentType.OPINION
+        instrument_is_subject = False
+        if triage_result is not None:
+            reasoning = triage_result.reasoning or rejection_reason_code
+            estimated_tokens = triage_result.estimated_tokens
+            content_type = triage_result.content_type
+            instrument_is_subject = triage_result.instrument_is_subject
         fallback = LlmAnalysisResult(
             ticker=instrument.ticker,
             exchange_code=instrument.exchange_code,
@@ -88,9 +99,12 @@ class PostgresThesisBuilderRepository:
             candidate_strategy=ThesisStrategy.EVENT_DRIVEN,
             direction=TradeDirection.HOLD,
             confidence=0.0,
-            reasoning=rejection_reason_code,
+            reasoning=reasoning,
             is_market_moving=False,
+            instrument_is_subject=instrument_is_subject,
+            content_type=content_type,
             llm_model=llm_model,
+            estimated_tokens=estimated_tokens,
         )
         with self._connect() as conn:
             analysis_id = self._insert_analysis(

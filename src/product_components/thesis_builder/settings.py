@@ -41,6 +41,11 @@ class ThesisBuilderSettings:
     llm_model: str
     llm_daily_token_budget: int
     llm_max_output_tokens: int
+    triage_enabled: bool
+    triage_model: str
+    triage_max_output_tokens: int
+    listicle_prefilter_enabled: bool
+    listicle_prefilter_tag_threshold: int
     llm_request_timeout_seconds: float
     llm_max_retries: int
     openai_api_key: str
@@ -93,6 +98,11 @@ class ThesisBuilderSettings:
             llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
             llm_daily_token_budget=_int_env("LLM_DAILY_TOKEN_BUDGET", 5000000),
             llm_max_output_tokens=_int_env("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", 1200),
+            triage_enabled=_bool_env("THESIS_BUILDER_TRIAGE_ENABLED", False),
+            triage_model=os.getenv("THESIS_BUILDER_TRIAGE_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
+            triage_max_output_tokens=_int_env("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", 200),
+            listicle_prefilter_enabled=_bool_env("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", False),
+            listicle_prefilter_tag_threshold=_int_env("THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD", 6),
             llm_request_timeout_seconds=_float_env("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", 60.0),
             llm_max_retries=_int_env("THESIS_BUILDER_LLM_MAX_RETRIES", 2),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
@@ -116,6 +126,13 @@ def _float_env(key: str, default: float) -> float:
     if value is None or not value.strip():
         return default
     return float(value)
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _optional_path(value: str, repo_root: Path) -> Path | None:

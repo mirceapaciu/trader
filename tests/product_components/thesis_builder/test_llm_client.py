@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from src.product_components.thesis_builder.llm_client import (
     ThesisAnalyzer,
     _build_prompt,
+    _build_triage_prompt,
     parse_analysis_result,
+    parse_triage_result,
 )
 from src.product_components.thesis_builder.models import (
     ContentType,
@@ -249,6 +251,49 @@ def test_cached_analysis_does_not_reserve_or_consume_token_budget() -> None:
     assert analyzer.tokens_used == 0
 
 
+def test_triage_prompt_is_recall_biased() -> None:
+    prompt = _build_triage_prompt(article=_article(), ticker="AAPL", exchange_code="XNAS")
+
+    assert "When unsure" in prompt
+    assert "pass through" in prompt
+
+
+def test_parse_triage_result_defaults_missing_content_type_to_pass_through() -> None:
+    result = parse_triage_result(
+        {
+            "ticker": "AAPL",
+            "exchange_code": "XNAS",
+            "instrument_is_subject": True,
+            "reasoning": "Ambiguous but possibly about Apple.",
+        },
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+
+    assert result.content_type is ContentType.NEWS_CATALYST
+
+
+def test_triage_uses_same_token_budget_counter() -> None:
+    analyzer = ThesisAnalyzer(
+        client=_TriageClient(),
+        model="analysis-model",
+        max_tokens_per_run=10000,
+        max_tokens_per_item=1200,
+        triage_model="triage-model",
+        triage_max_output_tokens=100,
+    )
+
+    result = analyzer.triage_article(
+        article=_article(),
+        ticker="AAPL",
+        exchange_code="XNAS",
+    )
+
+    assert result.estimated_tokens == 37
+    assert result.llm_model == "triage-model"
+    assert analyzer.tokens_used == 37
+
+
 class _CachedClient:
     def get_cached_analysis(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
         return {
@@ -271,6 +316,23 @@ class _CachedClient:
 
     def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
         raise AssertionError("cached analyzer path must not delegate")
+
+
+class _TriageClient:
+    def analyze_triage(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
+        assert model == "triage-model"
+        assert max_output_tokens == 100
+        return {
+            "ticker": "AAPL",
+            "exchange_code": "XNAS",
+            "instrument_is_subject": False,
+            "content_type": "news_catalyst",
+            "reasoning": "Incidental mention.",
+            "estimated_tokens": 37,
+        }
+
+    def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
+        raise AssertionError("triage should use analyze_triage")
 
 
 def _article() -> NewsArticle:

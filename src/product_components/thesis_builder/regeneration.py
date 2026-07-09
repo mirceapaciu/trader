@@ -12,7 +12,14 @@ from .llm_client import ThesisAnalyzer, TokenBudgetExhausted
 from .models import NewsArticle
 from .repository import PostgresThesisBuilderRepository
 from .reprocessor import _row_to_article
-from .service import InstrumentRegistry, _json_ready, _resolve_instruments
+from .service import (
+    InstrumentRegistry,
+    _json_ready,
+    _resolve_instruments,
+    _resolve_instrument_pairs,
+    _triage_audit,
+    _triage_rejection,
+)
 
 LOGGER = logging.getLogger("thesis_builder.regeneration")
 
@@ -38,6 +45,9 @@ class RegenerationThresholds:
     default_time_horizon: str
     evidence_collection_max_minutes: int
     max_evidence_age_minutes: int
+    triage_enabled: bool = False
+    listicle_prefilter_enabled: bool = False
+    listicle_prefilter_tag_threshold: int = 6
 
 
 @dataclass(frozen=True)
@@ -124,17 +134,40 @@ class RegenerationRunner:
             # timing on the simulated clock.
             analysis_time = article.published_at + timedelta(seconds=self._card_delay_seconds)
             clock = lambda t=analysis_time: t
+            article_analyzed = False
 
-            instruments = _resolve_instruments(
-                article=article, active_instruments=active_instruments
-            )
+            if self._thresholds.listicle_prefilter_enabled:
+                pair_resolution = _resolve_instrument_pairs(
+                    article=article,
+                    active_instruments=active_instruments,
+                    listicle_prefilter_enabled=True,
+                    listicle_prefilter_tag_threshold=self._thresholds.listicle_prefilter_tag_threshold,
+                )
+                for instrument in pair_resolution.prefiltered_roundup:
+                    self._repository.persist_rejected_analysis(
+                        article=article,
+                        instrument=instrument,
+                        rejection_reason_code="prefiltered_roundup",
+                        llm_model="deterministic_prefilter",
+                        validation_errors=["prefiltered_roundup"],
+                    )
+                    analyses_created += 1
+                    article_analyzed = True
+                instruments = pair_resolution.instruments
+            else:
+                instruments = _resolve_instruments(
+                    article=article,
+                    active_instruments=active_instruments,
+                )
             if not instruments:
+                if article_analyzed:
+                    articles_relevant += 1
+                    articles_analyzed += 1
                 self._report(index, articles_found, None)
                 continue
             # This article matched at least one watchlisted instrument.
             articles_relevant += 1
             label = ",".join(sorted({i.ticker for i in instruments}))
-            article_analyzed = False
 
             for instrument in instruments:
                 context_snapshot = self._market_context(
@@ -142,6 +175,34 @@ class RegenerationRunner:
                     exchange_code=instrument.exchange_code,
                     as_of=analysis_time,
                 )
+                if self._thresholds.triage_enabled:
+                    try:
+                        triage = self._analyzer.triage_article(
+                            article=article,
+                            ticker=instrument.ticker,
+                            exchange_code=instrument.exchange_code,
+                        )
+                    except Exception:
+                        LOGGER.exception(
+                            "Regeneration triage failed open run_id=%s article_id=%s ticker=%s",
+                            self._run_id,
+                            article.id,
+                            instrument.ticker,
+                        )
+                    else:
+                        triage_rejection = _triage_rejection(triage)
+                        if triage_rejection is not None:
+                            self._repository.persist_rejected_analysis(
+                                article=article,
+                                instrument=instrument,
+                                rejection_reason_code=triage_rejection,
+                                llm_model=triage.llm_model,
+                                validation_errors=[triage_rejection, _triage_audit(triage)],
+                                triage_result=triage,
+                            )
+                            analyses_created += 1
+                            article_analyzed = True
+                            continue
                 try:
                     analysis = self._analyzer.analyze_article(
                         article=article,

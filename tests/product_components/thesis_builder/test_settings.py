@@ -5,6 +5,8 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     monkeypatch.delenv("THESIS_BUILDER_DB_SCHEMA", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_CONSUMER_GROUP", raising=False)
     monkeypatch.delenv("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_TRIAGE_ENABLED", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", raising=False)
 
     settings = ThesisBuilderSettings.from_env()
 
@@ -19,6 +21,11 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.claim_min_idle_seconds == 300
     assert settings.max_delivery_attempts == 3
     assert settings.llm_max_output_tokens == 1200
+    assert settings.triage_enabled is False
+    assert settings.triage_model == "gpt-4o-mini"
+    assert settings.triage_max_output_tokens == 200
+    assert settings.listicle_prefilter_enabled is False
+    assert settings.listicle_prefilter_tag_threshold == 6
     assert settings.llm_request_timeout_seconds == 60.0
     assert settings.llm_max_retries == 2
 
@@ -35,6 +42,11 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_CLAIM_MIN_IDLE_SECONDS", "45")
     monkeypatch.setenv("THESIS_BUILDER_MAX_DELIVERY_ATTEMPTS", "7")
     monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", "900")
+    monkeypatch.setenv("THESIS_BUILDER_TRIAGE_ENABLED", "true")
+    monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MODEL", "gpt-4o-mini-triage")
+    monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", "80")
+    monkeypatch.setenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", "1")
+    monkeypatch.setenv("THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD", "8")
     monkeypatch.setenv("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_RETRIES", "1")
 
@@ -51,5 +63,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.claim_min_idle_seconds == 45
     assert settings.max_delivery_attempts == 7
     assert settings.llm_max_output_tokens == 900
+    assert settings.triage_enabled is True
+    assert settings.triage_model == "gpt-4o-mini-triage"
+    assert settings.triage_max_output_tokens == 80
+    assert settings.listicle_prefilter_enabled is True
+    assert settings.listicle_prefilter_tag_threshold == 8
     assert settings.llm_request_timeout_seconds == 30.0
     assert settings.llm_max_retries == 1

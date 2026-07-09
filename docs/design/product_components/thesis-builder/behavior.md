@@ -51,14 +51,23 @@ For each accepted news event:
 1. Resolve eligible instruments using the article snapshot plus the Shared Instrument Registry API or shared read contract.
 2. Skip instruments that are not active according to the shared watchlist contract.
 3. Run deterministic prechecks for article freshness, source quality, duplicate evidence, and obvious non-market relevance.
-4. Resolve market context through the MarketData component API when the candidate strategy requires price-derived validation.
-5. Call the configured LLM only when deterministic prechecks leave a plausible trading impact.
-6. Persist one `t_news_analyses` row per analyzed article and instrument.
-7. Add eligible analyses to an evidence window keyed by instrument, strategy, and candidate direction.
-8. Attempt thesis-card creation immediately after each window update.
+4. Optionally run the configured recall-biased triage prompt before full analysis.
+5. Resolve market context through the MarketData component API when the candidate strategy requires price-derived validation.
+6. Call the configured full-analysis LLM only when deterministic prechecks and enabled triage leave a plausible trading impact.
+7. Persist one `t_news_analyses` row per analyzed, prefiltered, or triaged article/instrument pair.
+8. Add eligible analyses to an evidence window keyed by instrument, strategy, and candidate direction.
+9. Attempt thesis-card creation immediately after each window update.
 
 ThesisBuilder must store analyses even when no thesis card is created, so rejected, weak, stale, or conflicting evidence remains auditable.
 Analyses that classify an article as price-actionable for the analyzed instrument must set `is_market_moving=true` so monitoring can distinguish processed news from market-moving news.
+
+### 3.0 Pair Prefilter And Triage
+
+Deterministic pair resolution must avoid incidental URL-slug matches. Provider ticker tags create pairs, and aliases match only article headline and summary text.
+
+When the optional roundup prefilter is enabled, an article tagged with more than the configured active-instrument threshold and no headline alias match is treated as a listicle or sector roundup. ThesisBuilder persists one rejected analysis row per tagged pair with `rejection_reason_code=prefiltered_roundup` and makes no LLM call for those pairs.
+
+When small-LLM triage is enabled, each surviving pair receives a narrow subjecthood/content-type classification before full analysis. The triage contract is recall-biased: ambiguous pairs pass through to full analysis. Clear non-subjects persist as `triage_not_subject`; clear non-catalysts or opinion/listicle content persist as `triage_not_catalyst`. Triage failures fail open to full analysis. Live processing, historical reprocess, and regeneration backtests use the same configured prefilter/triage behavior.
 
 ## 3.1 Component Boundary Rules
 

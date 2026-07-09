@@ -5,7 +5,13 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .models import ContentType, LlmAnalysisResult, ThesisStrategy, TradeDirection
+from .models import (
+    ContentType,
+    LlmAnalysisResult,
+    LlmTriageResult,
+    ThesisStrategy,
+    TradeDirection,
+)
 
 
 class TokenBudgetExhausted(RuntimeError):
@@ -66,6 +72,25 @@ class OpenAIThesisClient:
                 result["estimated_tokens"] = int(actual)
         return result
 
+    def analyze_triage(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
+        client = self._get_client()
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            instructions="Return only a JSON object that matches the requested schema.",
+            max_output_tokens=max_output_tokens,
+            text={"format": _TRIAGE_RESPONSE_FORMAT},
+            temperature=0,
+            store=False,
+        )
+        result = _load_json_object(getattr(response, "output_text", ""))
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            actual = getattr(usage, "total_tokens", None) or getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)
+            if actual:
+                result["estimated_tokens"] = int(actual)
+        return result
+
 
 @dataclass
 class ThesisAnalyzer:
@@ -73,6 +98,8 @@ class ThesisAnalyzer:
     model: str
     max_tokens_per_run: int
     max_tokens_per_item: int
+    triage_model: str | None = None
+    triage_max_output_tokens: int = 200
     tokens_used: int = 0
 
     def __post_init__(self) -> None:
@@ -123,6 +150,42 @@ class ThesisAnalyzer:
         self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
         return LlmAnalysisResult(
             **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": self.model}
+        )
+
+    def triage_article(
+        self,
+        *,
+        article,
+        ticker: str,
+        exchange_code: str,
+    ) -> LlmTriageResult:
+        model = self.triage_model or self.model
+        prompt = _build_triage_prompt(article=article, ticker=ticker, exchange_code=exchange_code)
+        max_output_tokens = self.triage_max_output_tokens
+        estimated_tokens = _estimate_tokens(prompt) + max_output_tokens
+        self._reserve_tokens(estimated_tokens)
+        try:
+            caller = getattr(self.client, "analyze_triage", None)
+            if caller is None:
+                raw = self.client.analyze(
+                    model=model,
+                    prompt=prompt,
+                    max_output_tokens=max_output_tokens,
+                )
+            else:
+                raw = caller(model=model, prompt=prompt, max_output_tokens=max_output_tokens)
+        except Exception:
+            self._release_reserved_tokens(estimated_tokens)
+            raise
+        result = parse_triage_result(
+            raw,
+            expected_ticker=ticker,
+            expected_exchange_code=exchange_code,
+        )
+        actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        return LlmTriageResult(
+            **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": model}
         )
 
     def _reserve_tokens(self, estimated_tokens: int) -> None:
@@ -178,6 +241,25 @@ def parse_analysis_result(
             str(raw["price_impact_magnitude"]) if raw.get("price_impact_magnitude") else None
         ),
         evidence_bullet_candidates=[str(item).strip() for item in bullets if str(item).strip()],
+    )
+
+
+def parse_triage_result(
+    raw: dict[str, Any],
+    *,
+    expected_ticker: str,
+    expected_exchange_code: str,
+) -> LlmTriageResult:
+    ticker = str(raw.get("ticker") or expected_ticker).strip().upper()
+    exchange_code = str(raw.get("exchange_code") or expected_exchange_code).strip().upper()
+    if ticker != expected_ticker.strip().upper() or exchange_code != expected_exchange_code.strip().upper():
+        raise ValueError("instrument_mismatch")
+    return LlmTriageResult(
+        ticker=ticker,
+        exchange_code=exchange_code,
+        instrument_is_subject=bool(raw.get("instrument_is_subject", True)),
+        content_type=_parse_content_type_recall_biased(raw.get("content_type")),
+        reasoning=str(raw.get("reasoning") or ""),
     )
 
 
@@ -252,6 +334,42 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
     )
 
 
+def _build_triage_prompt(*, article, ticker: str, exchange_code: str) -> str:
+    return json.dumps(
+        {
+            "task": (
+                "Cheaply triage whether this accepted financial article should proceed to "
+                "full thesis analysis for the SPECIFIED instrument. Reject only clear "
+                "non-subjects or clear non-catalyst/opinion/listicle content. When unsure, "
+                "pass through by setting instrument_is_subject=true and content_type=news_catalyst."
+            ),
+            "recall_bias": [
+                "False negatives are more costly than false positives.",
+                "If the instrument may be a real subject, pass through.",
+                "If the article may contain a concrete catalyst for this instrument, pass through.",
+            ],
+            "instrument": {"ticker": ticker, "exchange_code": exchange_code},
+            "article": {
+                "id": article.id,
+                "source": article.source,
+                "headline": article.headline,
+                "summary": article.summary,
+                "tickers": article.tickers,
+                "published_at": article.published_at.isoformat(),
+            },
+            "required_json_fields": [
+                "ticker",
+                "exchange_code",
+                "instrument_is_subject",
+                "content_type",
+                "reasoning",
+                "estimated_tokens",
+            ],
+        },
+        sort_keys=True,
+    )
+
+
 def _get_cached_analysis(
     client: ThesisLlmClient, *, model: str, prompt: str, max_output_tokens: int
 ) -> dict[str, Any] | None:
@@ -291,6 +409,13 @@ def _parse_content_type(value: Any) -> ContentType:
         # Default to the conservative class so unrecognized/missing values
         # never produce a thesis card.
         return ContentType.OPINION
+
+
+def _parse_content_type_recall_biased(value: Any) -> ContentType:
+    try:
+        return ContentType(str(value))
+    except ValueError:
+        return ContentType.NEWS_CATALYST
 
 
 def _float_in_range(value: Any, *, minimum: float, maximum: float, field: str) -> float:
@@ -376,6 +501,33 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "event_type": {"type": ["string", "null"]},
             "price_impact_magnitude": {"type": ["string", "null"], "enum": ["low", "medium", "high", None]},
             "evidence_bullet_candidates": {"type": "array", "items": {"type": "string"}},
+            "estimated_tokens": {"type": "integer", "minimum": 0},
+        },
+    },
+}
+
+
+_TRIAGE_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "name": "thesis_builder_triage",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "ticker",
+            "exchange_code",
+            "instrument_is_subject",
+            "content_type",
+            "reasoning",
+            "estimated_tokens",
+        ],
+        "properties": {
+            "ticker": {"type": "string"},
+            "exchange_code": {"type": "string"},
+            "instrument_is_subject": {"type": "boolean"},
+            "content_type": {"type": "string", "enum": ["news_catalyst", "opinion"]},
+            "reasoning": {"type": "string"},
             "estimated_tokens": {"type": "integer", "minimum": 0},
         },
     },

@@ -17,7 +17,7 @@ from src.product_components.shared.adapters import (
 from src.product_components.shared.text_match import contains_term
 
 from .llm_client import OpenAIThesisClient, ThesisAnalyzer
-from .models import InstrumentIdentity, NewsArticle
+from .models import ContentType, InstrumentIdentity, LlmTriageResult, NewsArticle
 from .redis_io import NewsStreamMessage, RedisThesisBuilderIo, ReprocessCommandMessage
 from .repository import PostgresThesisBuilderRepository
 from .settings import ThesisBuilderSettings
@@ -108,6 +108,8 @@ class ThesisBuilderRunner:
             model=settings.llm_model,
             max_tokens_per_run=settings.llm_daily_token_budget,
             max_tokens_per_item=settings.llm_max_output_tokens,
+            triage_model=settings.triage_model,
+            triage_max_output_tokens=settings.triage_max_output_tokens,
         )
         self._market_context_client = market_context_client
         self._instrument_registry = instrument_registry or PostgresSharedInstrumentRegistry(
@@ -227,6 +229,9 @@ class ThesisBuilderRunner:
             default_time_horizon=self._settings.default_time_horizon,
             evidence_collection_max_minutes=self._settings.evidence_collection_max_minutes,
             max_evidence_age_minutes=self._settings.max_evidence_age_minutes,
+            triage_enabled=self._settings.triage_enabled,
+            listicle_prefilter_enabled=self._settings.listicle_prefilter_enabled,
+            listicle_prefilter_tag_threshold=self._settings.listicle_prefilter_tag_threshold,
         )
 
     def status(self) -> ThesisBuilderRuntimeStatus:
@@ -283,25 +288,53 @@ class ThesisBuilderRunner:
             self._redis.ack(message.message_id)
             return ProcessMessageResult(acked=True, analyses_created=0, signals_published=0)
 
-        instruments = _resolve_instruments(
+        pair_resolution = _resolve_instrument_pairs(
             article=article,
             active_instruments=self._instrument_registry.list_active_instruments(),
+            listicle_prefilter_enabled=self._settings.listicle_prefilter_enabled,
+            listicle_prefilter_tag_threshold=self._settings.listicle_prefilter_tag_threshold,
         )
+        instruments = pair_resolution.instruments
+        for instrument in pair_resolution.prefiltered_roundup:
+            self._repository.persist_rejected_analysis(
+                article=article,
+                instrument=instrument,
+                rejection_reason_code="prefiltered_roundup",
+                llm_model="deterministic_prefilter",
+                validation_errors=["prefiltered_roundup"],
+            )
         if not instruments:
             self._record_processing_event(
                 message=message,
-                outcome="skipped",
-                reason_code="no_active_instrument",
-                analyses_created=0,
+                outcome="analyzed" if pair_resolution.prefiltered_roundup else "skipped",
+                reason_code="prefiltered_roundup" if pair_resolution.prefiltered_roundup else "no_active_instrument",
+                analyses_created=len(pair_resolution.prefiltered_roundup),
                 signals_published=0,
             )
             self._redis.ack(message.message_id)
-            return ProcessMessageResult(acked=True, analyses_created=0, signals_published=0)
+            return ProcessMessageResult(
+                acked=True,
+                analyses_created=len(pair_resolution.prefiltered_roundup),
+                signals_published=0,
+            )
 
         analyses_created = 0
         signals_published = 0
         for instrument in instruments:
             context_snapshot = self._load_market_context(instrument)
+            triage = self._triage_pair(article=article, instrument=instrument)
+            triage_rejection = _triage_rejection(triage)
+            if triage_rejection is not None:
+                self._repository.persist_rejected_analysis(
+                    article=article,
+                    instrument=instrument,
+                    rejection_reason_code=triage_rejection,
+                    llm_model=triage.llm_model,
+                    validation_errors=[triage_rejection, _triage_audit(triage)],
+                    triage_result=triage,
+                )
+                analyses_created += 1
+                continue
             try:
                 analysis = self._analyzer.analyze_article(
                     article=article,
@@ -343,7 +376,7 @@ class ThesisBuilderRunner:
                     result.signal.thesis_card_id,
                     published_at=datetime.now(timezone.utc),
                 )
-                signals_published += 1
+            signals_published += 1
 
         self._record_processing_event(
             message=message,
@@ -398,6 +431,28 @@ class ThesisBuilderRunner:
             return None
         return _json_ready(asdict(snapshot))
 
+    def _triage_pair(
+        self,
+        *,
+        article: NewsArticle,
+        instrument: InstrumentIdentity,
+    ) -> LlmTriageResult | None:
+        if not self._settings.triage_enabled:
+            return None
+        try:
+            return self._analyzer.triage_article(
+                article=article,
+                ticker=instrument.ticker,
+                exchange_code=instrument.exchange_code,
+            )
+        except Exception:
+            LOGGER.exception(
+                "ThesisBuilder triage failed open article_id=%s ticker=%s",
+                article.id,
+                instrument.ticker,
+            )
+            return None
+
     def _log_heartbeat(self) -> None:
         status = self.status()
         LOGGER.info(
@@ -421,22 +476,76 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
+@dataclass(frozen=True)
+class InstrumentPairResolution:
+    instruments: list[InstrumentIdentity]
+    prefiltered_roundup: list[InstrumentIdentity]
+
+
 def _resolve_instruments(
     *,
     article: NewsArticle,
     active_instruments: list[SharedInstrumentRecord],
 ) -> list[InstrumentIdentity]:
+    return _resolve_instrument_pairs(
+        article=article,
+        active_instruments=active_instruments,
+    ).instruments
+
+
+def _resolve_instrument_pairs(
+    *,
+    article: NewsArticle,
+    active_instruments: list[SharedInstrumentRecord],
+    listicle_prefilter_enabled: bool = False,
+    listicle_prefilter_tag_threshold: int = 6,
+) -> InstrumentPairResolution:
     article_tickers = {ticker.strip().upper() for ticker in article.tickers if ticker.strip()}
-    text = " ".join([article.headline, article.summary or "", article.url])
+    text = " ".join([article.headline, article.summary or ""])
+    headline = article.headline
     matches: list[InstrumentIdentity] = []
+    tagged_matches: list[InstrumentIdentity] = []
+    headline_alias_matches = 0
     for instrument in active_instruments:
-        if instrument.ticker in article_tickers or any(
-            contains_term(text, alias) for alias in instrument.aliases
-        ):
-            matches.append(
-                InstrumentIdentity(
-                    ticker=instrument.ticker,
-                    exchange_code=instrument.exchange_code,
-                )
-            )
-    return matches
+        identity = InstrumentIdentity(
+            ticker=instrument.ticker,
+            exchange_code=instrument.exchange_code,
+        )
+        ticker_match = instrument.ticker in article_tickers
+        alias_match = any(contains_term(text, alias) for alias in instrument.aliases)
+        headline_alias_match = any(contains_term(headline, alias) for alias in instrument.aliases)
+        if ticker_match:
+            tagged_matches.append(identity)
+        if headline_alias_match:
+            headline_alias_matches += 1
+        if ticker_match or alias_match:
+            matches.append(identity)
+    if (
+        listicle_prefilter_enabled
+        and len(tagged_matches) > max(0, listicle_prefilter_tag_threshold)
+        and headline_alias_matches == 0
+    ):
+        return InstrumentPairResolution(instruments=[], prefiltered_roundup=tagged_matches)
+    return InstrumentPairResolution(instruments=matches, prefiltered_roundup=[])
+
+
+def _triage_rejection(triage: LlmTriageResult | None) -> str | None:
+    if triage is None:
+        return None
+    if not triage.instrument_is_subject:
+        return "triage_not_subject"
+    if triage.content_type is not ContentType.NEWS_CATALYST:
+        return "triage_not_catalyst"
+    return None
+
+
+def _triage_audit(triage: LlmTriageResult) -> dict[str, Any]:
+    return {
+        "triage": {
+            "instrument_is_subject": triage.instrument_is_subject,
+            "content_type": triage.content_type.value,
+            "reasoning": triage.reasoning,
+            "estimated_tokens": triage.estimated_tokens,
+            "llm_model": triage.llm_model,
+        }
+    }

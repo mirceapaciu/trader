@@ -12,7 +12,13 @@ from psycopg.rows import dict_row
 from .llm_client import ThesisAnalyzer, TokenBudgetExhausted
 from .models import NewsArticle
 from .repository import PostgresThesisBuilderRepository
-from .service import InstrumentRegistry, _resolve_instruments
+from .service import (
+    InstrumentRegistry,
+    _resolve_instruments,
+    _resolve_instrument_pairs,
+    _triage_audit,
+    _triage_rejection,
+)
 
 LOGGER = logging.getLogger("thesis_builder.reprocessor")
 
@@ -42,6 +48,9 @@ class ThesisBuilderReprocessor:
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
+        triage_enabled: bool = False,
+        listicle_prefilter_enabled: bool = False,
+        listicle_prefilter_tag_threshold: int = 6,
     ) -> None:
         self._dsn = dsn
         self._news_fetcher_schema = news_fetcher_schema
@@ -56,6 +65,9 @@ class ThesisBuilderReprocessor:
         self._default_time_horizon = default_time_horizon
         self._evidence_collection_max_minutes = evidence_collection_max_minutes
         self._max_evidence_age_minutes = max_evidence_age_minutes
+        self._triage_enabled = triage_enabled
+        self._listicle_prefilter_enabled = listicle_prefilter_enabled
+        self._listicle_prefilter_tag_threshold = listicle_prefilter_tag_threshold
 
     def reprocess(self, *, days_back: int, max_articles: int = 200) -> ReprocessResult:
         run_id = str(uuid.uuid4())
@@ -84,7 +96,28 @@ class ThesisBuilderReprocessor:
             published_at = article.published_at
             clock = lambda published_at=published_at: published_at + timedelta(minutes=5)
 
-            instruments = _resolve_instruments(article=article, active_instruments=active_instruments)
+            if self._listicle_prefilter_enabled:
+                pair_resolution = _resolve_instrument_pairs(
+                    article=article,
+                    active_instruments=active_instruments,
+                    listicle_prefilter_enabled=True,
+                    listicle_prefilter_tag_threshold=self._listicle_prefilter_tag_threshold,
+                )
+                for instrument in pair_resolution.prefiltered_roundup:
+                    self._repository.persist_rejected_analysis(
+                        article=article,
+                        instrument=instrument,
+                        rejection_reason_code="prefiltered_roundup",
+                        llm_model="deterministic_prefilter",
+                        validation_errors=["prefiltered_roundup"],
+                    )
+                    analyses_created += 1
+                instruments = pair_resolution.instruments
+            else:
+                instruments = _resolve_instruments(
+                    article=article,
+                    active_instruments=active_instruments,
+                )
             if not instruments:
                 continue
 
@@ -95,6 +128,33 @@ class ThesisBuilderReprocessor:
             )
 
             for instrument in instruments:
+                if self._triage_enabled:
+                    try:
+                        triage = self._analyzer.triage_article(
+                            article=article,
+                            ticker=instrument.ticker,
+                            exchange_code=instrument.exchange_code,
+                        )
+                    except Exception:
+                        LOGGER.exception(
+                            "Reprocess triage failed open run_id=%s article_id=%s ticker=%s",
+                            run_id,
+                            article.id,
+                            instrument.ticker,
+                        )
+                    else:
+                        triage_rejection = _triage_rejection(triage)
+                        if triage_rejection is not None:
+                            self._repository.persist_rejected_analysis(
+                                article=article,
+                                instrument=instrument,
+                                rejection_reason_code=triage_rejection,
+                                llm_model=triage.llm_model,
+                                validation_errors=[triage_rejection, _triage_audit(triage)],
+                                triage_result=triage,
+                            )
+                            analyses_created += 1
+                            continue
                 try:
                     analysis = self._analyzer.analyze_article(
                         article=article,

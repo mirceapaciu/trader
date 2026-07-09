@@ -85,6 +85,11 @@ class ThesisRegenerationProvider:
             "default_time_horizon": s.default_time_horizon,
             "evidence_collection_max_minutes": thresholds.evidence_collection_max_minutes,
             "max_evidence_age_minutes": s.max_evidence_age_minutes,
+            "triage_enabled": thresholds.triage_enabled,
+            "triage_model": s.triage_model,
+            "triage_max_output_tokens": s.triage_max_output_tokens,
+            "listicle_prefilter_enabled": thresholds.listicle_prefilter_enabled,
+            "listicle_prefilter_tag_threshold": thresholds.listicle_prefilter_tag_threshold,
         }
 
     def _resolve_thresholds(
@@ -110,6 +115,9 @@ class ThesisRegenerationProvider:
                 else s.evidence_collection_max_minutes
             ),
             max_evidence_age_minutes=s.max_evidence_age_minutes,
+            triage_enabled=s.triage_enabled,
+            listicle_prefilter_enabled=s.listicle_prefilter_enabled,
+            listicle_prefilter_tag_threshold=s.listicle_prefilter_tag_threshold,
         )
 
     def regenerate(
@@ -157,6 +165,8 @@ class ThesisRegenerationProvider:
             model=llm_model,
             max_tokens_per_run=token_budget,
             max_tokens_per_item=s.llm_max_output_tokens,
+            triage_model=s.triage_model,
+            triage_max_output_tokens=s.triage_max_output_tokens,
         )
         thresholds = self._resolve_thresholds(
             required_evidence_count=required_evidence_count,

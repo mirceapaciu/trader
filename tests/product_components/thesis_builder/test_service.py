@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from src.product_components.shared.adapters import SharedInstrumentRecord
-from src.product_components.thesis_builder.models import NewsArticle
+from src.product_components.thesis_builder.models import ContentType, LlmTriageResult, NewsArticle
 from src.product_components.thesis_builder.redis_io import NewsStreamMessage
 from src.product_components.thesis_builder.service import ThesisBuilderRunner, _resolve_instruments
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
@@ -46,10 +46,12 @@ class _FakeIo:
 class _FakeRepository:
     def __init__(self) -> None:
         self.rejected: list[str] = []
+        self.rejected_kwargs: list[dict] = []
         self.processing_events: list[dict] = []
 
     def persist_rejected_analysis(self, **kwargs):
         self.rejected.append(kwargs["rejection_reason_code"])
+        self.rejected_kwargs.append(kwargs)
         return 1
 
     def record_message_processing_event(self, **kwargs):
@@ -177,6 +179,61 @@ def test_article_without_registry_match_is_acked_without_processing() -> None:
     assert repo.processing_events[0]["reason_code"] == "no_active_instrument"
 
 
+def test_triage_rejection_skips_full_analysis_and_persists_audit() -> None:
+    article = _article()
+    repo = _FakeRepository()
+    io = _FakeIo()
+    runner = ThesisBuilderRunner(
+        settings=_settings(triage_enabled=True),
+        redis_io=io,
+        repository=repo,
+        analyzer=_TriageRejectingAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(
+            [SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",))]
+        ),
+        review_writer=_FakeReviewWriter(),
+    )
+
+    result = runner.process_message(_message(article_id=article.id))
+
+    assert result.acked is True
+    assert result.analyses_created == 1
+    assert repo.rejected == ["triage_not_subject"]
+    assert repo.rejected_kwargs[0]["triage_result"].reasoning == "list mention only"
+    assert io.signals == []
+
+
+def test_listicle_prefilter_persists_roundup_without_llm_call() -> None:
+    repo = _FakeRepository()
+    io = _FakeIo()
+    runner = ThesisBuilderRunner(
+        settings=_settings(
+            listicle_prefilter_enabled=True,
+            listicle_prefilter_tag_threshold=1,
+        ),
+        redis_io=io,
+        repository=repo,
+        analyzer=_FailingAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(
+            [
+                SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",)),
+                SharedInstrumentRecord(ticker="MSFT", exchange_code="XNAS", aliases=("microsoft",)),
+            ]
+        ),
+        review_writer=_FakeReviewWriter(),
+    )
+    message = _message(article_id="roundup-1")
+    message.payload["entities"] = ["AAPL", "MSFT"]
+    message.payload["title"] = "Ten tech stocks investors are watching"
+
+    result = runner.process_message(message)
+
+    assert result.analyses_created == 2
+    assert repo.rejected == ["prefiltered_roundup", "prefiltered_roundup"]
+    assert repo.processing_events[0]["reason_code"] == "prefiltered_roundup"
+    assert io.acked == ["1-0"]
+
+
 def test_resolve_instruments_ignores_short_alias_inside_words() -> None:
     # Regression: the "mu" alias must not match inside "multi-trillion-dollar".
     now = datetime.now(timezone.utc)
@@ -230,6 +287,33 @@ def test_resolve_instruments_matches_named_company() -> None:
     assert [i.ticker for i in instruments] == ["MU"]
 
 
+def test_resolve_instruments_does_not_match_alias_only_in_url() -> None:
+    now = datetime.now(timezone.utc)
+    article = NewsArticle(
+        id="url-1",
+        source="rss",
+        headline="Chip stocks move on broader demand hopes",
+        summary="Memory makers rallied with the sector.",
+        url="https://example.com/micron-technology-sector-roundup",
+        tickers=[],
+        published_at=now,
+        fetched_at=now,
+    )
+
+    instruments = _resolve_instruments(
+        article=article,
+        active_instruments=[
+            SharedInstrumentRecord(
+                ticker="MU",
+                exchange_code="XNAS",
+                aliases=("micron technology", "mu"),
+            )
+        ],
+    )
+
+    assert instruments == []
+
+
 class _NoopAnalyzer:
     pass
 
@@ -237,6 +321,22 @@ class _NoopAnalyzer:
 class _FailingAnalyzer:
     def analyze_article(self, **_kwargs):
         raise ValueError("invalid_test_response")
+
+
+class _TriageRejectingAnalyzer:
+    def triage_article(self, **_kwargs):
+        return LlmTriageResult(
+            ticker="AAPL",
+            exchange_code="XNAS",
+            instrument_is_subject=False,
+            content_type=ContentType.NEWS_CATALYST,
+            reasoning="list mention only",
+            estimated_tokens=42,
+            llm_model="triage-model",
+        )
+
+    def analyze_article(self, **_kwargs):
+        raise AssertionError("full analysis should be skipped")
 
 
 def _article() -> NewsArticle:
@@ -275,8 +375,8 @@ def _message(*, article_id: str) -> NewsStreamMessage:
     )
 
 
-def _settings() -> ThesisBuilderSettings:
-    return ThesisBuilderSettings(
+def _settings(**overrides) -> ThesisBuilderSettings:
+    values = dict(
         thesis_builder_db_schema="thesis_builder",
         shared_db_schema="shared",
         news_fetcher_db_schema="news_fetcher",
@@ -306,7 +406,16 @@ def _settings() -> ThesisBuilderSettings:
         llm_model="test-model",
         llm_daily_token_budget=10000,
         llm_max_output_tokens=1200,
+        triage_enabled=False,
+        triage_model="test-triage-model",
+        triage_max_output_tokens=200,
+        listicle_prefilter_enabled=False,
+        listicle_prefilter_tag_threshold=6,
         llm_request_timeout_seconds=60.0,
         llm_max_retries=2,
         openai_api_key="test-key",
+    )
+    values.update(overrides)
+    return ThesisBuilderSettings(
+        **values,
     )

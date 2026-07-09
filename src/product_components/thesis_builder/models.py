@@ -31,6 +31,17 @@ class ContentType(StrEnum):
 
 
 @dataclass(frozen=True)
+class LlmTriageResult:
+    ticker: str
+    exchange_code: str
+    instrument_is_subject: bool
+    content_type: ContentType
+    reasoning: str
+    estimated_tokens: int = 0
+    llm_model: str = ""
+
+
+@dataclass(frozen=True)
 class NewsArticle:
     id: str
     source: str

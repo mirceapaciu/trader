@@ -346,6 +346,11 @@ def test_provider_resolves_threshold_defaults_and_overrides():
         default_time_horizon="swing_1d_5d",
         evidence_collection_max_minutes=120,
         max_evidence_age_minutes=180,
+        triage_enabled=False,
+        triage_model="triage-model",
+        triage_max_output_tokens=200,
+        listicle_prefilter_enabled=False,
+        listicle_prefilter_tag_threshold=6,
     )
     provider = ThesisRegenerationProvider(
         dsn="postgresql://unused",
@@ -358,6 +363,7 @@ def test_provider_resolves_threshold_defaults_and_overrides():
     default_cfg = provider.thesis_config_snapshot(llm_model="m")
     assert default_cfg["required_evidence_count"] == 3
     assert default_cfg["evidence_collection_max_minutes"] == 120
+    assert default_cfg["triage_enabled"] is False
     # explicit overrides win
     override_cfg = provider.thesis_config_snapshot(
         llm_model="m", required_evidence_count=2, evidence_collection_max_minutes=1440
