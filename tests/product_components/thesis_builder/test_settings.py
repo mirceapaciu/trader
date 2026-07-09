@@ -1,4 +1,5 @@
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
+from src.product_components.trade_executor.settings import TradeExecutorSettings
 
 
 def test_thesis_builder_settings_defaults(monkeypatch) -> None:
@@ -8,8 +9,13 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     monkeypatch.delenv("THESIS_BUILDER_TRIAGE_ENABLED", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_SYNTHESIS_ENABLED", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT", raising=False)
+    monkeypatch.delenv("MAX_POSITION_SIZE", raising=False)
+    monkeypatch.delenv("ATR_STOP_MULT", raising=False)
 
     settings = ThesisBuilderSettings.from_env()
+    trade_executor_settings = TradeExecutorSettings.from_env()
 
     assert settings.thesis_builder_db_schema == "thesis_builder"
     assert settings.consumer_group == "thesis_builder_group"
@@ -31,6 +37,8 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.synthesis_fallback_to_mechanical is False
     assert settings.listicle_prefilter_enabled is False
     assert settings.listicle_prefilter_tag_threshold == 6
+    assert settings.tradeability_max_entry_price == trade_executor_settings.max_position_size
+    assert settings.tradeability_atr_stop_mult == trade_executor_settings.atr_stop_mult
     assert settings.already_priced_event_driven_atr_multiple == 1.5
     assert settings.already_priced_event_driven_return_threshold == 0.04
     assert settings.already_priced_sentiment_momentum_atr_multiple == 2.0
@@ -64,6 +72,8 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_RETURN_THRESHOLD", "0.03")
     monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_ATR_MULTIPLE", "1.8")
     monkeypatch.setenv("THESIS_BUILDER_ALREADY_PRICED_SENTIMENT_MOMENTUM_RETURN_THRESHOLD", "0.05")
+    monkeypatch.setenv("THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE", "2500")
+    monkeypatch.setenv("THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT", "2.5")
     monkeypatch.setenv("THESIS_BUILDER_LLM_REQUEST_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_RETRIES", "1")
 
@@ -93,5 +103,7 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.already_priced_event_driven_return_threshold == 0.03
     assert settings.already_priced_sentiment_momentum_atr_multiple == 1.8
     assert settings.already_priced_sentiment_momentum_return_threshold == 0.05
+    assert settings.tradeability_max_entry_price == 2500.0
+    assert settings.tradeability_atr_stop_mult == 2.5
     assert settings.llm_request_timeout_seconds == 30.0
     assert settings.llm_max_retries == 1

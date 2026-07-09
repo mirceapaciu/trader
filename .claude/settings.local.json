@@ -98,7 +98,9 @@
       "Bash(git -C /d/src/trader mv .claude/skills/verify-backtest.md .agents/skills/verify-backtest/SKILL.md)",
       "Bash(git -C /d/src/trader rm -q .codex/skills/fix-and-verify.md)",
       "Bash(git -C /d/src/trader status --short)",
-      "Bash(rmdir /d/src/trader/.claude/skills /d/src/trader/.codex/skills /d/src/trader/.codex 2>/dev/null; ls -aR /d/src/trader/.agents; head -6 /d/src/trader/.agents/skills/fix-and-verify/SKILL.md)"
+      "Bash(rmdir /d/src/trader/.claude/skills /d/src/trader/.codex/skills /d/src/trader/.codex 2>/dev/null; ls -aR /d/src/trader/.agents; head -6 /d/src/trader/.agents/skills/fix-and-verify/SKILL.md)",
+      "PowerShell(uv run pytest --collect-only -q 2>$null)",
+      "PowerShell(git add docs/issues/issues-index.md docs/issues/issues-detail/260601-01.md docs/issues/issues-detail/260626-01.md docs/issues/issues-detail/260627-01.md docs/issues/issues-detail/260628-01.md)"
     ],
     "additionalDirectories": [
       "D:\\src\\trader\\.claude\\skills"

@@ -343,6 +343,8 @@ def test_provider_resolves_threshold_defaults_and_overrides():
         min_confidence=0.6,
         min_relevance=0.5,
         risk_max_loss_usd=120.0,
+        tradeability_max_entry_price=1000.0,
+        tradeability_atr_stop_mult=1.5,
         default_time_horizon="swing_1d_5d",
         evidence_collection_max_minutes=120,
         max_evidence_age_minutes=180,
@@ -374,6 +376,8 @@ def test_provider_resolves_threshold_defaults_and_overrides():
     assert default_cfg["triage_enabled"] is False
     assert default_cfg["synthesis_enabled"] is False
     assert default_cfg["synthesis_model"] == "synthesis-model"
+    assert default_cfg["tradeability_max_entry_price"] == 1000.0
+    assert default_cfg["tradeability_atr_stop_mult"] == 1.5
     assert default_cfg["already_priced_event_driven_atr_multiple"] == 1.5
     # explicit overrides win
     override_cfg = provider.thesis_config_snapshot(

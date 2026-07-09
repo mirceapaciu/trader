@@ -402,6 +402,8 @@ def _settings(**overrides) -> ThesisBuilderSettings:
         contrarian_min_confidence=0.72,
         trend_follow_min_confidence=0.68,
         risk_max_loss_usd=120.0,
+        tradeability_max_entry_price=1000.0,
+        tradeability_atr_stop_mult=1.5,
         default_time_horizon="swing_1d_5d",
         llm_model="test-model",
         llm_daily_token_budget=10000,

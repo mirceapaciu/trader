@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -182,7 +183,7 @@ def test_rolling_window_ages_out_old_evidence_instead_of_swallowing_new() -> Non
         return repository.persist_analysis_and_update_evidence(
             article=_news_article(article_id, published_at),
             result=_buy_analysis(article_id),
-            market_context_snapshot=None,
+            market_context_snapshot=_market_context(),
             required_evidence_count=3,
             min_confidence=settings.min_confidence,
             min_relevance=settings.min_relevance,
@@ -211,6 +212,46 @@ def test_rolling_window_ages_out_old_evidence_instead_of_swallowing_new() -> Non
     assert _evidence_window_rows(settings) == [
         ("satisfied", ["article-1", "article-2", "article-3"])
     ]
+
+
+def test_untradeable_context_persists_rejected_card_without_signal() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+    )
+    base = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+    context = _market_context(current_price=1200.0, previous_close=1200.0, atr_20d=93.0)
+
+    for index in range(3):
+        published_at = base + timedelta(minutes=index)
+        outcome = repository.persist_analysis_and_update_evidence(
+            article=_news_article(f"article-{index}", published_at),
+            result=_buy_analysis(f"article-{index}"),
+            market_context_snapshot=context,
+            required_evidence_count=3,
+            min_confidence=settings.min_confidence,
+            min_relevance=settings.min_relevance,
+            risk_max_loss_usd=settings.risk_max_loss_usd,
+            tradeability_max_entry_price=settings.tradeability_max_entry_price,
+            tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+            default_time_horizon=settings.default_time_horizon,
+            evidence_collection_max_minutes=120,
+            max_evidence_age_minutes=180,
+            already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+            clock=lambda published_at=published_at: published_at + timedelta(seconds=30),
+        )
+        assert outcome.signal is None
+
+    assert _thesis_card_rows(settings) == [("rejected", "untradeable_risk_box")]
+    assert redis_client.xlen(settings.signal_queue) == 0
 
 
 def _news_article(article_id: str, published_at: datetime) -> NewsArticle:
@@ -260,6 +301,17 @@ def _evidence_window_rows(settings: ThesisBuilderSettings) -> list[tuple[str, li
             return [(row[0], list(row[1])) for row in cur.fetchall()]
 
 
+def _thesis_card_rows(settings: ThesisBuilderSettings) -> list[tuple[str, str | None]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT validation_status, rejection_reason_code "
+                f"FROM {settings.thesis_builder_db_schema}.t_thesis_cards "
+                f"ORDER BY created_at, id"
+            )
+            return [(row[0], row[1]) for row in cur.fetchall()]
+
+
 def _runner(
     settings: ThesisBuilderSettings, *, llm_client: "_FakeLlmClient | None" = None
 ) -> ThesisBuilderRunner:
@@ -292,7 +344,36 @@ def _runner(
             max_tokens_per_run=100000,
             max_tokens_per_item=500,
         ),
+        market_context_client=_FakeMarketContextClient(),
     )
+
+
+class _FakeMarketContextClient:
+    def get_market_context(self, *, ticker: str, exchange_code: str, refresh_if_stale: bool = True):
+        return _FakeMarketContext()
+
+
+@dataclass(frozen=True)
+class _FakeMarketContext:
+    source_status: str = "fresh"
+    current_price: float = 100.0
+    previous_close: float = 100.0
+    return_1d: float = 0.0
+    atr_20d: float = 2.0
+    as_of: datetime = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def _market_context(**overrides) -> dict:
+    context = {
+        "source_status": "fresh",
+        "current_price": 100.0,
+        "previous_close": 100.0,
+        "return_1d": 0.0,
+        "atr_20d": 2.0,
+        "as_of": "2026-06-15T12:00:00+00:00",
+    }
+    context.update(overrides)
+    return context
 
 
 class _FakeLlmClient:
@@ -357,6 +438,8 @@ def _settings() -> ThesisBuilderSettings:
         contrarian_min_confidence=0.72,
         trend_follow_min_confidence=0.68,
         risk_max_loss_usd=120.0,
+        tradeability_max_entry_price=1000.0,
+        tradeability_atr_stop_mult=1.5,
         default_time_horizon="swing_1d_5d",
         llm_model="test-model",
         llm_daily_token_budget=100000,

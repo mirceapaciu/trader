@@ -83,6 +83,8 @@ class ThesisRegenerationProvider:
             "min_confidence": s.min_confidence,
             "min_relevance": s.min_relevance,
             "risk_max_loss_usd": s.risk_max_loss_usd,
+            "tradeability_max_entry_price": thresholds.tradeability_max_entry_price,
+            "tradeability_atr_stop_mult": thresholds.tradeability_atr_stop_mult,
             "default_time_horizon": s.default_time_horizon,
             "evidence_collection_max_minutes": thresholds.evidence_collection_max_minutes,
             "max_evidence_age_minutes": s.max_evidence_age_minutes,
@@ -117,6 +119,8 @@ class ThesisRegenerationProvider:
             min_confidence=s.min_confidence,
             min_relevance=s.min_relevance,
             risk_max_loss_usd=s.risk_max_loss_usd,
+            tradeability_max_entry_price=s.tradeability_max_entry_price,
+            tradeability_atr_stop_mult=s.tradeability_atr_stop_mult,
             default_time_horizon=s.default_time_horizon,
             evidence_collection_max_minutes=(
                 evidence_collection_max_minutes

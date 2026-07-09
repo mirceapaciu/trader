@@ -38,6 +38,8 @@ class ThesisBuilderSettings:
     trend_follow_min_confidence: float
     risk_max_loss_usd: float
     default_time_horizon: str
+    tradeability_max_entry_price: float
+    tradeability_atr_stop_mult: float
     llm_model: str
     llm_daily_token_budget: int
     llm_max_output_tokens: int
@@ -103,6 +105,8 @@ class ThesisBuilderSettings:
             trend_follow_min_confidence=_float_env("THESIS_BUILDER_TREND_FOLLOW_MIN_CONFIDENCE", 0.68),
             risk_max_loss_usd=_float_env("THESIS_BUILDER_RISK_MAX_LOSS_USD", 150.0),
             default_time_horizon=os.getenv("THESIS_BUILDER_DEFAULT_TIME_HORIZON", "swing_1d_5d"),
+            tradeability_max_entry_price=_float_env("THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE", 1000.0),
+            tradeability_atr_stop_mult=_float_env("THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT", 1.5),
             llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
             llm_daily_token_budget=_int_env("LLM_DAILY_TOKEN_BUDGET", 5000000),
             llm_max_output_tokens=_int_env("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", 1200),

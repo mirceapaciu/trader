@@ -86,6 +86,11 @@ TRADE_EXECUTOR_LOG_FILE=logs/trade-executor.log
   the calendar date in `TRADING_DAY_TIMEZONE`.
 - **Single instance.** Portfolio guardrails (position caps, exposure reservation for working orders,
   daily counters) assume exactly one TradeExecutor consumer instance.
+- **Generation tradeability coherence.** ThesisBuilder mirrors TradeExecutor's integer-share sizing
+  constraints before creating executable cards. Keep ThesisBuilder's
+  `THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE` aligned with `MAX_POSITION_SIZE` and
+  `THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT` aligned with `ATR_STOP_MULT`; otherwise generation can
+  create cards that execution will always reject with `size_below_one_share`.
 - Secrets required for a live IBKR session (if any) belong in `.env.secrets`.
 
 ## Shared Dependencies

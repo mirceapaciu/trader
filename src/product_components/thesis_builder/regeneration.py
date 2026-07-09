@@ -45,6 +45,8 @@ class RegenerationThresholds:
     default_time_horizon: str
     evidence_collection_max_minutes: int
     max_evidence_age_minutes: int
+    tradeability_max_entry_price: float = 1000.0
+    tradeability_atr_stop_mult: float = 1.5
     triage_enabled: bool = False
     listicle_prefilter_enabled: bool = False
     listicle_prefilter_tag_threshold: int = 6
@@ -254,6 +256,8 @@ class RegenerationRunner:
                     min_confidence=self._thresholds.min_confidence,
                     min_relevance=self._thresholds.min_relevance,
                     risk_max_loss_usd=self._thresholds.risk_max_loss_usd,
+                    tradeability_max_entry_price=self._thresholds.tradeability_max_entry_price,
+                    tradeability_atr_stop_mult=self._thresholds.tradeability_atr_stop_mult,
                     default_time_horizon=self._thresholds.default_time_horizon,
                     evidence_collection_max_minutes=self._thresholds.evidence_collection_max_minutes,
                     max_evidence_age_minutes=self._thresholds.max_evidence_age_minutes,

@@ -7,6 +7,7 @@ from src.product_components.thesis_builder.models import (
 from src.product_components.thesis_builder.repository import (
     _already_priced_rejection,
     _analysis_rejection,
+    _tradeability_rejection,
 )
 
 
@@ -169,6 +170,60 @@ def test_already_priced_fails_closed_when_context_unusable() -> None:
 
     assert missing == "market_context_unavailable"
     assert stale == "market_context_unavailable"
+
+
+def test_tradeability_rejects_high_price_or_high_atr_risk() -> None:
+    high_price = _tradeability_rejection(
+        market_context_snapshot=_context(current_price=1200.0, atr_20d=2.0),
+        tradeability_max_entry_price=1000.0,
+        risk_max_loss_usd=120.0,
+        atr_stop_mult=1.5,
+    )
+    high_atr_risk = _tradeability_rejection(
+        market_context_snapshot=_context(current_price=900.0, atr_20d=100.0),
+        tradeability_max_entry_price=1000.0,
+        risk_max_loss_usd=120.0,
+        atr_stop_mult=1.5,
+    )
+
+    assert high_price == "untradeable_risk_box"
+    assert high_atr_risk == "untradeable_risk_box"
+
+
+def test_tradeability_accepts_sizeable_context_at_boundaries() -> None:
+    rejection = _tradeability_rejection(
+        market_context_snapshot=_context(current_price=1000.0, atr_20d=80.0),
+        tradeability_max_entry_price=1000.0,
+        risk_max_loss_usd=120.0,
+        atr_stop_mult=1.5,
+    )
+
+    assert rejection is None
+
+
+def test_tradeability_fails_closed_when_context_unusable() -> None:
+    missing = _tradeability_rejection(
+        market_context_snapshot=None,
+        tradeability_max_entry_price=1000.0,
+        risk_max_loss_usd=120.0,
+        atr_stop_mult=1.5,
+    )
+    stale = _tradeability_rejection(
+        market_context_snapshot=_context(source_status="stale"),
+        tradeability_max_entry_price=1000.0,
+        risk_max_loss_usd=120.0,
+        atr_stop_mult=1.5,
+    )
+    missing_atr = _tradeability_rejection(
+        market_context_snapshot=_context(atr_20d=None),
+        tradeability_max_entry_price=1000.0,
+        risk_max_loss_usd=120.0,
+        atr_stop_mult=1.5,
+    )
+
+    assert missing == "market_context_unavailable"
+    assert stale == "market_context_unavailable"
+    assert missing_atr == "market_context_unavailable"
 
 
 def _context(**overrides):

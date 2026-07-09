@@ -34,6 +34,8 @@ THESIS_BUILDER_MIN_CONFIDENCE=0.6
 THESIS_BUILDER_CONTRARIAN_MIN_CONFIDENCE=0.72
 THESIS_BUILDER_TREND_FOLLOW_MIN_CONFIDENCE=0.68
 THESIS_BUILDER_RISK_MAX_LOSS_USD=150
+THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE=1000
+THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT=1.5
 THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED=false
 THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD=6
 THESIS_BUILDER_ALREADY_PRICED_EVENT_DRIVEN_ATR_MULTIPLE=1.5
@@ -95,6 +97,19 @@ risk-box scaling should be neutralized rather than tuned by intuition.
 At thesis-card creation time, ThesisBuilder rejects `event_driven` and `sentiment_momentum` cards when the market-context snapshot shows the instrument has already moved too far in the thesis direction. The gate checks both 1-day direction-aligned return and direction-aligned price move measured in ATR-20 units. Exceeding either configured threshold persists the candidate as a rejected audit card with `rejection_reason_code=already_priced`; missing or stale context persists `market_context_unavailable` for gated strategies. The same thresholds are used by live processing, historical reprocess, and regeneration backtests.
 
 Thresholds are ThesisBuilder-owned configuration. Monitoring UI exposes them read-only in the ThesisBuilder tab.
+
+## Tradeability Gate
+
+At thesis-card creation time, ThesisBuilder rejects otherwise-valid card candidates that cannot size
+at least one integer share under TradeExecutor's live sizing rules. The gate fails closed when the
+market-context snapshot is missing, stale, or lacks `current_price` / `atr_20d`. It rejects with
+`untradeable_risk_box` when `current_price > THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE` or
+`THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT * atr_20d > THESIS_BUILDER_RISK_MAX_LOSS_USD`.
+
+`THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE` must stay aligned with TradeExecutor's
+`MAX_POSITION_SIZE`, and `THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT` must stay aligned with
+TradeExecutor's `ATR_STOP_MULT`. If TradeExecutor adds fractional-share support or intentionally
+raises its notional/risk caps, update these ThesisBuilder thresholds in the same change.
 
 ## Shared Dependencies
 

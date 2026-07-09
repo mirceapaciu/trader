@@ -132,6 +132,8 @@ class PostgresThesisBuilderRepository:
         min_confidence: float,
         min_relevance: float = 0.0,
         risk_max_loss_usd: float,
+        tradeability_max_entry_price: float = 1000.0,
+        tradeability_atr_stop_mult: float = 1.5,
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
@@ -170,6 +172,8 @@ class PostgresThesisBuilderRepository:
                     market_context_snapshot=market_context_snapshot,
                     required_evidence_count=required_evidence_count,
                     risk_max_loss_usd=risk_max_loss_usd,
+                    tradeability_max_entry_price=tradeability_max_entry_price,
+                    tradeability_atr_stop_mult=tradeability_atr_stop_mult,
                     default_time_horizon=default_time_horizon,
                     evidence_collection_max_minutes=evidence_collection_max_minutes,
                     max_evidence_age_minutes=max_evidence_age_minutes,
@@ -306,6 +310,8 @@ class PostgresThesisBuilderRepository:
         market_context_snapshot: dict[str, Any] | None,
         required_evidence_count: int,
         risk_max_loss_usd: float,
+        tradeability_max_entry_price: float,
+        tradeability_atr_stop_mult: float,
         default_time_horizon: str,
         evidence_collection_max_minutes: int,
         max_evidence_age_minutes: int,
@@ -379,6 +385,15 @@ class PostgresThesisBuilderRepository:
         if validation_status is ValidationStatus.VALID and already_priced_rejection is not None:
             validation_status = ValidationStatus.REJECTED
             rejection_reason = already_priced_rejection
+        tradeability_rejection = _tradeability_rejection(
+            market_context_snapshot=market_context_snapshot,
+            tradeability_max_entry_price=tradeability_max_entry_price,
+            risk_max_loss_usd=risk_max_loss_usd,
+            atr_stop_mult=tradeability_atr_stop_mult,
+        )
+        if validation_status is ValidationStatus.VALID and tradeability_rejection is not None:
+            validation_status = ValidationStatus.REJECTED
+            rejection_reason = tradeability_rejection
         confidence = sum(item.confidence for item in selected) / len(selected)
         idempotency_key = _card_idempotency_key(
             ticker=result.ticker,
@@ -905,6 +920,29 @@ def _direction_aligned_market_move(
     aligned_return = sign * raw_return
     aligned_price_move = sign * (current_price - previous_close)
     return aligned_return, aligned_price_move, atr_20d
+
+
+def _tradeability_rejection(
+    *,
+    market_context_snapshot: dict[str, Any] | None,
+    tradeability_max_entry_price: float,
+    risk_max_loss_usd: float,
+    atr_stop_mult: float,
+) -> str | None:
+    if market_context_snapshot is None:
+        return "market_context_unavailable"
+    status = str(market_context_snapshot.get("source_status") or "").lower()
+    if status not in {"fresh", "delayed"}:
+        return "market_context_unavailable"
+    current_price = _float_or_none(market_context_snapshot.get("current_price"))
+    atr_20d = _float_or_none(market_context_snapshot.get("atr_20d"))
+    if current_price is None or current_price <= 0 or atr_20d is None or atr_20d <= 0:
+        return "market_context_unavailable"
+    if current_price > tradeability_max_entry_price:
+        return "untradeable_risk_box"
+    if atr_stop_mult * atr_20d > risk_max_loss_usd:
+        return "untradeable_risk_box"
+    return None
 
 
 def _evidence(*, selected: list[PersistedAnalysis]) -> list[dict[str, Any]]:
