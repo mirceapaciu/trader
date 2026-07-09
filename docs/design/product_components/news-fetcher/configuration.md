@@ -21,6 +21,11 @@ NEWS_POLL_INTERVAL=120       # seconds
 RSS_POLL_INTERVAL=300        # seconds
 MARKETAUX_POLL_INTERVAL=300  # seconds (used only when Marketaux is enabled)
 RSS_RATE_LIMIT_BACKOFF_SECONDS=900  # seconds to suppress one RSS source after HTTP 429
+
+# Finnhub per-symbol company news (one source per active watchlist listing)
+NEWS_SOURCE_FINNHUB_COMPANY_NEWS_ENABLED=true
+FINNHUB_COMPANY_NEWS_MIN_INTERVAL_SECONDS=120  # per-symbol minimum seconds between fetches
+FINNHUB_COMPANY_NEWS_EXCHANGES=XNAS,XNYS       # exchange codes polled (bare tickers are valid Finnhub symbols only for US listings)
 PREPOST_POLL_INTERVAL=600    # seconds
 MARKET_HOURS_ONLY=false      # when false, run continuous polling and ignore market session gating
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -133,6 +133,99 @@ class FinnhubProvider:
             next_cursor=next_cursor,
             cursor_updated_at=max_published_at or fetched_at,
         )
+
+
+class FinnhubCompanyNewsProvider:
+    """Fetches per-symbol company news from the Finnhub company-news endpoint."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        ticker: str,
+        provider_symbol: str | None = None,
+        bootstrap_lookback_hours: int = 24,
+    ) -> None:
+        if not api_key.strip():
+            raise ValueError("FINNHUB_API_KEY is required for FinnhubCompanyNewsProvider")
+        normalized_ticker = ticker.strip().upper()
+        if not normalized_ticker:
+            raise ValueError("ticker is required for FinnhubCompanyNewsProvider")
+        self._api_key = api_key.strip()
+        self._ticker = normalized_ticker
+        self._symbol = (provider_symbol or normalized_ticker).strip().upper()
+        self._bootstrap_lookback_hours = bootstrap_lookback_hours
+
+    def fetch(self, *, source_key: str, cursor: Any | None, timeout_seconds: int) -> ProviderBatch:
+        since = _extract_datetime_cursor(cursor, "published_after")
+        fetched_at = _utc_now()
+        window_start = since if since is not None else fetched_at - timedelta(hours=self._bootstrap_lookback_hours)
+        params: dict[str, Any] = {
+            "symbol": self._symbol,
+            "from": window_start.date().isoformat(),
+            "to": fetched_at.date().isoformat(),
+            "token": self._api_key,
+        }
+
+        response = _http_get(
+            "https://finnhub.io/api/v1/company-news",
+            params=params,
+            timeout=timeout_seconds,
+        )
+        try:
+            response.raise_for_status()
+        except HTTPError as error:
+            if response.status_code == 429:
+                raise ProviderRateLimitError("provider_rate_limited") from error
+            raise
+        payload = response.json()
+        items = payload if isinstance(payload, list) else []
+
+        events: list[ProviderArticle] = []
+        max_published_at = since
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            published_at = _parse_unix_seconds(item.get("datetime"))
+            if published_at is None:
+                continue
+            if since is not None and published_at <= since:
+                continue
+
+            related = str(item.get("related") or "")
+            tickers = {ticker.strip().upper() for ticker in related.split(",") if ticker.strip()}
+            tickers.add(self._ticker)
+
+            article_id = item.get("id")
+            events.append(
+                ProviderArticle(
+                    source="finnhub",
+                    headline=str(item.get("headline") or ""),
+                    summary=str(item.get("summary") or "") or None,
+                    url=str(item.get("url") or ""),
+                    tickers=sorted(tickers),
+                    sentiment_source=None,
+                    provider_event_id=str(article_id) if article_id is not None else None,
+                    published_at=published_at,
+                    fetched_at=fetched_at,
+                )
+            )
+            if max_published_at is None or published_at > max_published_at:
+                max_published_at = published_at
+
+        next_cursor = {
+            "published_after": _isoformat(max_published_at or fetched_at),
+        }
+        return ProviderBatch(
+            events=events,
+            next_cursor=next_cursor,
+            cursor_updated_at=max_published_at or fetched_at,
+        )
+
+
+def finnhub_company_news_source_key(*, ticker: str, exchange_code: str) -> str:
+    return f"finnhub:company:{ticker.strip().upper()}:{exchange_code.strip().upper()}"
 
 
 class RssProvider:

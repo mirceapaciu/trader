@@ -44,3 +44,29 @@ def test_settings_prefer_news_fetcher_log_level_over_shared_log_level(monkeypatc
     settings = NewsFetcherSettings.from_env()
 
     assert settings.log_level == "DEBUG"
+
+
+def test_settings_company_news_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("NEWS_SOURCE_FINNHUB_COMPANY_NEWS_ENABLED", raising=False)
+    monkeypatch.delenv("FINNHUB_COMPANY_NEWS_MIN_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("FINNHUB_COMPANY_NEWS_EXCHANGES", raising=False)
+
+    settings = NewsFetcherSettings.from_env()
+
+    assert settings.finnhub_company_news_enabled is True
+    assert settings.finnhub_company_news_min_interval_seconds == 120
+    assert settings.finnhub_company_news_exchange_codes == ("XNAS", "XNYS")
+
+
+def test_settings_company_news_env_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("NEWS_SOURCE_FINNHUB_COMPANY_NEWS_ENABLED", "false")
+    monkeypatch.setenv("FINNHUB_COMPANY_NEWS_MIN_INTERVAL_SECONDS", "300")
+    monkeypatch.setenv("FINNHUB_COMPANY_NEWS_EXCHANGES", "xnas, xnys, arcx")
+    monkeypatch.setenv("FINNHUB_API_KEY", " key ")
+
+    settings = NewsFetcherSettings.from_env()
+
+    assert settings.finnhub_company_news_enabled is False
+    assert settings.finnhub_company_news_min_interval_seconds == 300
+    assert settings.finnhub_company_news_exchange_codes == ("XNAS", "XNYS", "ARCX")
+    assert settings.finnhub_api_key == "key"

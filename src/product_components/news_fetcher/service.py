@@ -10,7 +10,13 @@ from src.core_components.event_ingestion_engine.interfaces import EventPublisher
 from src.core_components.event_ingestion_engine.models import ProcessResult, PublicationStatus, SoftDedupePolicy
 from src.product_components.shared.adapters import PostgresSharedInstrumentRegistry
 
-from .providers import NewsProvider, ProviderRateLimitError, RssProvider
+from .providers import (
+    FinnhubCompanyNewsProvider,
+    NewsProvider,
+    ProviderRateLimitError,
+    RssProvider,
+    finnhub_company_news_source_key,
+)
 from .publisher import RedisStreamPublisher
 from .settings import NewsFetcherSettings
 from .source_adapter import NewsSourceAdapter, SourceFilterConfig
@@ -233,17 +239,37 @@ class NewsFetcherService:
 
     def _configured_providers(self) -> dict[str, NewsProvider]:
         providers = dict(self._providers)
-        if not self._settings.rss_enabled:
-            return providers
-
-        loader = getattr(self._storage, "load_rss_feed_specs", None)
-        if loader is None:
-            return providers
-
-        for spec in loader():
-            providers[spec.source_key] = RssProvider(feed_spec=spec)
-            self._source_min_interval_seconds[spec.source_key] = spec.min_request_interval_seconds
+        if self._settings.rss_enabled:
+            loader = getattr(self._storage, "load_rss_feed_specs", None)
+            if loader is not None:
+                for spec in loader():
+                    providers[spec.source_key] = RssProvider(feed_spec=spec)
+                    self._source_min_interval_seconds[spec.source_key] = spec.min_request_interval_seconds
+        self._register_company_news_providers(providers)
         return providers
+
+    def _register_company_news_providers(self, providers: dict[str, NewsProvider]) -> None:
+        if not self._settings.finnhub_company_news_enabled:
+            return
+        api_key = self._settings.finnhub_api_key
+        if not api_key:
+            return
+        loader = getattr(self._storage, "load_active_watchlist_rows", None)
+        if loader is None:
+            return
+
+        allowed_exchanges = set(self._settings.finnhub_company_news_exchange_codes)
+        for row in loader():
+            if allowed_exchanges and row.exchange_code not in allowed_exchanges:
+                continue
+            source_key = finnhub_company_news_source_key(
+                ticker=row.ticker,
+                exchange_code=row.exchange_code,
+            )
+            providers[source_key] = FinnhubCompanyNewsProvider(api_key=api_key, ticker=row.ticker)
+            self._source_min_interval_seconds[source_key] = (
+                self._settings.finnhub_company_news_min_interval_seconds
+            )
 
     def _is_backing_off(self, source_key: str, now: datetime) -> bool:
         backoff_until = self._source_backoff_until.get(source_key)

@@ -39,6 +39,22 @@ Operational guidance:
 Reference:
 - https://finnhub.io/docs/api
 
+### Finnhub general market news
+
+- Endpoint: `GET /news?category=general`, cursor by article `minId`, single source key `finnhub`.
+- The `related` ticker field on general news is sparse; most items arrive untagged and pass relevance only through keyword matching.
+- Treat it as a cheap breadth supplement, not a per-ticker coverage source.
+
+### Finnhub company news (per watchlist symbol)
+
+- Endpoint: `GET /company-news?symbol=<SYMBOL>&from=<DATE>&to=<DATE>`, one dynamic source per active watchlist listing, source key `finnhub:company:<TICKER>:<EXCHANGE_CODE>`.
+- Enabled when `NEWS_SOURCE_FINNHUB_COMPANY_NEWS_ENABLED=true` (default) and `FINNHUB_API_KEY` is configured; sources are rebuilt every cycle from the active watchlist.
+- Articles come back entity-tagged server-side; the provider additionally tags each article with the polled ticker, so attribution does not depend on alias text matching.
+- Only listings on exchanges in `FINNHUB_COMPANY_NEWS_EXCHANGES` (default `XNAS,XNYS`) are polled, because bare app tickers are only valid Finnhub symbols for US listings.
+- The `from`/`to` request window is date-granular; the cursor (`published_after`) filters client-side, and the first fetch bootstraps from a 24-hour lookback.
+- Each symbol source respects `FINNHUB_COMPANY_NEWS_MIN_INTERVAL_SECONDS` (default 120); total request rate is roughly `watchlist_size / interval`, which must stay within the Finnhub plan quota (free tier: 60 calls/min).
+- HTTP 429 responses raise the provider rate-limit error and suppress the source for `RSS_RATE_LIMIT_BACKOFF_SECONDS`.
+
 ## Marketaux
 
 Role:

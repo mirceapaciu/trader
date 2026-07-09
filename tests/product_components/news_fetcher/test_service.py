@@ -21,7 +21,7 @@ from src.product_components.news_fetcher.providers import (
     ProviderArticle,
     ProviderBatch,
 )
-from src.product_components.news_fetcher.rss_feeds import RssFeedSpec
+from src.product_components.news_fetcher.rss_feeds import RssFeedSpec, WatchlistTicker
 from src.product_components.news_fetcher.service import NewsFetcherService
 from src.product_components.news_fetcher.settings import NewsFetcherSettings
 
@@ -50,6 +50,7 @@ class InMemoryStorage(StorageAdapter):
         self.obligations: dict[str, PublicationObligation] = {}
         self.batch_to_ids: dict[str, list[str]] = {}
         self.watchlist = {"AAPL"}
+        self.watchlist_rows: list[WatchlistTicker] = []
         self.rss_feed_specs: list[RssFeedSpec] = []
         self.cycle_statuses: list[dict[str, Any]] = []
         self.filter_config: NewsFilterConfig | None = None
@@ -61,6 +62,9 @@ class InMemoryStorage(StorageAdapter):
 
     def load_rss_feed_specs(self) -> list[RssFeedSpec]:
         return self.rss_feed_specs
+
+    def load_active_watchlist_rows(self) -> list[WatchlistTicker]:
+        return self.watchlist_rows
 
     def seed_production_filter_config_if_missing(
         self,
@@ -647,6 +651,123 @@ def test_service_requeues_retryable_obligation_after_transient_publish_failure()
     assert storage.obligations["obl_stale"].attempt_count == 3
     assert storage.obligations["obl_stale"].last_error_code == "temporary_broker_failure"
     assert storage.obligations["obl_stale"].claimed_by is None
+
+
+class _FakeCompanyNewsResponse:
+    def __init__(self, payload) -> None:
+        self._payload = payload
+        self.status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeCompanyNewsSession:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+        self.trust_env = True
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def get(self, url, *, params, timeout, headers=None):
+        self.calls.append((url, params))
+        return _FakeCompanyNewsResponse(self.payload)
+
+
+def test_service_polls_finnhub_company_news_for_watchlist_symbols(monkeypatch) -> None:
+    monkeypatch.setenv("FINNHUB_API_KEY", "key")
+    payload = [
+        {
+            "id": 301,
+            "datetime": 1748342400,
+            "headline": "Apple expands supplier agreement",
+            "summary": "Deal grows",
+            "url": "https://example.com/finnhub/301",
+            "related": "AAPL",
+        }
+    ]
+    fake_session = _FakeCompanyNewsSession(payload)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
+
+    storage = InMemoryStorage()
+    storage.watchlist_rows = [
+        WatchlistTicker(ticker="AAPL", exchange_code="XNAS"),
+        WatchlistTicker(ticker="RHM", exchange_code="XETR"),
+    ]
+    publisher = FakePublisher()
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={},
+        storage=storage,
+        publisher=publisher,
+    )
+
+    results = service.run_once()
+
+    assert "finnhub:company:AAPL:XNAS" in results
+    assert "finnhub:company:RHM:XETR" not in results
+    assert results["finnhub:company:AAPL:XNAS"].accepted == 1
+    assert len(publisher.published) == 1
+    assert fake_session.calls[0][0] == "https://finnhub.io/api/v1/company-news"
+    assert fake_session.calls[0][1]["symbol"] == "AAPL"
+
+
+def test_service_respects_company_news_min_interval(monkeypatch) -> None:
+    monkeypatch.setenv("FINNHUB_API_KEY", "key")
+    fake_session = _FakeCompanyNewsSession([])
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
+
+    storage = InMemoryStorage()
+    storage.watchlist_rows = [WatchlistTicker(ticker="AAPL", exchange_code="XNAS")]
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={},
+        storage=storage,
+        publisher=FakePublisher(),
+    )
+
+    service.run_once()
+    service.run_once()
+
+    assert len(fake_session.calls) == 1
+    assert storage.cycle_statuses[1]["error_code"] == "source_interval_wait"
+
+
+def test_service_skips_company_news_without_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+
+    storage = InMemoryStorage()
+    storage.watchlist_rows = [WatchlistTicker(ticker="AAPL", exchange_code="XNAS")]
+    service = NewsFetcherService(
+        settings=_settings(),
+        providers={},
+        storage=storage,
+        publisher=FakePublisher(),
+    )
+
+    results = service.run_once()
+
+    assert results == {}
+
+
+def test_service_skips_company_news_when_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("FINNHUB_API_KEY", "key")
+
+    storage = InMemoryStorage()
+    storage.watchlist_rows = [WatchlistTicker(ticker="AAPL", exchange_code="XNAS")]
+    settings = replace(_settings(), finnhub_company_news_enabled=False)
+    service = NewsFetcherService(
+        settings=settings,
+        providers={},
+        storage=storage,
+        publisher=FakePublisher(),
+    )
+
+    results = service.run_once()
+
+    assert results == {}
 
 
 def test_service_uses_configured_retry_drain_batch_size() -> None:

@@ -41,8 +41,16 @@ class NewsFetcherSettings:
     include_keywords: tuple[str, ...]
     exclude_keywords: tuple[str, ...]
 
+    finnhub_company_news_enabled: bool = True
+    finnhub_company_news_min_interval_seconds: int = 120
+    finnhub_company_news_exchange_codes: tuple[str, ...] = ("XNAS", "XNYS")
+
     log_level: str = "INFO"
     log_file: str = "logs/news-fetcher.log"
+
+    @property
+    def finnhub_api_key(self) -> str:
+        return (os.getenv("FINNHUB_API_KEY") or "").strip()
 
     @property
     def postgres_dsn(self) -> str:
@@ -88,6 +96,14 @@ class NewsFetcherSettings:
             dedupe_algorithm=os.getenv("DEDUPE_ALGORITHM", "rapidfuzz_ratio"),
             include_keywords=_csv_env("NEWS_INCLUDE_KEYWORDS"),
             exclude_keywords=_csv_env("NEWS_EXCLUDE_KEYWORDS"),
+            finnhub_company_news_enabled=_bool_env("NEWS_SOURCE_FINNHUB_COMPANY_NEWS_ENABLED", True),
+            finnhub_company_news_min_interval_seconds=_int_env(
+                "FINNHUB_COMPANY_NEWS_MIN_INTERVAL_SECONDS", 120
+            ),
+            finnhub_company_news_exchange_codes=(
+                tuple(code.upper() for code in _csv_env_raw("FINNHUB_COMPANY_NEWS_EXCHANGES"))
+                or ("XNAS", "XNYS")
+            ),
             log_level=os.getenv("NEWS_FETCHER_LOG_LEVEL") or os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("NEWS_FETCHER_LOG_FILE", "logs/news-fetcher.log"),
         )

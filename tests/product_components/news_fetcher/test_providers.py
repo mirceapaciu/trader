@@ -7,10 +7,12 @@ import pytest
 import requests
 
 from src.product_components.news_fetcher.providers import (
+    FinnhubCompanyNewsProvider,
     FinnhubProvider,
     MarketauxProvider,
     ProviderRateLimitError,
     RssProvider,
+    finnhub_company_news_source_key,
 )
 from src.product_components.news_fetcher.rss_feeds import RssFeedSpec
 from src.product_components.news_fetcher.rss_feeds import RssTickerMatch
@@ -66,6 +68,117 @@ def test_finnhub_provider_maps_payload(monkeypatch) -> None:
     assert batch.events[0].tickers == ["AAPL", "MSFT"]
     assert batch.next_cursor["min_id"] == 101
     assert fake_session.calls[0][3] is False
+
+
+def test_finnhub_company_news_provider_maps_payload_and_tags_polled_ticker(monkeypatch) -> None:
+    payload = [
+        {
+            "id": 201,
+            "datetime": 1748342400,
+            "headline": "Broadcom lands major supply deal",
+            "summary": "Multi-year agreement announced",
+            "url": "https://example.com/finnhub/201",
+            "related": "AVGO",
+        }
+    ]
+
+    fake_session = _FakeSession(payload)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
+
+    provider = FinnhubCompanyNewsProvider(api_key="key", ticker="AVGO")
+    batch = provider.fetch(
+        source_key="finnhub:company:AVGO:XNAS",
+        cursor=None,
+        timeout_seconds=5,
+    )
+
+    url, params, _, trust_env, _ = fake_session.calls[0]
+    assert url == "https://finnhub.io/api/v1/company-news"
+    assert params["symbol"] == "AVGO"
+    assert params["token"] == "key"
+    assert "from" in params and "to" in params
+    assert trust_env is False
+
+    assert len(batch.events) == 1
+    event = batch.events[0]
+    assert event.source == "finnhub"
+    assert event.tickers == ["AVGO"]
+    assert event.provider_event_id == "201"
+    assert batch.next_cursor["published_after"].startswith("2025-05-27")
+
+
+def test_finnhub_company_news_provider_tags_polled_ticker_when_related_is_empty(monkeypatch) -> None:
+    payload = [
+        {
+            "id": 202,
+            "datetime": 1748342400,
+            "headline": "Apple announces chip deal with Broadcom",
+            "summary": None,
+            "url": "https://example.com/finnhub/202",
+            "related": "",
+        }
+    ]
+
+    fake_session = _FakeSession(payload)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
+
+    provider = FinnhubCompanyNewsProvider(api_key="key", ticker="AVGO")
+    batch = provider.fetch(
+        source_key="finnhub:company:AVGO:XNAS",
+        cursor=None,
+        timeout_seconds=5,
+    )
+
+    assert batch.events[0].tickers == ["AVGO"]
+
+
+def test_finnhub_company_news_provider_filters_using_cursor(monkeypatch) -> None:
+    payload = [
+        {
+            "id": 203,
+            "datetime": 1748342400,  # 2025-05-27T10:40:00Z
+            "headline": "New article",
+            "url": "https://example.com/finnhub/203",
+            "related": "AVGO",
+        },
+        {
+            "id": 202,
+            "datetime": 1748256000,  # 2025-05-26T10:40:00Z
+            "headline": "Old article",
+            "url": "https://example.com/finnhub/202",
+            "related": "AVGO",
+        },
+    ]
+
+    fake_session = _FakeSession(payload)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
+
+    provider = FinnhubCompanyNewsProvider(api_key="key", ticker="AVGO")
+    batch = provider.fetch(
+        source_key="finnhub:company:AVGO:XNAS",
+        cursor={"published_after": "2025-05-27T00:00:00Z"},
+        timeout_seconds=5,
+    )
+
+    assert [event.provider_event_id for event in batch.events] == ["203"]
+    assert fake_session.calls[0][1]["from"] == "2025-05-27"
+
+
+def test_finnhub_company_news_provider_raises_rate_limit_error_on_429(monkeypatch) -> None:
+    fake_session = _FakeSession([], status_code=429)
+    monkeypatch.setattr("requests.Session", lambda: fake_session)
+
+    provider = FinnhubCompanyNewsProvider(api_key="key", ticker="AVGO")
+
+    with pytest.raises(ProviderRateLimitError):
+        provider.fetch(source_key="finnhub:company:AVGO:XNAS", cursor=None, timeout_seconds=5)
+
+
+def test_finnhub_company_news_source_key_normalizes_symbol() -> None:
+    assert (
+        finnhub_company_news_source_key(ticker=" avgo ", exchange_code="xnas")
+        == "finnhub:company:AVGO:XNAS"
+    )
 
 
 def test_rss_provider_filters_using_cursor(monkeypatch) -> None:
