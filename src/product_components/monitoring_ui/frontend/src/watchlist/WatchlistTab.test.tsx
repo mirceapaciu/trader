@@ -166,6 +166,53 @@ describe("WatchlistTab", () => {
     await waitFor(() => expect(screen.queryByText("RHM:XETR")).not.toBeInTheDocument());
   });
 
+  it("edits display name and aliases via the modal and refreshes the watchlist", async () => {
+    const rhmItem = {
+      ticker: "RHM",
+      exchange_code: "XETR",
+      display_name: "Rheinmetall",
+      aliases: ["rheinmetall"],
+      is_active: true,
+      source: "manual",
+      has_missing_aliases: false,
+    };
+    fetchWatchlist
+      .mockResolvedValueOnce({ lookup_providers_configured: true, lookup_message: null, items: [rhmItem], generated_at: "2026-06-15T00:00:00Z" })
+      .mockResolvedValueOnce({
+        lookup_providers_configured: true,
+        lookup_message: null,
+        items: [{ ...rhmItem, display_name: "Rheinmetall AG", aliases: ["rheinmetall", "rheinmetall ag"] }],
+        generated_at: "2026-06-15T00:00:00Z",
+      });
+
+    renderWithQueryClient(<WatchlistTab />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    // Identity is locked; display name and aliases are editable.
+    expect(within(dialog).getByLabelText(/ticker/i)).toBeDisabled();
+    expect(within(dialog).getByLabelText(/market code/i)).toBeDisabled();
+    const displayNameInput = within(dialog).getByLabelText(/display name/i);
+    expect(displayNameInput).not.toBeDisabled();
+
+    fireEvent.change(displayNameInput, { target: { value: "Rheinmetall AG" } });
+    fireEvent.change(within(dialog).getByLabelText(/aliases/i), { target: { value: "rheinmetall, rheinmetall ag" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(updateWatchlistItem).toHaveBeenCalledWith("RHM", "XETR", {
+        ticker: "RHM",
+        exchange_code: "XETR",
+        display_name: "Rheinmetall AG",
+        aliases: ["rheinmetall", "rheinmetall ag"],
+        source: "manual",
+      })
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Rheinmetall AG")).toBeInTheDocument();
+  });
+
   it("shows a warning and skips lookup when providers are not configured", async () => {
     fetchWatchlist.mockResolvedValueOnce({
       lookup_providers_configured: false,

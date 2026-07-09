@@ -30,6 +30,9 @@ export function WatchlistTab() {
   const [manualAliasesText, setManualAliasesText] = useState("");
   const [repairTarget, setRepairTarget] = useState<WatchlistItemResponse | null>(null);
   const [repairAliasesText, setRepairAliasesText] = useState("");
+  const [editTarget, setEditTarget] = useState<WatchlistItemResponse | null>(null);
+  const [editForm, setEditForm] = useState<WatchlistItemPayload>(EMPTY_FORM);
+  const [editAliasesText, setEditAliasesText] = useState("");
   const [expanded, setExpanded] = useState(false);
   const watchlist = useQuery({
     queryKey: ["watchlist"],
@@ -65,6 +68,7 @@ export function WatchlistTab() {
     onSuccess: () => {
       setRepairTarget(null);
       setRepairAliasesText("");
+      setEditTarget(null);
       queryClient.invalidateQueries({ queryKey: ["watchlist"] });
     }
   });
@@ -184,14 +188,33 @@ export function WatchlistTab() {
                     <strong>{item.ticker}:{item.exchange_code}</strong>
                     <span>{item.display_name || "Unnamed instrument"}</span>
                   </div>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    onClick={() => deactivateMutation.mutate({ ticker: item.ticker, exchangeCode: item.exchange_code })}
-                    disabled={deactivateMutation.isPending}
-                  >
-                    Deactivate
-                  </button>
+                  <div className="watchlist-card-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        setEditTarget(item);
+                        setEditForm({
+                          ticker: item.ticker,
+                          exchange_code: item.exchange_code,
+                          display_name: item.display_name || item.ticker,
+                          aliases: [...item.aliases],
+                          source: item.source
+                        });
+                        setEditAliasesText(item.aliases.join(", "));
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button"
+                      onClick={() => deactivateMutation.mutate({ ticker: item.ticker, exchangeCode: item.exchange_code })}
+                      disabled={deactivateMutation.isPending}
+                    >
+                      Deactivate
+                    </button>
+                  </div>
                 </div>
                 <div className="chip-row">
                   {item.aliases.length > 0 ? item.aliases.map((alias) => <span key={alias} className="chip">{alias}</span>) : <span className="chip warning">No aliases</span>}
@@ -337,6 +360,7 @@ export function WatchlistTab() {
                   }
                   submitLabel={updateMutation.isPending ? "Saving" : "Save aliases"}
                   lockIdentity
+                  lockDisplayName
                 />
               </>
             ) : (
@@ -345,7 +369,92 @@ export function WatchlistTab() {
           </section>
         </aside>
       </section>
+
+      {editTarget ? (
+        <EditWatchlistModal
+          target={editTarget}
+          form={editForm}
+          aliasesText={editAliasesText}
+          onFormChange={setEditForm}
+          onAliasesChange={setEditAliasesText}
+          onClose={() => setEditTarget(null)}
+          onSubmit={() =>
+            updateMutation.mutate({
+              ticker: editTarget.ticker,
+              exchangeCode: editTarget.exchange_code,
+              payload: {
+                ...editForm,
+                ticker: editTarget.ticker,
+                exchange_code: editTarget.exchange_code,
+                aliases: normalizeList(editAliasesText),
+                source: editForm.source
+              }
+            })
+          }
+          submitLabel={updateMutation.isPending ? "Saving" : "Save changes"}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function EditWatchlistModal({
+  target,
+  form,
+  aliasesText,
+  onFormChange,
+  onAliasesChange,
+  onSubmit,
+  onClose,
+  submitLabel
+}: {
+  target: WatchlistItemResponse;
+  form: WatchlistItemPayload;
+  aliasesText: string;
+  onFormChange: (value: WatchlistItemPayload) => void;
+  onAliasesChange: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  submitLabel: string;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit watchlist instrument"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h3>Edit {target.ticker}:{target.exchange_code}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="modal-body">
+          <ManualWatchlistForm
+            form={form}
+            aliasesText={aliasesText}
+            onFormChange={onFormChange}
+            onAliasesChange={onAliasesChange}
+            onSubmit={onSubmit}
+            submitLabel={submitLabel}
+            lockIdentity
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -356,7 +465,8 @@ function ManualWatchlistForm({
   onAliasesChange,
   onSubmit,
   submitLabel,
-  lockIdentity = false
+  lockIdentity = false,
+  lockDisplayName = false
 }: {
   form: WatchlistItemPayload;
   aliasesText: string;
@@ -365,6 +475,7 @@ function ManualWatchlistForm({
   onSubmit: () => void;
   submitLabel: string;
   lockIdentity?: boolean;
+  lockDisplayName?: boolean;
 }) {
   return (
     <div className="manual-form">
@@ -391,7 +502,7 @@ function ManualWatchlistForm({
         <input
           value={form.display_name}
           onChange={(event) => onFormChange({ ...form, display_name: event.target.value })}
-          disabled={lockIdentity}
+          disabled={lockDisplayName}
         />
       </label>
       <label className="stacked-field">

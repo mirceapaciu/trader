@@ -336,6 +336,12 @@ h2 {
   justify-content: space-between;
 }
 
+.watchlist-card-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .watchlist-card-header span,
 .helper-text,
 .warning-text {
