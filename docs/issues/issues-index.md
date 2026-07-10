@@ -34,3 +34,4 @@
 | 260709-04 | Confidence gates never bind — measure LLM confidence calibration, then recalibrate or replace them | resolved | docs/issues/issues-detail/260709-04.md |
 | 260709-05 | docs/trading-strategies.md describes a system that does not exist — align it with the implementation | resolved | docs/issues/issues-detail/260709-05.md |
 | 260709-06 | Add a strong-model card-synthesis pass at evidence-window satisfaction (tier 2) | resolved | docs/issues/issues-detail/260709-06.md |
+| 260709-07 | Soft dedupe is scoped per source; the same story ingested via two providers counts twice | new | docs/issues/issues-detail/260709-07.md |
