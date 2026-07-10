@@ -24,6 +24,7 @@ import {
   type FilterQualityRunSummary,
   type HealthState,
   type NewsFilterConfigPayload,
+  type ProviderStatus,
   type ThroughputPresetWindow,
   type ThroughputRequest,
   type ThroughputResponse
@@ -42,8 +43,10 @@ type ThroughputSelection = {
   endDate: string;
 };
 
-const RSS_BATCH_PATTERN = /^rss:yahoo_finance:batch:/;
-const RSS_BATCH_GROUP = "rss:yahoo_finance:batch";
+const PROVIDER_GROUPS: Array<{ key: string; pattern: RegExp }> = [
+  { key: "rss:yahoo_finance:batch", pattern: /^rss:yahoo_finance:batch:/ },
+  { key: "finnhub:company", pattern: /^finnhub:company:/ }
+];
 
 export function NewsFetcherTab() {
   const queryClient = useQueryClient();
@@ -56,7 +59,9 @@ export function NewsFetcherTab() {
     endDate: ""
   });
   const [fetchedWindow, setFetchedWindow] = useState<ThroughputPresetWindow>("1d");
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set([RSS_BATCH_GROUP]));
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(PROVIDER_GROUPS.map(group => group.key))
+  );
   function toggleProviderGroup(group: string) {
     setCollapsedGroups(prev => {
       const next = new Set(prev);
@@ -373,9 +378,14 @@ export function NewsFetcherTab() {
             <tbody>
               {(() => {
                 const allProviders = providers.data?.providers ?? [];
-                const batchProviders = allProviders.filter(p => RSS_BATCH_PATTERN.test(p.source_key));
-                const otherProviders = allProviders.filter(p => !RSS_BATCH_PATTERN.test(p.source_key));
-                const isBatchCollapsed = collapsedGroups.has(RSS_BATCH_GROUP);
+                const groupedProviders = PROVIDER_GROUPS.map(group => ({
+                  ...group,
+                  providers: allProviders.filter(provider => group.pattern.test(provider.source_key))
+                }));
+                const groupedSourceKeys = new Set(
+                  groupedProviders.flatMap(group => group.providers.map(provider => provider.source_key))
+                );
+                const otherProviders = allProviders.filter(provider => !groupedSourceKeys.has(provider.source_key));
                 const rows: ReactNode[] = otherProviders.map(provider => (
                   <tr key={provider.source_key}>
                     <td>{provider.source_key}</td>
@@ -386,27 +396,27 @@ export function NewsFetcherTab() {
                     <td>{provider.last_error_code ?? provider.fetch_error_count}</td>
                   </tr>
                 ));
-                if (batchProviders.length > 0) {
-                  const latestCycleEnd = batchProviders.map(p => p.last_cycle_end_at).filter(Boolean).sort().at(-1);
-                  const latestAttempt = batchProviders.map(p => p.last_fetch_attempt_at).filter(Boolean).sort().at(-1);
-                  const latestNonZero = batchProviders.map(p => p.last_non_zero_fetch_at).filter(Boolean).sort().at(-1);
-                  const totalPublished = batchProviders.reduce((sum, p) => sum + p.publish_success_count, 0);
-                  const totalErrors = batchProviders.reduce((sum, p) => sum + p.fetch_error_count, 0);
+                groupedProviders.forEach(group => {
+                  if (group.providers.length === 0) {
+                    return;
+                  }
+                  const isCollapsed = collapsedGroups.has(group.key);
+                  const summary = summarizeProviderGroup(group.providers);
                   rows.push(
-                    <tr key={RSS_BATCH_GROUP} className="provider-group-header" onClick={() => toggleProviderGroup(RSS_BATCH_GROUP)}>
+                    <tr key={group.key} className="provider-group-header" onClick={() => toggleProviderGroup(group.key)}>
                       <td>
-                        <span className="provider-group-chevron">{isBatchCollapsed ? "▶" : "▼"}</span>
-                        {RSS_BATCH_GROUP}:* ({batchProviders.length})
+                        <span className="provider-group-chevron">{isCollapsed ? ">" : "v"}</span>
+                        {group.key}:* ({group.providers.length})
                       </td>
-                      <td>{formatDate(latestCycleEnd)}</td>
-                      <td>{formatDate(latestAttempt)}</td>
-                      <td>{formatDate(latestNonZero)}</td>
-                      <td>{totalPublished}</td>
-                      <td>{totalErrors}</td>
+                      <td>{formatDate(summary.latestCycleEnd)}</td>
+                      <td>{formatDate(summary.latestAttempt)}</td>
+                      <td>{formatDate(summary.latestNonZero)}</td>
+                      <td>{summary.totalPublished}</td>
+                      <td>{summary.totalErrors}</td>
                     </tr>
                   );
-                  if (!isBatchCollapsed) {
-                    batchProviders.forEach(provider => {
+                  if (!isCollapsed) {
+                    group.providers.forEach(provider => {
                       rows.push(
                         <tr key={provider.source_key} className="provider-group-child">
                           <td>{provider.source_key}</td>
@@ -419,7 +429,7 @@ export function NewsFetcherTab() {
                       );
                     });
                   }
-                }
+                });
                 return rows;
               })()}
             </tbody>
@@ -1494,6 +1504,20 @@ function formatDate(value?: string | null) {
     return "n/a";
   }
   return new Date(value).toLocaleString();
+}
+
+function summarizeProviderGroup(providers: ProviderStatus[]) {
+  return {
+    latestCycleEnd: latestTimestamp(providers.map(provider => provider.last_cycle_end_at)),
+    latestAttempt: latestTimestamp(providers.map(provider => provider.last_fetch_attempt_at)),
+    latestNonZero: latestTimestamp(providers.map(provider => provider.last_non_zero_fetch_at)),
+    totalPublished: providers.reduce((sum, provider) => sum + provider.publish_success_count, 0),
+    totalErrors: providers.reduce((sum, provider) => sum + provider.fetch_error_count, 0)
+  };
+}
+
+function latestTimestamp(values: Array<string | null | undefined>) {
+  return values.filter((value): value is string => Boolean(value)).sort().at(-1);
 }
 
 function formatDuration(seconds?: number | null) {

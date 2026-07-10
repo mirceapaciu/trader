@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ApiError } from "../api";
@@ -166,6 +166,32 @@ describe("NewsFetcherTab", () => {
 
     expect(await screen.findByText("production filter config unavailable")).toBeInTheDocument();
   });
+
+  it("collapses generated Finnhub company providers by default", async () => {
+    fetchProviders.mockResolvedValue({
+      available: true,
+      message: null,
+      providers: [
+        providerStatus("finnhub"),
+        providerStatus("finnhub:company:AAPL", { publish_success_count: 2 }),
+        providerStatus("finnhub:company:MSFT", { publish_success_count: 3 }),
+      ],
+      generated_at: "2026-06-16T10:00:00Z",
+    });
+
+    renderWithQueryClient(<NewsFetcherTab />);
+
+    const groupRow = await screen.findByText(/finnhub:company:\* \(2\)/);
+    expect(groupRow).toBeInTheDocument();
+    expect(screen.getByText("finnhub")).toBeInTheDocument();
+    expect(screen.queryByText("finnhub:company:AAPL")).not.toBeInTheDocument();
+    expect(screen.queryByText("finnhub:company:MSFT")).not.toBeInTheDocument();
+
+    fireEvent.click(groupRow);
+
+    expect(await screen.findByText("finnhub:company:AAPL")).toBeInTheDocument();
+    expect(screen.getByText("finnhub:company:MSFT")).toBeInTheDocument();
+  });
 });
 
 function renderWithQueryClient(node: ReactNode) {
@@ -176,4 +202,39 @@ function renderWithQueryClient(node: ReactNode) {
     },
   });
   return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+}
+
+function providerStatus(
+  source_key: string,
+  overrides: Partial<{
+    last_cycle_start_at: string | null;
+    last_cycle_end_at: string | null;
+    last_cycle_duration_seconds: number | null;
+    last_fetch_attempt_at: string | null;
+    last_non_zero_fetch_at: string | null;
+    fetch_count: number;
+    fetch_error_count: number;
+    dedupe_drop_count: number;
+    persist_success_count: number;
+    publish_success_count: number;
+    last_error_code: string | null;
+    last_error_at: string | null;
+  }> = {}
+) {
+  return {
+    source_key,
+    last_cycle_start_at: "2026-06-16T09:59:00Z",
+    last_cycle_end_at: "2026-06-16T10:00:00Z",
+    last_cycle_duration_seconds: 3,
+    last_fetch_attempt_at: "2026-06-16T09:59:30Z",
+    last_non_zero_fetch_at: null,
+    fetch_count: 0,
+    fetch_error_count: 0,
+    dedupe_drop_count: 0,
+    persist_success_count: 0,
+    publish_success_count: 0,
+    last_error_code: null,
+    last_error_at: null,
+    ...overrides,
+  };
 }
