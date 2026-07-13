@@ -35,6 +35,8 @@ from .models import (
     FilterQualityStatusResponse,
     HealthResponse,
     NewsAnalysesResponse,
+    NewsFetcherReprocessRejectedRequest,
+    NewsFetcherReprocessRejectedResponse,
     NewsFilterConfigPayload,
     ProvidersResponse,
     ThesisBuilderConfigResponse,
@@ -53,6 +55,9 @@ from .models import (
 )
 from .repository import PostgresRedisMonitoringDataSource
 from src.product_components.backtester.repository import bootstrap_backtester_schema
+from src.product_components.news_fetcher.reprocess import NewsFetcherRejectedArticleReprocessor
+from src.product_components.news_fetcher.settings import NewsFetcherSettings
+from src.product_components.news_fetcher.storage_adapter import PostgresNewsStorageAdapter
 from .service import (
     BacktestRunAlreadyActive,
     FilterQualityRunAlreadyActive,
@@ -141,12 +146,14 @@ def create_app(
         query_timeout_seconds=resolved_settings.ui_query_timeout_seconds,
         backtester_schema=resolved_settings.backtester_db_schema,
     )
+    news_fetcher_settings = NewsFetcherSettings.from_env()
+    instrument_registry = PostgresSharedInstrumentRegistry(
+        dsn=resolved_settings.postgres_dsn,
+        shared_schema=resolved_settings.shared_db_schema,
+        watchlist_table=resolved_settings.watchlist_table,
+    )
     watchlist_admin = SharedInstrumentLookupAdminService(
-        registry=PostgresSharedInstrumentRegistry(
-            dsn=resolved_settings.postgres_dsn,
-            shared_schema=resolved_settings.shared_db_schema,
-            watchlist_table=resolved_settings.watchlist_table,
-        ),
+        registry=instrument_registry,
         admin=PostgresSharedInstrumentAdmin(
             dsn=resolved_settings.postgres_dsn,
             shared_schema=resolved_settings.shared_db_schema,
@@ -177,6 +184,14 @@ def create_app(
             command_stream=resolved_settings.reprocess_command_queue,
         ),
     )
+    news_fetcher_reprocessor = NewsFetcherRejectedArticleReprocessor(
+        settings=news_fetcher_settings,
+        storage=PostgresNewsStorageAdapter(
+            dsn=resolved_settings.postgres_dsn,
+            news_schema=resolved_settings.newsfetcher_db_schema,
+            instrument_registry=instrument_registry,
+        ),
+    )
     service = MonitoringService(
         settings=resolved_settings,
         data_source=data_source,
@@ -184,6 +199,7 @@ def create_app(
         filter_quality_runner=FilterQualityRunCoordinator(),
         watchlist_admin=watchlist_admin,
         reprocess_gateway=reprocess_gateway,
+        news_fetcher_reprocessor=news_fetcher_reprocessor,
         backtest_runner=BacktestRunCoordinator(),
     )
 
@@ -316,6 +332,22 @@ def create_app(
             return _run_with_infrastructure_mapping(
                 lambda: service.list_fetched_articles(window=window, limit=limit),
                 detail="fetched articles unavailable",
+            )
+        except InvalidThroughputWindow as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/news-fetcher/reprocess-rejected",
+        response_model=NewsFetcherReprocessRejectedResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def reprocess_news_fetcher_rejected(
+        payload: NewsFetcherReprocessRejectedRequest,
+    ) -> NewsFetcherReprocessRejectedResponse:
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.reprocess_news_fetcher_rejected(payload),
+                detail="news-fetcher reprocessing unavailable",
             )
         except InvalidThroughputWindow as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc

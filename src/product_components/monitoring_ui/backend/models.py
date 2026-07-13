@@ -238,6 +238,25 @@ class FetchedArticlesResponse(BaseModel):
     generated_at: datetime
 
 
+class NewsFetcherReprocessRejectedRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    window: str = "1d"
+
+
+class NewsFetcherReprocessRejectedResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    window: str
+    scanned_rejected_count: int
+    newly_accepted_count: int
+    still_rejected_count: int
+    already_accepted_count: int
+    already_published_count: int
+    queued_publication_obligation_count: int
+    generated_at: datetime
+
+
 class NewsAnalysisItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 

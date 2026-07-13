@@ -178,6 +178,13 @@ h2 {
   margin-bottom: 16px;
 }
 
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .throughput-controls {
   display: grid;
   gap: 12px;
@@ -552,6 +559,16 @@ h2 {
 
 .inline-warning.compact {
   margin-bottom: 12px;
+}
+
+.inline-success {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #a8d5c2;
+  border-radius: 6px;
+  color: #176f58;
+  background: #eef9f4;
+  overflow-wrap: anywhere;
 }
 
 .text-warning {

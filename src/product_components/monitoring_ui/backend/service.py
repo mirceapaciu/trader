@@ -49,6 +49,8 @@ from .models import (
     FilterConfigSimulationStartResponse,
     HealthResponse,
     NewsFilterConfigPayload,
+    NewsFetcherReprocessRejectedRequest,
+    NewsFetcherReprocessRejectedResponse,
     NewsAnalysesResponse,
     ProvidersResponse,
     ThesisBuilderConsumerHealth,
@@ -254,6 +256,24 @@ class ThesisReprocessGateway(Protocol):
     def get_run(self, *, run_id: str) -> ReprocessRunStatusLike | None: ...
 
 
+class NewsFetcherReprocessResultLike(Protocol):
+    scanned_rejected_count: int
+    newly_accepted_count: int
+    still_rejected_count: int
+    already_accepted_count: int
+    already_published_count: int
+    queued_publication_obligation_count: int
+
+
+class NewsFetcherRejectedReprocessor(Protocol):
+    def reprocess_window(
+        self,
+        *,
+        fetched_since: datetime,
+        fetched_until: datetime,
+    ) -> NewsFetcherReprocessResultLike: ...
+
+
 class InvalidThroughputWindow(ValueError):
     pass
 
@@ -277,6 +297,7 @@ class MonitoringService:
         filter_quality_runner: FilterQualityRunner | None = None,
         watchlist_admin: SharedInstrumentLookupAdminService | None = None,
         reprocess_gateway: ThesisReprocessGateway | None = None,
+        news_fetcher_reprocessor: NewsFetcherRejectedReprocessor | None = None,
         backtest_runner: BacktestRunner | None = None,
     ) -> None:
         self._settings = settings
@@ -285,6 +306,7 @@ class MonitoringService:
         self._filter_quality_runner = filter_quality_runner
         self._watchlist_admin = watchlist_admin
         self._reprocess_gateway = reprocess_gateway
+        self._news_fetcher_reprocessor = news_fetcher_reprocessor
         self._backtest_runner = backtest_runner
 
     def get_health(self) -> HealthResponse:
@@ -614,6 +636,31 @@ class MonitoringService:
                 generated_at=_utc_now(),
             )
         return response.model_copy(update={"window": selected_window})
+
+    def reprocess_news_fetcher_rejected(
+        self,
+        payload: NewsFetcherReprocessRejectedRequest,
+    ) -> NewsFetcherReprocessRejectedResponse:
+        if self._news_fetcher_reprocessor is None:
+            raise RuntimeError("news_fetcher_reprocessor_unavailable")
+        selected_window = _normalize_throughput_window(payload.window or self._settings.ui_default_time_window)
+        if selected_window not in {"15m", "1h", "1d", "7d", "30d"}:
+            raise InvalidThroughputWindow(f"Unsupported news-fetcher reprocess window: {selected_window}")
+        now = _utc_now()
+        result = self._news_fetcher_reprocessor.reprocess_window(
+            fetched_since=now - _window_duration(selected_window),
+            fetched_until=now,
+        )
+        return NewsFetcherReprocessRejectedResponse(
+            window=selected_window,
+            scanned_rejected_count=result.scanned_rejected_count,
+            newly_accepted_count=result.newly_accepted_count,
+            still_rejected_count=result.still_rejected_count,
+            already_accepted_count=result.already_accepted_count,
+            already_published_count=result.already_published_count,
+            queued_publication_obligation_count=result.queued_publication_obligation_count,
+            generated_at=_utc_now(),
+        )
 
     def get_production_filter_config(self) -> NewsFilterConfigPayload:
         return self._data_source.get_production_filter_config()

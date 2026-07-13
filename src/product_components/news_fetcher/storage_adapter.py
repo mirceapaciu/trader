@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -12,11 +13,13 @@ from src.core_components.event_ingestion_engine.interfaces import StorageAdapter
 from src.core_components.event_ingestion_engine.models import (
     CanonicalEvent,
     Checkpoint,
+    FilterOutcome,
     FilterRun,
     FilterResult,
     PublicationObligation,
     PublicationStatus,
 )
+from src.product_components.filter_quality_evaluator.models import InputArticle
 from src.product_components.news_fetcher.filter_config import (
     NewsFilterConfig,
     config_from_snapshot,
@@ -33,6 +36,8 @@ from src.product_components.news_fetcher.rss_feeds import (
     rss_source_key,
 )
 from src.product_components.shared.adapters import SharedInstrumentRecord
+
+from .reprocess import ReprocessArticleCandidate, build_reprocess_envelope
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -743,6 +748,168 @@ class PostgresNewsStorageAdapter(StorageAdapter):
             )
             conn.commit()
 
+    def load_reprocess_rejected_articles(
+        self,
+        *,
+        fetched_since: datetime,
+        fetched_until: datetime,
+    ) -> list[ReprocessArticleCandidate]:
+        sql = (
+            f"SELECT article_id, source, source_key, headline, summary, url, tickers, "
+            f"published_at, fetched_at, sentiment_source, already_accepted, already_published "
+            f"FROM ("
+            f"SELECT DISTINCT ON (a.id) a.id AS article_id, a.source, a.source_key, a.headline, "
+            f"a.summary, a.url, a.tickers, a.published_at, a.fetched_at, a.sentiment_source, "
+            f"r.filter_outcome, "
+            f"(accepted.id IS NOT NULL) AS already_accepted, "
+            f"(published_obligation.obligation_id IS NOT NULL) AS already_published "
+            f"FROM {self._news_schema}.t_input_news_articles a "
+            f"JOIN {self._news_schema}.t_news_filter_results r ON r.article_id = a.id "
+            f"JOIN {self._news_schema}.t_news_filter_runs fr "
+            f"ON fr.filter_run_id = r.filter_run_id AND fr.run_mode = 'production' "
+            f"LEFT JOIN {self._news_schema}.t_news_articles accepted ON accepted.id = a.id "
+            f"LEFT JOIN {self._news_schema}.t_publication_obligations published_obligation "
+            f"ON published_obligation.canonical_event_id = a.id "
+            f"AND published_obligation.event_type = 'news.article.created' "
+            f"AND published_obligation.status = 'published' "
+            f"WHERE a.fetched_at >= %s AND a.fetched_at < %s "
+            f"ORDER BY a.id, r.created_at DESC, fr.updated_at DESC, fr.created_at DESC, r.filter_run_id DESC"
+            f") latest "
+            f"WHERE filter_outcome = 'rejected' "
+            f"ORDER BY fetched_at, article_id"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (_to_utc(fetched_since), _to_utc(fetched_until)))
+            rows = cur.fetchall()
+        return [_reprocess_candidate(row) for row in rows]
+
+    def load_reprocess_dedupe_context_articles(
+        self,
+        *,
+        published_since: datetime,
+        published_until: datetime,
+    ) -> list[InputArticle]:
+        sql = (
+            f"SELECT id, source, headline, summary, url, tickers, published_at, fetched_at, sentiment_source "
+            f"FROM {self._news_schema}.t_news_articles "
+            f"WHERE published_at >= %s AND published_at < %s "
+            f"ORDER BY published_at, id"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (_to_utc(published_since), _to_utc(published_until)))
+            rows = cur.fetchall()
+        return [_input_article(row) for row in rows]
+
+    def persist_reprocess_rejected_results(
+        self,
+        *,
+        filter_run: FilterRun,
+        candidates: list[ReprocessArticleCandidate],
+        results: list[FilterResult],
+    ) -> int:
+        candidate_by_id = {candidate.article.id: candidate for candidate in candidates}
+        run_sql = (
+            f"INSERT INTO {self._news_schema}.t_news_filter_runs "
+            f"(filter_run_id, run_mode, filter_config_fingerprint, filter_config_snapshot_json, "
+            f"run_note, window_start_at, window_end_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (filter_run_id) DO UPDATE SET "
+            f"run_mode = EXCLUDED.run_mode, "
+            f"filter_config_fingerprint = EXCLUDED.filter_config_fingerprint, "
+            f"filter_config_snapshot_json = EXCLUDED.filter_config_snapshot_json, "
+            f"run_note = EXCLUDED.run_note, "
+            f"window_start_at = EXCLUDED.window_start_at, "
+            f"window_end_at = EXCLUDED.window_end_at, "
+            f"updated_at = NOW()"
+        )
+        result_sql = (
+            f"INSERT INTO {self._news_schema}.t_news_filter_results "
+            f"(filter_run_id, article_id, filter_outcome, rejection_reason_code, "
+            f"matched_article_id, similarity_score, details_json) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (filter_run_id, article_id) DO UPDATE SET "
+            f"filter_outcome = EXCLUDED.filter_outcome, "
+            f"rejection_reason_code = EXCLUDED.rejection_reason_code, "
+            f"matched_article_id = EXCLUDED.matched_article_id, "
+            f"similarity_score = EXCLUDED.similarity_score, "
+            f"details_json = EXCLUDED.details_json"
+        )
+        article_sql = (
+            f"INSERT INTO {self._news_schema}.t_news_articles "
+            f"(id, source, source_key, headline, summary, url, tickers, published_at, fetched_at, sentiment_source) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (id) DO NOTHING"
+        )
+        obligation_sql = (
+            f"INSERT INTO {self._news_schema}.t_publication_obligations "
+            f"(obligation_id, source_key, batch_id, canonical_event_id, event_type, dedupe_key, "
+            f"envelope_json, status, attempt_count, last_error_code, claimed_by, claim_expires_at) "
+            f"VALUES (%s, %s, %s, %s, 'news.article.created', %s, %s, 'pending', 0, NULL, NULL, NULL) "
+            f"ON CONFLICT (canonical_event_id, event_type, dedupe_key) DO NOTHING "
+            f"RETURNING obligation_id"
+        )
+        batch_id = f"reprocess_{uuid.uuid4().hex}"
+        queued = 0
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                run_sql,
+                (
+                    filter_run.filter_run_id,
+                    filter_run.run_mode.value,
+                    filter_run.filter_config_fingerprint,
+                    Json(filter_run.filter_config_snapshot_json),
+                    filter_run.run_note,
+                    filter_run.window_start_at,
+                    filter_run.window_end_at,
+                ),
+            )
+            for result in results:
+                cur.execute(
+                    result_sql,
+                    (
+                        filter_run.filter_run_id,
+                        result.article_id,
+                        result.outcome.value,
+                        result.rejection_reason_code,
+                        result.matched_article_id,
+                        result.similarity_score,
+                        Json(result.details),
+                    ),
+                )
+                if result.outcome != FilterOutcome.ACCEPTED:
+                    continue
+                candidate = candidate_by_id[result.article_id]
+                article = candidate.article
+                cur.execute(
+                    article_sql,
+                    (
+                        article.id,
+                        article.source,
+                        candidate.source_key,
+                        article.headline,
+                        article.summary,
+                        article.url,
+                        Json(article.tickers),
+                        _to_utc(article.published_at),
+                        _to_utc(article.fetched_at),
+                        article.sentiment_source,
+                    ),
+                )
+                cur.execute(
+                    obligation_sql,
+                    (
+                        f"obl_{uuid.uuid4().hex}",
+                        candidate.source_key,
+                        batch_id,
+                        article.id,
+                        article.id,
+                        Json(build_reprocess_envelope(article=article)),
+                    ),
+                )
+                queued += len(cur.fetchall())
+            conn.commit()
+        return queued
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)
 
@@ -773,6 +940,42 @@ def _publication_obligation(row: dict[str, Any]) -> PublicationObligation:
         last_error_code=row["last_error_code"],
         claimed_by=row["claimed_by"],
         claim_expires_at=row["claim_expires_at"],
+    )
+
+
+def _input_article(row: dict[str, Any]) -> InputArticle:
+    tickers = row.get("tickers") or []
+    return InputArticle(
+        id=str(row["id"]),
+        source=str(row["source"]),
+        headline=str(row["headline"]),
+        summary=row["summary"],
+        url=str(row["url"]),
+        tickers=[str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()],
+        published_at=_to_utc(row["published_at"]),
+        fetched_at=_to_utc(row["fetched_at"]),
+        sentiment_source=row["sentiment_source"],
+    )
+
+
+def _reprocess_candidate(row: dict[str, Any]) -> ReprocessArticleCandidate:
+    return ReprocessArticleCandidate(
+        article=_input_article(
+            {
+                "id": row["article_id"],
+                "source": row["source"],
+                "headline": row["headline"],
+                "summary": row["summary"],
+                "url": row["url"],
+                "tickers": row["tickers"],
+                "published_at": row["published_at"],
+                "fetched_at": row["fetched_at"],
+                "sentiment_source": row["sentiment_source"],
+            }
+        ),
+        source_key=str(row["source_key"]),
+        already_accepted=bool(row["already_accepted"]),
+        already_published=bool(row["already_published"]),
     )
 
 

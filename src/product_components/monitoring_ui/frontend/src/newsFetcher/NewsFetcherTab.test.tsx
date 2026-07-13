@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ApiError } from "../api";
@@ -8,6 +8,7 @@ import { NewsFetcherTab } from "./NewsFetcherTab";
 const fetchHealth = vi.fn();
 const fetchProviders = vi.fn();
 const fetchThroughput = vi.fn();
+const fetchFetchedArticles = vi.fn();
 const fetchBacklog = vi.fn();
 const fetchDeadLetters = vi.fn();
 const fetchFilterQualityStatus = vi.fn();
@@ -19,6 +20,7 @@ const saveTestFilterConfig = vi.fn();
 const runTestFilterSimulation = vi.fn();
 const promoteTestFilterConfig = vi.fn();
 const startFilterQualityRun = vi.fn();
+const reprocessNewsFetcherRejected = vi.fn();
 
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -38,6 +40,7 @@ vi.mock("../api", async () => {
     fetchHealth: (...args: unknown[]) => fetchHealth(...args),
     fetchProviders: (...args: unknown[]) => fetchProviders(...args),
     fetchThroughput: (...args: unknown[]) => fetchThroughput(...args),
+    fetchFetchedArticles: (...args: unknown[]) => fetchFetchedArticles(...args),
     fetchBacklog: (...args: unknown[]) => fetchBacklog(...args),
     fetchDeadLetters: (...args: unknown[]) => fetchDeadLetters(...args),
     fetchFilterQualityStatus: (...args: unknown[]) => fetchFilterQualityStatus(...args),
@@ -49,11 +52,13 @@ vi.mock("../api", async () => {
     runTestFilterSimulation: (...args: unknown[]) => runTestFilterSimulation(...args),
     promoteTestFilterConfig: (...args: unknown[]) => promoteTestFilterConfig(...args),
     startFilterQualityRun: (...args: unknown[]) => startFilterQualityRun(...args),
+    reprocessNewsFetcherRejected: (...args: unknown[]) => reprocessNewsFetcherRejected(...args),
   };
 });
 
 describe("NewsFetcherTab", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     fetchHealth.mockResolvedValue({
       readiness: "healthy",
       liveness: "healthy",
@@ -76,6 +81,13 @@ describe("NewsFetcherTab", () => {
       window_start_at: "2026-06-15T10:00:00Z",
       window_end_at: "2026-06-16T10:00:00Z",
       buckets: [],
+      generated_at: "2026-06-16T10:00:00Z",
+    });
+    fetchFetchedArticles.mockResolvedValue({
+      available: true,
+      message: null,
+      window: "1d",
+      items: [],
       generated_at: "2026-06-16T10:00:00Z",
     });
     fetchBacklog.mockResolvedValue({
@@ -137,6 +149,16 @@ describe("NewsFetcherTab", () => {
     runTestFilterSimulation.mockResolvedValue({});
     promoteTestFilterConfig.mockResolvedValue({});
     startFilterQualityRun.mockResolvedValue({ run_id: "fqe_1", status: "running" });
+    reprocessNewsFetcherRejected.mockResolvedValue({
+      window: "1d",
+      scanned_rejected_count: 3,
+      newly_accepted_count: 2,
+      still_rejected_count: 1,
+      already_accepted_count: 0,
+      already_published_count: 0,
+      queued_publication_obligation_count: 2,
+      generated_at: "2026-06-16T10:00:00Z",
+    });
   });
 
   it("shows degraded panel messaging from available=false responses", async () => {
@@ -191,6 +213,48 @@ describe("NewsFetcherTab", () => {
 
     expect(await screen.findByText("finnhub:company:AAPL")).toBeInTheDocument();
     expect(screen.getByText("finnhub:company:MSFT")).toBeInTheDocument();
+  });
+
+  it("reprocesses rejected articles for the selected fetched-articles window", async () => {
+    renderWithQueryClient(<NewsFetcherTab />);
+
+    const sevenDayButtons = await screen.findAllByRole("button", { name: "7d" });
+    fireEvent.click(sevenDayButtons[sevenDayButtons.length - 1]);
+    fireEvent.click(screen.getByRole("button", { name: "Reprocess rejected" }));
+
+    await waitFor(() => {
+      expect(reprocessNewsFetcherRejected.mock.calls[0][0]).toEqual({ window: "7d" });
+    });
+    expect(
+      await screen.findByText("Reprocessed 3 rejected; 2 newly accepted; 2 queued")
+    ).toBeInTheDocument();
+  });
+
+  it("shows pending state while rejected articles are reprocessing", async () => {
+    let resolveReprocess: (value: unknown) => void = () => {};
+    reprocessNewsFetcherRejected.mockReturnValue(
+      new Promise((resolve) => {
+        resolveReprocess = resolve;
+      })
+    );
+    renderWithQueryClient(<NewsFetcherTab />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reprocess rejected" }));
+
+    expect(await screen.findByRole("button", { name: "Reprocessing" })).toBeDisabled();
+    resolveReprocess({
+      window: "1d",
+      scanned_rejected_count: 0,
+      newly_accepted_count: 0,
+      still_rejected_count: 0,
+      already_accepted_count: 0,
+      already_published_count: 0,
+      queued_publication_obligation_count: 0,
+      generated_at: "2026-06-16T10:00:00Z",
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Reprocess rejected" })).toBeInTheDocument();
+    });
   });
 });
 

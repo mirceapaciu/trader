@@ -135,6 +135,14 @@ Replay policy:
 - Replays rely on idempotent article upsert and idempotent event handling.
 - Manual checkpoint rewind operations must be logged with operator identity and reason.
 
+Manual rejected-article reprocessing:
+- Monitoring UI may trigger a bounded reprocess of previously rejected input articles for a selected recent window.
+- The reprocess action must load rejected rows from `t_input_news_articles` and the latest production `t_news_filter_results`.
+- The effective production filter must use current include/exclude/dedupe settings plus the active shared Watchlist at execution time.
+- Existing accepted articles in the dedupe lookback window must be used as dedupe context.
+- Only rejected articles that now evaluate as accepted are inserted into `t_news_articles` and queued through `t_publication_obligations`.
+- Already accepted or already published articles must be skipped idempotently.
+
 ### 4.3 RSS
 
 - Parse configured static feed URLs and dynamically generated RSS feed URLs.
@@ -229,6 +237,7 @@ Transaction policy:
 - For each batch, persist input-corpus rows, production filter-result rows, accepted article rows, and publication obligations in one database transaction.
 - Publisher worker claims pending obligations and publishes envelope to queue.
 - At the start of each scheduler pass, the publisher worker also claims a bounded set of previously pending obligations and stale leased obligations whose publish lease expired, then retries them before fetching new source data.
+- Manual rejected-article reprocessing creates the same durable publication obligations as normal provider ingestion.
 - On successful publish, obligation transitions to `published`.
 - If publish fails, retry by incrementing `attempt_count` and preserving idempotent `dedupe_key`.
 - If retries are exhausted, obligation transitions to `dead_lettered` and envelope is routed to `failed_messages_dlq` when available.

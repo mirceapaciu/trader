@@ -234,6 +234,29 @@ class FakeReprocessGateway:
         return self.runs.get(run_id)
 
 
+class _FakeNewsFetcherReprocessResult:
+    scanned_rejected_count = 4
+    newly_accepted_count = 2
+    still_rejected_count = 1
+    already_accepted_count = 1
+    already_published_count = 0
+    queued_publication_obligation_count = 2
+
+
+class FakeNewsFetcherRejectedReprocessor:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.fetched_since = None
+        self.fetched_until = None
+
+    def reprocess_window(self, *, fetched_since, fetched_until):
+        if self.fail:
+            raise psycopg.OperationalError("db unavailable")
+        self.fetched_since = fetched_since
+        self.fetched_until = fetched_until
+        return _FakeNewsFetcherReprocessResult()
+
+
 class FailingProvidersDataSource(FakeMonitoringDataSource):
     def list_providers(self):
         raise psycopg.OperationalError("db unavailable")
@@ -740,6 +763,22 @@ def _reprocess_client(monkeypatch, gateway: FakeReprocessGateway) -> TestClient:
     return TestClient(create_app(settings=_settings()))
 
 
+def _news_fetcher_reprocess_client(monkeypatch, reprocessor: FakeNewsFetcherRejectedReprocessor) -> TestClient:
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.PostgresRedisMonitoringDataSource",
+        lambda **kwargs: FakeMonitoringDataSource(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.FilterQualityRunCoordinator",
+        lambda: FakeFilterQualityRunner(),
+    )
+    monkeypatch.setattr(
+        "src.product_components.monitoring_ui.backend.app.NewsFetcherRejectedArticleReprocessor",
+        lambda **kwargs: reprocessor,
+    )
+    return TestClient(create_app(settings=_settings()))
+
+
 def test_reprocess_endpoint_accepts_command_and_returns_run_id(monkeypatch) -> None:
     gateway = FakeReprocessGateway()
     client = _reprocess_client(monkeypatch, gateway)
@@ -786,6 +825,43 @@ def test_reprocess_status_endpoint_returns_404_for_unknown_run(monkeypatch) -> N
     response = client.get("/api/thesis-builder/reprocess/does-not-exist")
 
     assert response.status_code == 404
+
+
+def test_news_fetcher_reprocess_rejected_endpoint_returns_counts(monkeypatch) -> None:
+    reprocessor = FakeNewsFetcherRejectedReprocessor()
+    client = _news_fetcher_reprocess_client(monkeypatch, reprocessor)
+
+    response = client.post("/api/news-fetcher/reprocess-rejected", json={"window": "1h"})
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["window"] == "1h"
+    assert body["scanned_rejected_count"] == 4
+    assert body["newly_accepted_count"] == 2
+    assert body["queued_publication_obligation_count"] == 2
+    assert reprocessor.fetched_since is not None
+    assert reprocessor.fetched_until is not None
+
+
+def test_news_fetcher_reprocess_rejected_endpoint_rejects_invalid_window(monkeypatch) -> None:
+    client = _news_fetcher_reprocess_client(monkeypatch, FakeNewsFetcherRejectedReprocessor())
+
+    response = client.post("/api/news-fetcher/reprocess-rejected", json={"window": "12h"})
+
+    assert response.status_code == 422
+    assert "Unsupported news-fetcher reprocess window" in response.json()["detail"]
+
+
+def test_news_fetcher_reprocess_rejected_endpoint_maps_infrastructure_failure(monkeypatch) -> None:
+    client = _news_fetcher_reprocess_client(
+        monkeypatch,
+        FakeNewsFetcherRejectedReprocessor(fail=True),
+    )
+
+    response = client.post("/api/news-fetcher/reprocess-rejected", json={"window": "1d"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "news-fetcher reprocessing unavailable"
 
 
 def _settings() -> MonitoringUiSettings:

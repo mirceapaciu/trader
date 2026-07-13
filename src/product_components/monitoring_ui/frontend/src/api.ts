@@ -418,6 +418,21 @@ export type FetchedArticlesResponse = {
   generated_at: string;
 };
 
+export type NewsFetcherReprocessRejectedRequest = {
+  window: ThroughputPresetWindow;
+};
+
+export type NewsFetcherReprocessRejectedResponse = {
+  window: string;
+  scanned_rejected_count: number;
+  newly_accepted_count: number;
+  still_rejected_count: number;
+  already_accepted_count: number;
+  already_published_count: number;
+  queued_publication_obligation_count: number;
+  generated_at: string;
+};
+
 export type FilterQualityIncorrectlyAcceptedItem = {
   assessment_id: string;
   run_id: string;
@@ -946,6 +961,12 @@ export function fetchFetchedArticles(params: { window: ThroughputPresetWindow; l
   const p = new URLSearchParams({ window: params.window });
   if (params.limit != null) p.set("limit", String(params.limit));
   return getJson<FetchedArticlesResponse>(`/api/news-fetcher/fetched-articles?${p.toString()}`);
+}
+
+export function reprocessNewsFetcherRejected(
+  payload: NewsFetcherReprocessRejectedRequest
+): Promise<NewsFetcherReprocessRejectedResponse> {
+  return postJson<NewsFetcherReprocessRejectedResponse>("/api/news-fetcher/reprocess-rejected", payload);
 }
 
 export function fetchThesisCardArticles(cardId: string): Promise<WindowArticlesResponse> {

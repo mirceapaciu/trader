@@ -93,6 +93,7 @@ Behavioral constraints:
 - Every row must reference an existing `t_input_news_articles` row.
 - Production baseline writes come from NewsFetcher.
 - Simulation writes come from Filter Quality Evaluator and must not alter production baseline rows.
+- Manual rejected-article reprocessing writes production-context results for rejected input rows using the effective current production filter.
 
 ### `t_source_checkpoints`
 
@@ -213,6 +214,7 @@ Behavioral constraints:
 - Only non-terminal rows (`pending`, `publishing`) participate in checkpoint blocking.
 - Claims must be lease-based and exclusive while lease is valid.
 - Terminal updates must clear claim fields.
+- Manual rejected-article reprocessing uses the same outbox table for articles that newly become accepted.
 
 Physical constraints (required):
 - Primary key: `obligation_id`.

@@ -15,6 +15,7 @@ import {
   fetchTestFilterConfig,
   fetchThroughput,
   promoteTestFilterConfig,
+  reprocessNewsFetcherRejected,
   runTestFilterSimulation,
   saveTestFilterConfig,
   startFilterQualityRun,
@@ -23,6 +24,7 @@ import {
   type FilterQualityIncorrectlyRejectedItem,
   type FilterQualityRunSummary,
   type HealthState,
+  type NewsFetcherReprocessRejectedResponse,
   type NewsFilterConfigPayload,
   type ProviderStatus,
   type ThroughputPresetWindow,
@@ -59,6 +61,7 @@ export function NewsFetcherTab() {
     endDate: ""
   });
   const [fetchedWindow, setFetchedWindow] = useState<ThroughputPresetWindow>("1d");
+  const [reprocessResult, setReprocessResult] = useState<NewsFetcherReprocessRejectedResponse | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(PROVIDER_GROUPS.map(group => group.key))
   );
@@ -148,6 +151,17 @@ export function NewsFetcherTab() {
       setRequestedEvaluationAction(null);
     }
   });
+  const reprocessRejected = useMutation({
+    mutationFn: reprocessNewsFetcherRejected,
+    onSuccess: (result) => {
+      setReprocessResult(result);
+      queryClient.invalidateQueries({ queryKey: ["fetched-articles"] });
+      queryClient.invalidateQueries({ queryKey: ["backlog"] });
+      queryClient.invalidateQueries({ queryKey: ["throughput"] });
+      queryClient.invalidateQueries({ queryKey: ["providers"] });
+      queryClient.invalidateQueries({ queryKey: ["filter-quality"] });
+    }
+  });
   useEffect(() => {
     if (filterQuality.data?.running_run) {
       setEvaluationStartRequested(false);
@@ -202,7 +216,8 @@ export function NewsFetcherTab() {
     queryUnavailableMessage(startFilterQuality.error),
     queryUnavailableMessage(runSimulation.error),
     queryUnavailableMessage(promoteFilter.error),
-    queryUnavailableMessage(saveTestFilter.error)
+    queryUnavailableMessage(saveTestFilter.error),
+    queryUnavailableMessage(reprocessRejected.error)
   ]);
   return (
     <main className="shell">
@@ -443,21 +458,36 @@ export function NewsFetcherTab() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Fetched Articles</h2>
-          <div className="window-toggle-group" aria-label="Fetched articles time window">
-            {THROUGHPUT_PRESETS.map((preset) => (
-              <button
-                type="button"
-                key={preset.window}
-                className={fetchedWindow === preset.window ? "window-toggle active" : "window-toggle"}
-                onClick={() => setFetchedWindow(preset.window)}
-              >
-                {preset.label}
-              </button>
-            ))}
+          <div className="panel-actions">
+            <div className="window-toggle-group" aria-label="Fetched articles time window">
+              {THROUGHPUT_PRESETS.map((preset) => (
+                <button
+                  type="button"
+                  key={preset.window}
+                  className={fetchedWindow === preset.window ? "window-toggle active" : "window-toggle"}
+                  onClick={() => setFetchedWindow(preset.window)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => reprocessRejected.mutate({ window: fetchedWindow })}
+              disabled={reprocessRejected.isPending}
+            >
+              {reprocessRejected.isPending ? "Reprocessing" : "Reprocess rejected"}
+            </button>
           </div>
         </div>
         {fetchedArticles.data && !fetchedArticles.data.available ? (
           <DataSourceNotice text={fetchedArticles.data.message ?? "Fetched articles unavailable."} compact />
+        ) : null}
+        {reprocessResult ? (
+          <div className="inline-success">
+            {formatReprocessResult(reprocessResult)}
+          </div>
         ) : null}
         <FetchedArticlesTable
           items={fetchedArticles.data?.items ?? []}
@@ -1504,6 +1534,14 @@ function formatDate(value?: string | null) {
     return "n/a";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatReprocessResult(result: NewsFetcherReprocessRejectedResponse) {
+  return [
+    `Reprocessed ${result.scanned_rejected_count} rejected`,
+    `${result.newly_accepted_count} newly accepted`,
+    `${result.queued_publication_obligation_count} queued`
+  ].join("; ");
 }
 
 function summarizeProviderGroup(providers: ProviderStatus[]) {
