@@ -79,10 +79,13 @@ export function ThesisBuilderTab() {
   const throughputWindowEndAtMs = throughputData?.window_end_at
     ? new Date(throughputData.window_end_at).getTime()
     : undefined;
-  const throughputDataStartAtMs = chartRows[0]?.timestampMs;
-  const throughputDataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
-  const throughputAxisStartAtMs = throughputDataStartAtMs ?? throughputWindowStartAtMs;
-  const throughputAxisEndAtMs = throughputDataEndAtMs ?? throughputWindowEndAtMs;
+  const throughputAxisDomain = getThesisBuilderThroughputAxisDomain(
+    chartRows,
+    throughputData?.granularity,
+    window
+  );
+  const throughputAxisStartAtMs = throughputAxisDomain?.[0] ?? throughputWindowStartAtMs;
+  const throughputAxisEndAtMs = throughputAxisDomain?.[1] ?? throughputWindowEndAtMs;
   const throughputAxisDurationMs =
     throughputAxisStartAtMs != null && throughputAxisEndAtMs != null
       ? Math.max(0, throughputAxisEndAtMs - throughputAxisStartAtMs)
@@ -187,9 +190,9 @@ export function ThesisBuilderTab() {
                   </>
                 ) : (
                   <>
-                    <Bar dataKey="processed" name="Processed" fill="#4967d1" fillOpacity={0.72} radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="newsCatalyst" name="News catalyst" fill="#c47422" fillOpacity={0.8} radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="marketMoving" name="Market moving" fill="#1d8f6f" fillOpacity={0.82} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="processed" name="Processed" fill="#4967d1" fillOpacity={0.72} radius={[3, 3, 0, 0]} barSize={12} />
+                    <Bar dataKey="newsCatalyst" name="News catalyst" fill="#c47422" fillOpacity={0.8} radius={[3, 3, 0, 0]} barSize={12} />
+                    <Bar dataKey="marketMoving" name="Market moving" fill="#1d8f6f" fillOpacity={0.82} radius={[3, 3, 0, 0]} barSize={12} />
                   </>
                 )}
               </ComposedChart>
@@ -1397,4 +1400,36 @@ function aggregateThesisBuilderThroughputRows(response?: ThesisBuilderThroughput
       marketMoving: bucket.market_moving_articles_count
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
+}
+
+type ThesisBuilderThroughputChartRow = ReturnType<typeof aggregateThesisBuilderThroughputRows>[number];
+
+function getThesisBuilderThroughputAxisDomain(
+  chartRows: ThesisBuilderThroughputChartRow[],
+  granularity: ThesisBuilderThroughputResponse["granularity"] | undefined,
+  window: ThroughputPresetWindow
+): [number, number] | undefined {
+  const dataStartAtMs = chartRows[0]?.timestampMs;
+  const dataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
+  if (dataStartAtMs == null || dataEndAtMs == null) {
+    return undefined;
+  }
+  if (dataStartAtMs !== dataEndAtMs) {
+    return [dataStartAtMs, dataEndAtMs];
+  }
+  const paddingMs = thesisBuilderThroughputBucketPaddingMs(granularity, window);
+  return [dataStartAtMs - paddingMs, dataEndAtMs + paddingMs];
+}
+
+function thesisBuilderThroughputBucketPaddingMs(
+  granularity: ThesisBuilderThroughputResponse["granularity"] | undefined,
+  window: ThroughputPresetWindow
+) {
+  if (granularity === "day") {
+    return 12 * 60 * 60 * 1000;
+  }
+  if (granularity === "hour") {
+    return 30 * 60 * 1000;
+  }
+  return window === "15m" ? 60 * 1000 : 5 * 60 * 1000;
 }

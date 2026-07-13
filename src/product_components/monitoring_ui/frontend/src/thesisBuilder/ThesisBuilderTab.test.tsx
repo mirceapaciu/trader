@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import { ThesisBuilderTab } from "./ThesisBuilderTab";
@@ -10,6 +11,21 @@ const useQuery = vi.fn();
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (...args: unknown[]) => useQuery(...args),
   useMutation: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
+}));
+
+vi.mock("recharts", () => ({
+  ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ComposedChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CartesianGrid: () => null,
+  XAxis: ({ domain }: { domain?: [number | string, number | string] }) => (
+    <div data-testid="thesis-builder-throughput-x-axis" data-domain={JSON.stringify(domain)} />
+  ),
+  YAxis: () => null,
+  Tooltip: () => null,
+  Bar: ({ dataKey, barSize }: { dataKey?: string; barSize?: number }) => (
+    <div data-testid={`thesis-builder-throughput-bar-${dataKey}`} data-bar-size={barSize} />
+  ),
+  Scatter: () => null,
 }));
 
 vi.mock("../api", async () => {
@@ -202,6 +218,21 @@ describe("ThesisBuilderTab", () => {
           options?.queryKey?.[2] === "1d"
       )
     ).toBe(true);
+  });
+
+  it("uses a padded bucket domain and explicit bar sizes for visible throughput bars", () => {
+    render(<ThesisBuilderTab />);
+
+    const axis = screen.getByTestId("thesis-builder-throughput-x-axis");
+    const bucketStart = new Date("2026-06-16T09:00:00Z").getTime();
+    const expectedPaddingMs = 30 * 60 * 1000;
+    expect(axis).toHaveAttribute(
+      "data-domain",
+      JSON.stringify([bucketStart - expectedPaddingMs, bucketStart + expectedPaddingMs])
+    );
+    expect(screen.getByTestId("thesis-builder-throughput-bar-processed")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByTestId("thesis-builder-throughput-bar-newsCatalyst")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByTestId("thesis-builder-throughput-bar-marketMoving")).toHaveAttribute("data-bar-size", "12");
   });
 
   it("switches the throughput query window when a preset is selected", () => {
