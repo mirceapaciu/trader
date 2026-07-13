@@ -26,10 +26,14 @@ vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ComposedChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   CartesianGrid: () => null,
-  XAxis: () => null,
+  XAxis: ({ domain }: { domain?: [number | string, number | string] }) => (
+    <div data-testid="news-fetcher-throughput-x-axis" data-domain={JSON.stringify(domain)} />
+  ),
   YAxis: () => null,
   Tooltip: () => null,
-  Bar: () => null,
+  Bar: ({ dataKey, barSize }: { dataKey?: string; barSize?: number }) => (
+    <div data-testid={`news-fetcher-throughput-bar-${dataKey}`} data-bar-size={barSize} />
+  ),
   Scatter: () => null,
 }));
 
@@ -177,6 +181,47 @@ describe("NewsFetcherTab", () => {
 
     expect((await screen.findAllByText("Throughput data unavailable.")).length).toBeGreaterThan(0);
     expect(screen.getByText("Throughput data unavailable")).toBeInTheDocument();
+  });
+
+  it("uses a padded bucket domain and explicit bar sizes for visible throughput bars", async () => {
+    fetchThroughput.mockResolvedValue({
+      available: true,
+      message: null,
+      window: "1d",
+      granularity: "hour",
+      window_start_at: "2026-06-15T10:00:00Z",
+      window_end_at: "2026-06-16T10:00:00Z",
+      buckets: [
+        {
+          window_start: "2026-06-16T09:00:00Z",
+          source_key: "rss:cnbc",
+          fetch_count: 4,
+          publish_success_count: 3,
+          publish_error_count: 1,
+        },
+        {
+          window_start: "2026-06-16T09:00:00Z",
+          source_key: "rss:yahoo",
+          fetch_count: 2,
+          publish_success_count: 2,
+          publish_error_count: 0,
+        },
+      ],
+      generated_at: "2026-06-16T10:00:00Z",
+    });
+
+    renderWithQueryClient(<NewsFetcherTab />);
+
+    const axis = await screen.findByTestId("news-fetcher-throughput-x-axis");
+    const bucketStart = new Date("2026-06-16T09:00:00Z").getTime();
+    const expectedPaddingMs = 30 * 60 * 1000;
+    expect(axis).toHaveAttribute(
+      "data-domain",
+      JSON.stringify([bucketStart - expectedPaddingMs, bucketStart + expectedPaddingMs])
+    );
+    expect(screen.getByTestId("news-fetcher-throughput-bar-fetched")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByTestId("news-fetcher-throughput-bar-published")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByTestId("news-fetcher-throughput-bar-failed")).toHaveAttribute("data-bar-size", "12");
   });
 
   it("shows a data source warning banner for handled 503 responses", async () => {

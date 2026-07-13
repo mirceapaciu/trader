@@ -182,10 +182,13 @@ export function NewsFetcherTab() {
   const throughputWindowEndAtMs = throughput.data?.window_end_at
     ? new Date(throughput.data.window_end_at).getTime()
     : undefined;
-  const throughputDataStartAtMs = chartRows[0]?.timestampMs;
-  const throughputDataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
-  const throughputAxisStartAtMs = throughputDataStartAtMs ?? throughputWindowStartAtMs;
-  const throughputAxisEndAtMs = throughputDataEndAtMs ?? throughputWindowEndAtMs;
+  const throughputAxisDomain = getThroughputAxisDomain(
+    chartRows,
+    throughput.data?.granularity,
+    throughputSelection.window
+  );
+  const throughputAxisStartAtMs = throughputAxisDomain?.[0] ?? throughputWindowStartAtMs;
+  const throughputAxisEndAtMs = throughputAxisDomain?.[1] ?? throughputWindowEndAtMs;
   const throughputAxisDurationMs =
     throughputAxisStartAtMs != null && throughputAxisEndAtMs != null
       ? Math.max(0, throughputAxisEndAtMs - throughputAxisStartAtMs)
@@ -341,9 +344,9 @@ export function NewsFetcherTab() {
                     </>
                   ) : (
                     <>
-                      <Bar dataKey="fetched" fill="#4967d1" fillOpacity={0.72} radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="published" fill="#1d8f6f" fillOpacity={0.82} radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="failed" fill="#b83b3b" fillOpacity={0.75} radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="fetched" fill="#4967d1" fillOpacity={0.72} radius={[3, 3, 0, 0]} barSize={12} />
+                      <Bar dataKey="published" fill="#1d8f6f" fillOpacity={0.82} radius={[3, 3, 0, 0]} barSize={12} />
+                      <Bar dataKey="failed" fill="#b83b3b" fillOpacity={0.75} radius={[3, 3, 0, 0]} barSize={12} />
                     </>
                   )}
                 </ComposedChart>
@@ -1992,6 +1995,38 @@ function aggregateThroughputRows(response?: ThroughputResponse) {
   return Array.from(totals.values()).sort(
     (left, right) => left.timestampMs - right.timestampMs
   );
+}
+
+type ThroughputChartRow = ReturnType<typeof aggregateThroughputRows>[number];
+
+function getThroughputAxisDomain(
+  chartRows: ThroughputChartRow[],
+  granularity: ThroughputResponse["granularity"] | undefined,
+  window: ThroughputPresetWindow
+): [number, number] | undefined {
+  const dataStartAtMs = chartRows[0]?.timestampMs;
+  const dataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
+  if (dataStartAtMs == null || dataEndAtMs == null) {
+    return undefined;
+  }
+  if (dataStartAtMs !== dataEndAtMs) {
+    return [dataStartAtMs, dataEndAtMs];
+  }
+  const paddingMs = throughputBucketPaddingMs(granularity, window);
+  return [dataStartAtMs - paddingMs, dataEndAtMs + paddingMs];
+}
+
+function throughputBucketPaddingMs(
+  granularity: ThroughputResponse["granularity"] | undefined,
+  window: ThroughputPresetWindow
+) {
+  if (granularity === "day") {
+    return 12 * 60 * 60 * 1000;
+  }
+  if (granularity === "hour") {
+    return 30 * 60 * 1000;
+  }
+  return window === "15m" ? 60 * 1000 : 5 * 60 * 1000;
 }
 
 function toThroughputRequest(selection: ThroughputSelection): ThroughputRequest {
