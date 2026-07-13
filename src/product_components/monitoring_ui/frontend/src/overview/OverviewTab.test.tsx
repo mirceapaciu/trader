@@ -11,10 +11,14 @@ vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ComposedChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   CartesianGrid: () => null,
-  XAxis: () => null,
+  XAxis: ({ domain }: { domain?: [number | string, number | string] }) => (
+    <div data-testid="overview-throughput-x-axis" data-domain={JSON.stringify(domain)} />
+  ),
   YAxis: () => null,
   Tooltip: () => null,
-  Bar: () => null,
+  Bar: ({ dataKey, barSize }: { dataKey?: string; barSize?: number }) => (
+    <div data-testid={`overview-throughput-bar-${dataKey}`} data-bar-size={barSize} />
+  ),
 }));
 
 vi.mock("../api", async () => {
@@ -98,6 +102,20 @@ describe("OverviewTab", () => {
       expect(fetchThroughput).toHaveBeenCalledWith({ window: "7d" });
       expect(fetchThesisBuilderThroughput).toHaveBeenCalledWith("7d");
     });
+  });
+
+  it("uses the plotted bucket domain and explicit bar sizes for visible bars", async () => {
+    renderWithQueryClient(<OverviewTab />);
+
+    const axis = await screen.findByTestId("overview-throughput-x-axis");
+    const bucketStart = new Date("2026-06-16T09:00:00Z").getTime();
+    const expectedPaddingMs = 30 * 60 * 1000;
+    expect(axis).toHaveAttribute(
+      "data-domain",
+      JSON.stringify([bucketStart - expectedPaddingMs, bucketStart + expectedPaddingMs])
+    );
+    expect(screen.getByTestId("overview-throughput-bar-published")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByTestId("overview-throughput-bar-consumed")).toHaveAttribute("data-bar-size", "12");
   });
 });
 

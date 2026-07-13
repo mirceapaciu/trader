@@ -42,19 +42,22 @@ export function OverviewTab() {
     newsFetcherThroughput.data,
     thesisBuilderThroughput.data
   );
-  const axisStartAtMs = minDefined([
-    toTimestampMs(newsFetcherThroughput.data?.window_start_at),
-    toTimestampMs(thesisBuilderThroughput.data?.window_start_at),
-    chartRows[0]?.timestampMs
-  ]);
-  const axisEndAtMs = maxDefined([
-    toTimestampMs(newsFetcherThroughput.data?.window_end_at),
-    toTimestampMs(thesisBuilderThroughput.data?.window_end_at),
-    chartRows[chartRows.length - 1]?.timestampMs
-  ]);
+  const granularity = thesisBuilderThroughput.data?.granularity ?? newsFetcherThroughput.data?.granularity;
+  const axisDomain = getOverviewAxisDomain(chartRows, granularity, window);
+  const axisStartAtMs =
+    axisDomain?.[0] ??
+    minDefined([
+      toTimestampMs(newsFetcherThroughput.data?.window_start_at),
+      toTimestampMs(thesisBuilderThroughput.data?.window_start_at)
+    ]);
+  const axisEndAtMs =
+    axisDomain?.[1] ??
+    maxDefined([
+      toTimestampMs(newsFetcherThroughput.data?.window_end_at),
+      toTimestampMs(thesisBuilderThroughput.data?.window_end_at)
+    ]);
   const axisDurationMs =
     axisStartAtMs != null && axisEndAtMs != null ? Math.max(0, axisEndAtMs - axisStartAtMs) : undefined;
-  const granularity = thesisBuilderThroughput.data?.granularity ?? newsFetcherThroughput.data?.granularity;
   const ticks = buildThroughputAxisTicks(granularity, axisStartAtMs, axisEndAtMs);
   const tickCount =
     granularity === "raw"
@@ -153,8 +156,8 @@ export function OverviewTab() {
                 />
                 <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip content={<OverviewThroughputTooltip />} />
-                <Bar dataKey="published" name="Published to queue" fill="#1d8f6f" fillOpacity={0.84} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="consumed" name="Processed by ThesisBuilder" fill="#4967d1" fillOpacity={0.74} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="published" name="Published to queue" fill="#1d8f6f" fillOpacity={0.84} radius={[3, 3, 0, 0]} barSize={12} />
+                <Bar dataKey="consumed" name="Processed by ThesisBuilder" fill="#4967d1" fillOpacity={0.74} radius={[3, 3, 0, 0]} barSize={12} />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
@@ -244,6 +247,36 @@ function getOrCreateRow(totals: Map<string, OverviewThroughputRow>, timestamp: s
   };
   totals.set(timestamp, row);
   return row;
+}
+
+function getOverviewAxisDomain(
+  chartRows: OverviewThroughputRow[],
+  granularity: ThroughputResponse["granularity"] | undefined,
+  window: ThroughputPresetWindow
+): [number, number] | undefined {
+  const dataStartAtMs = chartRows[0]?.timestampMs;
+  const dataEndAtMs = chartRows[chartRows.length - 1]?.timestampMs;
+  if (dataStartAtMs == null || dataEndAtMs == null) {
+    return undefined;
+  }
+  if (dataStartAtMs !== dataEndAtMs) {
+    return [dataStartAtMs, dataEndAtMs];
+  }
+  const paddingMs = overviewBucketPaddingMs(granularity, window);
+  return [dataStartAtMs - paddingMs, dataEndAtMs + paddingMs];
+}
+
+function overviewBucketPaddingMs(
+  granularity: ThroughputResponse["granularity"] | undefined,
+  window: ThroughputPresetWindow
+) {
+  if (granularity === "day") {
+    return 12 * 60 * 60 * 1000;
+  }
+  if (granularity === "hour") {
+    return 30 * 60 * 1000;
+  }
+  return window === "15m" ? 60 * 1000 : 5 * 60 * 1000;
 }
 
 function formatWindowSummary(
