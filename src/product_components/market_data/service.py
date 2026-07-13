@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from src.product_components.market_data.context import build_market_context
 from src.product_components.market_data.models import (
@@ -42,6 +42,7 @@ class MarketDataService:
         historical_bars_provider: str = "polygon",
         prefer_ibkr_historical: bool = True,
         max_requests_per_minute: int = 5,
+        context_max_age_seconds: int = 1800,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -49,6 +50,7 @@ class MarketDataService:
         self._provider_clients = provider_clients
         self._quote_max_age_seconds = quote_max_age_seconds
         self._daily_bar_lookback_days = daily_bar_lookback_days
+        self._context_max_age_seconds = context_max_age_seconds
         self._historical_bars_provider = historical_bars_provider
         self._prefer_ibkr_historical = prefer_ibkr_historical
         self._max_requests_per_minute = max_requests_per_minute
@@ -63,13 +65,21 @@ class MarketDataService:
         refresh_if_stale: bool = True,
     ) -> MarketContextSnapshot | None:
         snapshot = self._storage.get_market_context(ticker=ticker, exchange_code=exchange_code)
-        if refresh_if_stale and (
-            snapshot is None
-            or snapshot.source_status in {ContextSourceStatus.STALE, ContextSourceStatus.MISSING}
-        ):
+        if refresh_if_stale and self._needs_refresh(snapshot):
             self.refresh_instrument(ticker=ticker, exchange_code=exchange_code)
             snapshot = self._storage.get_market_context(ticker=ticker, exchange_code=exchange_code)
         return snapshot
+
+    def _needs_refresh(self, snapshot: MarketContextSnapshot | None) -> bool:
+        if snapshot is None:
+            return True
+        if snapshot.source_status not in {ContextSourceStatus.STALE, ContextSourceStatus.MISSING}:
+            return False
+        # Every refresh attempt upserts a snapshot with as_of=now, so a STALE snapshot with
+        # a recent as_of means providers just failed — cool down instead of retrying on
+        # every caller request (the ThesisBuilder consumer loop is single-threaded).
+        age = datetime.now(timezone.utc) - snapshot.as_of
+        return age > timedelta(seconds=self._context_max_age_seconds)
 
     def get_historical_bars(
         self,
@@ -197,27 +207,57 @@ class MarketDataService:
         seen: set[MarketDataProvider] = set()
         return [p for p in order if not (p in seen or seen.add(p))]
 
-    def _resolve_bars_mapping(self, *, ticker: str, exchange_code: str) -> ProviderSymbol | None:
-        existing = {
+    def _quote_provider_preference(self, exchange_code: str) -> list[MarketDataProvider]:
+        canonical = normalize_exchange_code(exchange_code)
+        if canonical in _US_EXCHANGES:
+            # Live IBKR session first; skip a known-dead IBKR entirely rather than burn its
+            # snapshot timeout. Polygon serves a previous-close fallback (free tier); Alpha
+            # Vantage has no quote endpoint at all.
+            if self._ibkr_available():
+                return [MarketDataProvider.IBKR, MarketDataProvider.POLYGON]
+            return [MarketDataProvider.POLYGON]
+        return [MarketDataProvider.IBKR]
+
+    def _mapping_for_provider(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        provider: MarketDataProvider,
+        existing: dict[MarketDataProvider, ProviderSymbol],
+    ) -> ProviderSymbol | None:
+        if provider in existing:
+            return existing[provider]
+        try:
+            symbol = default_provider_symbol(
+                ticker=ticker, exchange_code=exchange_code, provider=provider
+            )
+        except ValueError:
+            return None
+        # Persist the freshly discovered mapping so future lookups skip resolution.
+        self._storage.upsert_provider_symbol(symbol)
+        return symbol
+
+    def _load_provider_symbol_map(
+        self, *, ticker: str, exchange_code: str
+    ) -> dict[MarketDataProvider, ProviderSymbol]:
+        return {
             mapping.provider: mapping
             for mapping in self._storage.load_provider_symbols(
                 ticker=ticker, exchange_code=exchange_code
             )
         }
+
+    def _resolve_bars_mapping(self, *, ticker: str, exchange_code: str) -> ProviderSymbol | None:
+        existing = self._load_provider_symbol_map(ticker=ticker, exchange_code=exchange_code)
         for provider in self._provider_preference(exchange_code):
             if provider not in self._provider_clients:
                 continue
-            if provider in existing:
-                return existing[provider]
-            try:
-                symbol = default_provider_symbol(
-                    ticker=ticker, exchange_code=exchange_code, provider=provider
-                )
-            except ValueError:
-                continue
-            # Persist the freshly discovered mapping so future lookups skip resolution.
-            self._storage.upsert_provider_symbol(symbol)
-            return symbol
+            mapping = self._mapping_for_provider(
+                ticker=ticker, exchange_code=exchange_code, provider=provider, existing=existing
+            )
+            if mapping is not None:
+                return mapping
         for provider, symbol in existing.items():
             if provider in self._provider_clients:
                 return symbol
@@ -307,9 +347,15 @@ class MarketDataService:
             )
 
     def refresh_instrument(self, *, ticker: str, exchange_code: str) -> None:
-        mappings = self._storage.load_provider_symbols(ticker=ticker, exchange_code=exchange_code)
-        for mapping in mappings:
-            self._refresh_mapping(mapping)
+        """Refresh via the retrieval chain: DB cache -> IBKR -> Polygon fallback.
+
+        Quotes walk `_quote_provider_preference` and stop at the first provider that stores
+        one; daily bars are refreshed through the existing bars routing only when the cache
+        is no longer current. The rebuilt context snapshot is upserted even when every
+        provider failed, so `_needs_refresh` can rate-limit retry attempts.
+        """
+        self._refresh_quote(ticker=ticker, exchange_code=exchange_code)
+        self._refresh_daily_bars_if_stale(ticker=ticker, exchange_code=exchange_code)
 
         quote = self._storage.load_latest_quote(ticker=ticker, exchange_code=exchange_code)
         bars = self._storage.load_bars(
@@ -328,18 +374,39 @@ class MarketDataService:
         )
         self._storage.upsert_context_snapshot(snapshot)
 
-    def _refresh_mapping(self, mapping: ProviderSymbol) -> None:
+    def _refresh_quote(self, *, ticker: str, exchange_code: str) -> None:
+        existing = self._load_provider_symbol_map(ticker=ticker, exchange_code=exchange_code)
+        for provider in self._quote_provider_preference(exchange_code):
+            client = self._provider_clients.get(provider)
+            if client is None:
+                continue
+            mapping = self._mapping_for_provider(
+                ticker=ticker, exchange_code=exchange_code, provider=provider, existing=existing
+            )
+            if mapping is None:
+                continue
+            if self._fetch_quote(mapping, client):
+                return
+
+    def _refresh_daily_bars_if_stale(self, *, ticker: str, exchange_code: str) -> None:
+        bars = self._storage.load_bars(
+            ticker=ticker, exchange_code=exchange_code, bar_interval="1d", limit=1
+        )
+        if bars:
+            latest = max(bar.bar_start_at for bar in bars)
+            # A bar within ~3 calendar days covers weekends/holidays between sessions;
+            # skipping current bars spares the free-tier Polygon request budget.
+            if datetime.now(timezone.utc) - latest <= timedelta(days=3):
+                return
+        mapping = self._resolve_bars_mapping(ticker=ticker, exchange_code=exchange_code)
+        if mapping is None:
+            return
         client = self._provider_clients.get(mapping.provider)
         if client is None:
             return
-        if mapping.provider is MarketDataProvider.IBKR:
-            self._fetch_quote(mapping, client)
-            self._fetch_daily_bars(mapping, client)
-            return
-        if mapping.provider is MarketDataProvider.ALPHA_VANTAGE:
-            self._fetch_daily_bars(mapping, client)
+        self._fetch_daily_bars(mapping, client)
 
-    def _fetch_quote(self, mapping: ProviderSymbol, client: MarketDataProviderClient) -> None:
+    def _fetch_quote(self, mapping: ProviderSymbol, client: MarketDataProviderClient) -> bool:
         started_at = datetime.now(timezone.utc)
         fetched_count = 0
         status = "success"
@@ -370,6 +437,7 @@ class MarketDataService:
                 fetched_count=fetched_count,
             )
         )
+        return fetched_count > 0
 
     def _fetch_daily_bars(self, mapping: ProviderSymbol, client: MarketDataProviderClient) -> None:
         started_at = datetime.now(timezone.utc)

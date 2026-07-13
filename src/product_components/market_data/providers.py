@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -116,7 +117,29 @@ class PolygonClient:
         self._timeout_seconds = timeout_seconds
 
     def fetch_quote(self, symbol: ProviderSymbol) -> MarketQuote | None:
-        return None
+        """Previous-close 'quote' fallback for when IBKR is unavailable (free tier).
+
+        Polygon's free tier has no live quote endpoint, so this serves the prior session's
+        close via ``/v2/aggs/ticker/{sym}/prev``. Honesty rule: outside US regular trading
+        hours the previous close *is* the market state (classified DELAYED, cards may
+        validate); during RTH a day-old price is classified STALE so downstream gates
+        reject rather than trade on it.
+        """
+        if not self._api_key.strip():
+            return None
+        response = requests.get(
+            f"{self._base_url}/v2/aggs/ticker/{symbol.provider_symbol}/prev",
+            params={"adjusted": "false", "apiKey": self._api_key},
+            timeout=self._timeout_seconds,
+        )
+        response.raise_for_status()
+        now = datetime.now(timezone.utc)
+        return normalize_polygon_prev_close(
+            response.json(),
+            symbol=symbol,
+            now=now,
+            fetched_at=now,
+        )
 
     def fetch_daily_bars(self, symbol: ProviderSymbol, *, outputsize: str = "compact") -> list[MarketBar]:
         end = datetime.now(timezone.utc)
@@ -175,6 +198,16 @@ class PolygonClient:
         return sorted(bars, key=lambda bar: bar.bar_start_at)
 
 
+# IBKR ``marketDataType`` (from ``reqMarketDataType``) -> our freshness classification.
+# 1=realtime, 2=frozen (last RTH values), 3=delayed (~15 min), 4=delayed-frozen.
+_IBKR_MARKET_DATA_TYPE_TO_QUOTE_TYPE: dict[int, QuoteDataType] = {
+    1: QuoteDataType.REALTIME,
+    2: QuoteDataType.FROZEN,
+    3: QuoteDataType.DELAYED,
+    4: QuoteDataType.FROZEN,
+}
+
+
 class IbkrClient:
     """Interactive Brokers market-data client.
 
@@ -184,8 +217,9 @@ class IbkrClient:
 
     provider = MarketDataProvider.IBKR
 
-    def __init__(self, *, gateway: Any | None = None) -> None:
+    def __init__(self, *, gateway: Any | None = None, quote_timeout_seconds: float = 10.0) -> None:
         self._gateway = gateway
+        self._quote_timeout_seconds = quote_timeout_seconds
 
     def is_available(self) -> bool:
         """True only when a gateway is injected and its IBKR session is live.
@@ -196,7 +230,38 @@ class IbkrClient:
         return self._gateway is not None and bool(self._gateway.is_connected())
 
     def fetch_quote(self, symbol: ProviderSymbol) -> MarketQuote | None:
-        return None
+        # A dead session would just burn the snapshot timeout; let the caller fall back.
+        if not self.is_available():
+            return None
+        raw = self._gateway.snapshot_quote(
+            provider_symbol=symbol.provider_symbol,
+            contract_metadata=symbol.provider_metadata,
+            timeout_seconds=self._quote_timeout_seconds,
+        )
+        if raw is None:
+            return None
+        has_price = any(raw.get(field) is not None for field in ("bid", "ask", "last", "close"))
+        if not has_price:
+            return None
+        market_data_type = raw.get("market_data_type")
+        try:
+            type_key = int(market_data_type)
+        except (TypeError, ValueError):
+            type_key = -1
+        # Unknown/unset marketDataType: prices exist, so assume delayed rather than drop.
+        data_type = _IBKR_MARKET_DATA_TYPE_TO_QUOTE_TYPE.get(type_key, QuoteDataType.DELAYED)
+        return normalize_ibkr_quote(
+            symbol=symbol,
+            data_type=data_type,
+            bid_price=raw.get("bid"),
+            ask_price=raw.get("ask"),
+            last_price=raw.get("last"),
+            previous_close=raw.get("close"),
+            volume=raw.get("volume"),
+            provider_timestamp=raw.get("timestamp"),
+            fetched_at=datetime.now(timezone.utc),
+            provider_metadata={"market_data_type": market_data_type},
+        )
 
     def fetch_daily_bars(self, symbol: ProviderSymbol, *, outputsize: str = "compact") -> list[MarketBar]:
         return self.fetch_historical_bars(
@@ -248,7 +313,10 @@ def build_provider_clients(
             api_key=settings.polygon_api_key,
             base_url=settings.polygon_api_base_url,
         ),
-        MarketDataProvider.IBKR: IbkrClient(gateway=ibkr_gateway),
+        MarketDataProvider.IBKR: IbkrClient(
+            gateway=ibkr_gateway,
+            quote_timeout_seconds=settings.ibkr_quote_timeout_seconds,
+        ),
         MarketDataProvider.ALPHA_VANTAGE: AlphaVantageClient(
             api_key=settings.alpha_vantage_api_key,
         ),
@@ -290,6 +358,65 @@ def normalize_ibkr_historical_bars(
             )
         )
     return sorted(bars, key=lambda bar: bar.bar_start_at)
+
+
+_US_EASTERN = ZoneInfo("America/New_York")
+
+
+def classify_polygon_prev_close_data_type(now: datetime) -> QuoteDataType:
+    """Freshness of a previous-close price relative to US regular trading hours.
+
+    Off-hours (nights, weekends) the previous close is the current market state, so it is
+    DELAYED — good enough for downstream validity gates. During RTH (weekdays 09:30-16:00
+    ET) a day-old price must not be traded on, so it is STALE. Known limitation: US market
+    holidays falling on a weekday classify STALE during nominal RTH — conservative
+    rejection rather than wrong acceptance.
+    """
+    local = _to_utc(now).astimezone(_US_EASTERN)
+    if local.weekday() >= 5:
+        return QuoteDataType.DELAYED
+    minutes = local.hour * 60 + local.minute
+    if 9 * 60 + 30 <= minutes < 16 * 60:
+        return QuoteDataType.STALE
+    return QuoteDataType.DELAYED
+
+
+def normalize_polygon_prev_close(
+    payload: dict[str, Any],
+    *,
+    symbol: ProviderSymbol,
+    now: datetime,
+    fetched_at: datetime,
+) -> MarketQuote | None:
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        return None
+    raw = results[0]
+    if not isinstance(raw, dict) or raw.get("c") is None:
+        return None
+    timestamp_ms = raw.get("t")
+    volume = raw.get("v")
+    return MarketQuote(
+        ticker=symbol.ticker,
+        exchange_code=symbol.exchange_code,
+        provider=MarketDataProvider.POLYGON,
+        data_type=classify_polygon_prev_close_data_type(now),
+        currency=symbol.currency,
+        bid_price=None,
+        ask_price=None,
+        last_price=float(raw["c"]),
+        # Bars supply the true prior close in build_market_context; the prev-close bar's
+        # own close IS the last price, not the close before it.
+        previous_close=None,
+        volume=float(volume) if volume is not None else None,
+        provider_timestamp=(
+            datetime.fromtimestamp(int(timestamp_ms) / 1000, tz=timezone.utc)
+            if timestamp_ms is not None
+            else None
+        ),
+        fetched_at=fetched_at,
+        provider_metadata={"source": "prev_close_aggregate"},
+    )
 
 
 def normalize_polygon_bars(

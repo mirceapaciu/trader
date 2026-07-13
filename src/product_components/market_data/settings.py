@@ -20,6 +20,7 @@ class MarketDataSettings:
     ibkr_host: str
     ibkr_port: int
     ibkr_market_data_client_id: int
+    ibkr_quote_timeout_seconds: int
     alpha_vantage_api_key: str
     polygon_api_key: str
     polygon_api_base_url: str
@@ -57,6 +58,7 @@ class MarketDataSettings:
             ibkr_host=os.getenv("IBKR_HOST", "127.0.0.1"),
             ibkr_port=_int_env("IBKR_PORT", 7497),
             ibkr_market_data_client_id=_int_env("IBKR_MARKET_DATA_CLIENT_ID", 2),
+            ibkr_quote_timeout_seconds=_int_env("MARKET_DATA_IBKR_QUOTE_TIMEOUT_SECONDS", 10),
             alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
             # Reuse the existing Massive/Polygon key for historical bar backfills.
             polygon_api_key=os.getenv("POLYGON_API_KEY") or os.getenv("MASSIVE_API_KEY", ""),

@@ -6,9 +6,10 @@ event loop on a dedicated background thread and marshals every RPC onto it via `
 It runs on its own client id (``IBKR_MARKET_DATA_CLIENT_ID``, default 2), independent of
 the trade-executor session, so the two never clash.
 
-Unlike the executor gateway (which only reads live quotes), this one exposes
+Beyond the executor gateway's quote reading, this one also exposes
 ``historical_bars(...)`` backed by ``reqHistoricalData`` — the source the backtester warms
-up from when IBKR is available, falling back to Polygon/Alpha Vantage otherwise.
+up from when IBKR is available, falling back to Polygon/Alpha Vantage otherwise —
+and ``snapshot_quote(...)`` backed by ``reqTickers``, used by the live quote refresh chain.
 
 This module cannot be exercised without a live TWS/Gateway, so it carries no unit tests
 beyond the import-boundary check; its pure helpers (interval mapping, duration/date
@@ -61,11 +62,22 @@ _MAX_CHUNKS = 400
 class IbAsyncMarketDataGateway:
     """ib_async-backed gateway that fetches historical OHLCV bars for market_data."""
 
-    def __init__(self, *, host: str, port: int, client_id: int, default_currency: str = "USD") -> None:
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        client_id: int,
+        default_currency: str = "USD",
+        market_data_type: int = 3,
+    ) -> None:
         self._host = host
         self._port = port
         self._client_id = client_id
         self._default_currency = default_currency
+        # IBKR reqMarketDataType: 1=realtime, 2=frozen, 3=delayed, 4=delayed-frozen.
+        self._market_data_type = market_data_type
+        self._market_data_type_sent = False
         self._ib = IB()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -119,6 +131,8 @@ class IbAsyncMarketDataGateway:
             lambda: self._ib.connectAsync(self._host, self._port, clientId=self._client_id),
             timeout=15.0,
         )
+        # The market-data-type preference is per connection; re-send after (re)connect.
+        self._market_data_type_sent = False
 
     def disconnect(self) -> None:
         if self._ib.isConnected():
@@ -241,6 +255,60 @@ class IbAsyncMarketDataGateway:
 
         return sorted(collected.values(), key=lambda bar: bar["bar_start_at"])
 
+    # --- quote snapshot --------------------------------------------------------
+
+    def snapshot_quote(
+        self,
+        *,
+        provider_symbol: str,
+        contract_metadata: dict[str, Any] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, Any] | None:
+        """Fetch a one-shot quote as a raw dict for ``providers.IbkrClient`` to normalize.
+
+        Best-effort: returns ``None`` on unresolvable contract, timeout, or a tick with no
+        usable prices; never raises. ``market_data_type`` echoes ``ticker.marketDataType``
+        (1=realtime, 2=frozen, 3=delayed, 4=delayed-frozen) so the client can classify
+        freshness honestly.
+        """
+        contract = self._qualified_contract(provider_symbol, contract_metadata)
+        if contract is None:
+            return None
+
+        async def _fetch():
+            # Delayed data must be requested explicitly or snapshots error out without a
+            # live subscription; send the preference once per connection.
+            if not self._market_data_type_sent:
+                self._ib.reqMarketDataType(self._market_data_type)
+                self._market_data_type_sent = True
+            tickers = await self._ib.reqTickersAsync(contract, regulatorySnapshot=False)
+            return tickers[0] if tickers else None
+
+        try:
+            tick = self._call(_fetch, timeout=timeout_seconds)
+        except Exception:
+            LOGGER.exception("IBKR quote snapshot failed for %s", provider_symbol)
+            return None
+        if tick is None:
+            return None
+
+        bid = _pos_or_none(getattr(tick, "bid", None))
+        ask = _pos_or_none(getattr(tick, "ask", None))
+        last = _pos_or_none(getattr(tick, "last", None))
+        close = _pos_or_none(getattr(tick, "close", None))
+        if bid is None and ask is None and last is None and close is None:
+            return None
+        timestamp = getattr(tick, "time", None)
+        return {
+            "bid": bid,
+            "ask": ask,
+            "last": last,
+            "close": close,
+            "volume": _float_or_none(getattr(tick, "volume", None)),
+            "timestamp": _to_utc(timestamp) if isinstance(timestamp, datetime) else None,
+            "market_data_type": getattr(tick, "marketDataType", None),
+        }
+
 
 def build_market_data_ibkr_gateway(settings: Any) -> "IbAsyncMarketDataGateway | None":
     """Construct and best-effort connect the market-data IBKR gateway from settings.
@@ -255,6 +323,7 @@ def build_market_data_ibkr_gateway(settings: Any) -> "IbAsyncMarketDataGateway |
         host=settings.ibkr_host,
         port=settings.ibkr_port,
         client_id=settings.ibkr_market_data_client_id,
+        market_data_type=3 if getattr(settings, "allow_delayed", True) else 1,
     )
     try:
         gateway.connect()
@@ -275,6 +344,26 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _pos_or_none(value: Any) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f <= 0:  # NaN or non-positive
+        return None
+    return f
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f:  # NaN
+        return None
+    return f
 
 
 def _duration_str(start: datetime, end: datetime) -> str:

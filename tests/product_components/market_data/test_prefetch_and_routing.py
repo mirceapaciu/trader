@@ -176,6 +176,39 @@ def test_provider_preference_respects_disabled_toggle_even_when_available() -> N
     assert service._provider_preference("XNAS")[0] is MarketDataProvider.POLYGON
 
 
+def test_quote_preference_us_with_live_ibkr_tries_ibkr_then_polygon() -> None:
+    service = _preference(
+        {
+            MarketDataProvider.POLYGON: _CountingClient(MarketDataProvider.POLYGON),
+            MarketDataProvider.IBKR: _AvailableIbkrClient(available=True),
+        }
+    )
+    assert service._quote_provider_preference("XNAS") == [
+        MarketDataProvider.IBKR,
+        MarketDataProvider.POLYGON,
+    ]
+
+
+def test_quote_preference_us_with_dead_ibkr_skips_to_polygon() -> None:
+    service = _preference(
+        {
+            MarketDataProvider.POLYGON: _CountingClient(MarketDataProvider.POLYGON),
+            MarketDataProvider.IBKR: _AvailableIbkrClient(available=False),
+        }
+    )
+    assert service._quote_provider_preference("XNAS") == [MarketDataProvider.POLYGON]
+
+
+def test_quote_preference_non_us_is_ibkr_only() -> None:
+    service = _preference(
+        {
+            MarketDataProvider.POLYGON: _CountingClient(MarketDataProvider.POLYGON),
+            MarketDataProvider.IBKR: _AvailableIbkrClient(available=True),
+        }
+    )
+    assert service._quote_provider_preference("XETR") == [MarketDataProvider.IBKR]
+
+
 def test_us_instrument_prefers_ibkr_when_available() -> None:
     storage = _FakeStorage()
     polygon = _CountingClient(MarketDataProvider.POLYGON)

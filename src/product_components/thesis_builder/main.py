@@ -9,6 +9,8 @@ LOGGER = logging.getLogger("thesis_builder.main")
 
 import psycopg
 
+from src.product_components.market_data.ibkr_gateway import build_market_data_ibkr_gateway
+from src.product_components.market_data.providers import build_provider_clients
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.market_data.settings import MarketDataSettings
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
@@ -106,6 +108,9 @@ def main() -> None:
         watchlist_table=market_data_settings.watchlist_table,
     )
 
+    # Live quote/bar retrieval chain: DB cache -> IBKR -> Polygon. The gateway connect is
+    # best-effort; when IBKR is down the service transparently falls back to Polygon.
+    ibkr_gateway = build_market_data_ibkr_gateway(market_data_settings)
     market_data_service = MarketDataService(
         storage=PostgresMarketDataStorageAdapter(
             dsn=market_data_settings.postgres_dsn,
@@ -116,20 +121,28 @@ def main() -> None:
                 shared_schema=market_data_settings.shared_db_schema,
             ),
         ),
-        provider_clients={},
+        provider_clients=build_provider_clients(market_data_settings, ibkr_gateway=ibkr_gateway),
         quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
         daily_bar_lookback_days=market_data_settings.daily_bar_lookback_days,
+        historical_bars_provider=market_data_settings.historical_bars_provider,
+        prefer_ibkr_historical=market_data_settings.prefer_ibkr_historical,
+        max_requests_per_minute=market_data_settings.polygon_max_requests_per_minute,
+        context_max_age_seconds=market_data_settings.context_max_age_seconds,
     )
 
-    ThesisBuilderRunner(
-        settings=settings,
-        market_context_client=market_data_service,
-        instrument_registry=instrument_registry,
-        review_writer=PostgresSharedThesisCardReviewWriter(
-            dsn=settings.postgres_dsn,
-            shared_schema=settings.shared_db_schema,
-        ),
-    ).run_forever()
+    try:
+        ThesisBuilderRunner(
+            settings=settings,
+            market_context_client=market_data_service,
+            instrument_registry=instrument_registry,
+            review_writer=PostgresSharedThesisCardReviewWriter(
+                dsn=settings.postgres_dsn,
+                shared_schema=settings.shared_db_schema,
+            ),
+        ).run_forever()
+    finally:
+        if ibkr_gateway is not None:
+            ibkr_gateway.disconnect()
 
 
 if __name__ == "__main__":
