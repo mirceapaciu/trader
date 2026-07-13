@@ -6,16 +6,10 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.product_components.market_data.ibkr_gateway import build_market_data_ibkr_gateway
-from src.product_components.market_data.providers import build_provider_clients
-from src.product_components.market_data.service import MarketDataService
+from src.product_components.market_data.factory import build_market_data_service
 from src.product_components.market_data.settings import MarketDataSettings
-from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 from src.product_components.news_fetcher.env_loader import load_env_files
-from src.product_components.shared.adapters import (
-    PostgresSharedApiUsageWriter,
-    PostgresSharedInstrumentRegistry,
-)
+from src.product_components.shared.adapters import PostgresSharedInstrumentRegistry
 from src.product_components.thesis_builder.export import ThesisCardHistoryExporter
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 
@@ -59,30 +53,15 @@ def main() -> None:
     )
 
     market_data_settings = MarketDataSettings.from_env()
-    # Prefer IBKR for historical bars when a live session is reachable; falls back to
-    # Polygon/Alpha Vantage otherwise (see build_market_data_ibkr_gateway).
-    ibkr_gateway = build_market_data_ibkr_gateway(market_data_settings)
     instrument_registry = PostgresSharedInstrumentRegistry(
         dsn=settings.postgres_dsn,
         shared_schema=settings.shared_db_schema,
         watchlist_table=market_data_settings.watchlist_table,
     )
-    market_data_service = MarketDataService(
-        storage=PostgresMarketDataStorageAdapter(
-            dsn=market_data_settings.postgres_dsn,
-            market_data_schema=market_data_settings.market_data_db_schema,
-            instrument_registry=instrument_registry,
-            api_usage_writer=PostgresSharedApiUsageWriter(
-                dsn=market_data_settings.postgres_dsn,
-                shared_schema=market_data_settings.shared_db_schema,
-            ),
-        ),
-        provider_clients=build_provider_clients(market_data_settings, ibkr_gateway=ibkr_gateway),
-        quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
-        daily_bar_lookback_days=market_data_settings.daily_bar_lookback_days,
-        historical_bars_provider=market_data_settings.historical_bars_provider,
-        prefer_ibkr_historical=market_data_settings.prefer_ibkr_historical,
-        max_requests_per_minute=market_data_settings.polygon_max_requests_per_minute,
+    # Prefer IBKR for historical bars when a live session is reachable; falls back to
+    # Polygon/Alpha Vantage otherwise.
+    market_data_service, ibkr_gateway = build_market_data_service(
+        market_data_settings, instrument_registry=instrument_registry
     )
     bars_provider = MarketDataBarsProvider(market_data_service=market_data_service)
     cards_provider = ThesisCardHistoryExporter(

@@ -9,12 +9,11 @@ LOGGER = logging.getLogger("trade_executor.main")
 
 import psycopg
 
+from src.product_components.market_data.factory import build_market_data_service
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.market_data.settings import MarketDataSettings
-from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 from src.product_components.news_fetcher.env_loader import load_env_files
 from src.product_components.shared.adapters import (
-    PostgresSharedApiUsageWriter,
     PostgresSharedInstrumentRegistry,
     PostgresSharedInstrumentSectorReader,
     PostgresSharedThesisCardReviewReader,
@@ -88,26 +87,12 @@ def _log_env_files(repo_root: Path, requested: tuple[str, ...], loaded: list[Pat
 
 
 def _build_market_data_service(settings: TradeExecutorSettings) -> MarketDataService:
-    market_data_settings = MarketDataSettings.from_env()
-    instrument_registry = PostgresSharedInstrumentRegistry(
-        dsn=market_data_settings.postgres_dsn,
-        shared_schema=market_data_settings.shared_db_schema,
-        watchlist_table=market_data_settings.watchlist_table,
+    # Cache-only reader: ThesisBuilder keeps the market_data cache warm; the executor's
+    # live executable quotes come from its own broker gateway, not from here.
+    service, _gateway = build_market_data_service(
+        MarketDataSettings.from_env(), with_providers=False
     )
-    return MarketDataService(
-        storage=PostgresMarketDataStorageAdapter(
-            dsn=market_data_settings.postgres_dsn,
-            market_data_schema=market_data_settings.market_data_db_schema,
-            instrument_registry=instrument_registry,
-            api_usage_writer=PostgresSharedApiUsageWriter(
-                dsn=market_data_settings.postgres_dsn,
-                shared_schema=market_data_settings.shared_db_schema,
-            ),
-        ),
-        provider_clients={},
-        quote_max_age_seconds=market_data_settings.quote_max_age_seconds,
-        daily_bar_lookback_days=market_data_settings.daily_bar_lookback_days,
-    )
+    return service
 
 
 def main() -> None:
