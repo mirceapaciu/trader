@@ -160,7 +160,7 @@ def test_shared_instrument_admin_upserts_instruments_and_aliases(monkeypatch) ->
     assert "INSERT INTO shared.t_exchange_listings" in combined_sql
     # ISIN is param[0], display_name param[1], aliases list param[2]
     assert any(params and params[0] == "DE0007030009" and params[1] == "Rheinmetall" for params in cursor.params_history)
-    assert any(params and isinstance(params[2], list) and "Rheinmetall AG" in params[2] for params in cursor.params_history)
+    assert any(params and len(params) > 2 and isinstance(params[2], list) and "rheinmetall ag" in params[2] for params in cursor.params_history)
     assert connection.committed is True
 
 
@@ -190,6 +190,33 @@ def test_shared_instrument_registry_lists_watchlist_records(monkeypatch) -> None
     assert rows[0].display_name == "Apple Inc"
     assert rows[0].aliases == ("apple", "apple inc")
     assert rows[0].has_missing_aliases is False
+
+
+def test_shared_instrument_registry_flags_incomplete_press_aliases(monkeypatch) -> None:
+    cursor = _FakeCursor(
+        rows=[
+            {
+                "ticker": "GOOGL",
+                "exchange_code": "XNAS",
+                "display_name": "Alphabet Inc. Class A Common Stock",
+                "aliases": ["alphabet", "googl"],
+                "is_active": True,
+                "source": "manual",
+            }
+        ]
+    )
+    connection = _FakeConnection(cursor)
+    registry = PostgresSharedInstrumentRegistry(
+        dsn="unused",
+        shared_schema="shared",
+        watchlist_table="t_watchlist_tickers",
+    )
+    monkeypatch.setattr(registry, "_connect", lambda: connection)
+
+    rows = registry.list_watchlist_records(active_only=True)
+
+    assert rows[0].has_missing_aliases is True
+    assert rows[0].missing_aliases == ("google",)
 
 
 def test_shared_instrument_admin_upserts_watchlist_entry_and_cache(monkeypatch) -> None:
@@ -223,6 +250,32 @@ def test_shared_instrument_admin_upserts_watchlist_entry_and_cache(monkeypatch) 
     assert "INSERT INTO shared.t_exchange_listings" in combined_sql
     assert "INSERT INTO shared.t_instrument_lookup_cache" in combined_sql
     assert connection.committed is True
+
+
+def test_shared_instrument_admin_enriches_watchlist_aliases_on_write(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    admin = PostgresSharedInstrumentAdmin(
+        dsn="unused",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(admin, "_connect", lambda: connection)
+
+    admin.upsert_watchlist_entry(
+        SharedWatchlistEntryInput(
+            ticker="GOOGL",
+            exchange_code="XNAS",
+            display_name="Alphabet Inc. Class A Common Stock",
+            aliases=("alphabet",),
+        )
+    )
+
+    assert any(
+        isinstance(param, list) and "google" in param and "alphabet" in param
+        for params in cursor.params_history
+        if params
+        for param in params
+    )
 
 
 def test_shared_instrument_admin_deactivates_watchlist_entry(monkeypatch) -> None:

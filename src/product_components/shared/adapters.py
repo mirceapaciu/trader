@@ -9,6 +9,12 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from src.product_components.shared.instrument_aliases import (
+    build_instrument_aliases,
+    has_missing_instrument_aliases,
+    missing_instrument_aliases,
+)
+
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -41,7 +47,19 @@ class SharedWatchlistRecord:
 
     @property
     def has_missing_aliases(self) -> bool:
-        return len(self.aliases) == 0
+        return has_missing_instrument_aliases(
+            ticker=self.ticker,
+            display_name=self.display_name,
+            aliases=self.aliases,
+        )
+
+    @property
+    def missing_aliases(self) -> tuple[str, ...]:
+        return missing_instrument_aliases(
+            ticker=self.ticker,
+            display_name=self.display_name,
+            aliases=self.aliases,
+        )
 
 
 @dataclass(frozen=True)
@@ -167,11 +185,16 @@ class PostgresSharedInstrumentAdmin:
             conn.commit()
 
     def upsert_watchlist_entry(self, entry: SharedWatchlistEntryInput, *, replace_aliases: bool = True) -> None:  # noqa: ARG002
+        aliases = build_instrument_aliases(
+            ticker=entry.ticker,
+            display_name=entry.display_name,
+            aliases=tuple(alias.strip() for alias in entry.aliases if alias.strip()),
+        )
         normalized = SharedInstrumentSeed(
             ticker=entry.ticker.strip().upper(),
             exchange_code=entry.exchange_code.strip().upper(),
             display_name=entry.display_name.strip() or entry.ticker.strip().upper(),
-            aliases=tuple(alias.strip() for alias in entry.aliases if alias.strip()),
+            aliases=aliases,
             identifiers=dict(entry.identifiers),
             enabled=entry.enabled,
         )
@@ -304,7 +327,13 @@ class PostgresSharedInstrumentAdmin:
             return
         with self._connect() as conn, conn.cursor() as cur:
             for seed in seeds:
-                aliases = sorted({a.strip() for a in seed.aliases if a and a.strip()})
+                aliases = list(
+                    build_instrument_aliases(
+                        ticker=seed.ticker,
+                        display_name=seed.display_name,
+                        aliases=seed.aliases,
+                    )
+                )
                 cur.execute(
                     f"SELECT el.id, el.instrument_id "
                     f"FROM {self._shared_schema}.t_exchange_listings el "
@@ -346,7 +375,13 @@ class PostgresSharedInstrumentAdmin:
         identifiers = dict(instrument.identifiers)
         isin = instrument.isin or identifiers.pop("isin", None) or None
 
-        aliases = sorted({a.strip() for a in instrument.aliases if a and a.strip()})
+        aliases = list(
+            build_instrument_aliases(
+                ticker=instrument.ticker,
+                display_name=instrument.display_name,
+                aliases=instrument.aliases,
+            )
+        )
 
         # Step 1: upsert into t_instruments (security-level dedup by ISIN when available).
         if isin:

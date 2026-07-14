@@ -296,6 +296,32 @@ def test_resolve_instruments_matches_named_company() -> None:
     assert [i.ticker for i in instruments] == ["MU"]
 
 
+def test_resolve_instruments_matches_google_press_name_alias() -> None:
+    now = datetime.now(timezone.utc)
+    article = NewsArticle(
+        id="goog-1",
+        source="rss",
+        headline="Google loses final E.U. appeal over Android fine",
+        summary="Alphabet shares fell after the ruling.",
+        url="https://example.com/google",
+        tickers=[],
+        published_at=now,
+        fetched_at=now,
+    )
+    instruments = _resolve_instruments(
+        article=article,
+        active_instruments=[
+            SharedInstrumentRecord(
+                ticker="GOOGL",
+                exchange_code="XNAS",
+                aliases=("alphabet", "google", "googl"),
+            )
+        ],
+    )
+
+    assert [i.ticker for i in instruments] == ["GOOGL"]
+
+
 def test_resolve_instruments_does_not_match_alias_only_in_url() -> None:
     now = datetime.now(timezone.utc)
     article = NewsArticle(

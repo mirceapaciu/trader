@@ -221,7 +221,7 @@ export function WatchlistTab() {
                 </div>
                 {item.has_missing_aliases ? (
                   <div className="warning-row">
-                    <span className="warning-text">This ticker has no aliases and may miss company-name matches in news.</span>
+                    <span className="warning-text">This ticker is missing one or more press-name aliases and may miss company-name matches in news.</span>
                     <button
                       type="button"
                       className="secondary-button"

@@ -367,6 +367,31 @@ def test_alpha_vantage_provider_returns_us_stock() -> None:
     assert results[0].ticker == "NVO"
     assert results[0].exchange_code == "XNYS"
     assert results[0].display_name == "Novo-Nordisk A/S"
+    assert "novo nordisk" in results[0].aliases
+    assert "novo-nordisk" in results[0].aliases
+
+
+def test_massive_provider_adds_curated_google_alias() -> None:
+    provider = MassiveInstrumentLookupProvider(api_key="test-key")
+    response = Mock()
+    response.json.return_value = {
+        "results": [
+            {
+                "ticker": "GOOGL",
+                "primary_exchange": "XNAS",
+                "name": "Alphabet Inc. Class A Common Stock",
+                "type": "CS",
+            }
+        ]
+    }
+    response.raise_for_status.return_value = None
+
+    with patch("src.product_components.shared.instrument_lookup.requests.get", return_value=response):
+        results = provider.search("Google")
+
+    assert len(results) == 1
+    assert "alphabet" in results[0].aliases
+    assert "google" in results[0].aliases
 
 
 def test_massive_provider_returns_foreign_stock_listed_as_depositary_shares() -> None:

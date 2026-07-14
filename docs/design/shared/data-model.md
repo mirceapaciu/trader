@@ -104,6 +104,7 @@ Logical fields:
 - `ticker`: application ticker symbol.
 - `exchange_code`: market/exchange identifier.
 - `display_name`: optional human-readable instrument name.
+- `aliases`: reusable press-name and ticker-match terms used for text attribution.
 - `identifiers`: optional JSON identifiers such as ISIN.
 - `is_enabled`: controls whether the instrument metadata is active.
 - `created_at`: creation timestamp.
@@ -111,30 +112,11 @@ Logical fields:
 
 Behavioral constraints:
 - Composite uniqueness on (`ticker`, `exchange_code`).
+- `aliases` is the authoritative shared alias store; `t_instrument_aliases` is retired and must
+  not be used as a second source of truth.
+- Stored aliases must include derived press-style short names and common punctuation variants
+  needed for text attribution (for example `novo-nordisk` and `novo nordisk`).
 - Provider-specific symbols do not belong here.
-
-### `t_instrument_aliases`
-
-Purpose:
-- Reusable text terms for attributing unstructured news to instruments.
-
-Contract ownership:
-- Owner: shared Instrument Registry contract.
-- Writers: operator/admin workflow and seed/migration tooling.
-- Readers: NewsFetcher and ThesisBuilder through the Instrument Registry API or documented shared adapter.
-- Direct SQL from unrelated product repositories is not permitted.
-
-Logical fields:
-- `ticker`: application ticker symbol.
-- `exchange_code`: market/exchange identifier.
-- `alias`: text term such as `Rheinmetall`, `RHM`, or an ISIN.
-- `alias_type`: `alias`, `name`, or `identifier`.
-- `created_at`: creation timestamp.
-- `updated_at`: update timestamp.
-
-Behavioral constraints:
-- Aliases are source-agnostic.
-- RSS provider-specific symbols remain in `news_fetcher.t_rss_symbol_rules`.
 
 ### `t_instrument_lookup_cache`
 
@@ -156,7 +138,7 @@ Logical fields:
 - `expires_at`: timestamp after which the cached payload must be considered stale.
 
 Behavioral constraints:
-- Canonical watchlist and alias state remain in `t_watchlist_tickers`, `t_instruments`, and `t_instrument_aliases`.
+- Canonical watchlist and alias state remain in `t_watchlist_tickers` and `t_instruments`.
 - Stale cache rows may be refreshed or ignored; they must not silently override canonical data.
 
 ## Notes
