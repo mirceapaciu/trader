@@ -95,6 +95,8 @@ When a candidate strategy requires market context, ThesisBuilder calls `get_mark
 
 Whenever market context affects strategy selection, confidence, or risk-box construction, ThesisBuilder persists a JSON copy of the returned snapshot on the analysis or thesis card that used it. Audit must not depend on rereading the latest MarketData cache because MarketData may refresh the context later.
 
+ThesisBuilder also requests optional company fundamentals through the MarketData API (`get_fundamentals(...)`) and includes a small fundamentals block — market cap, shares outstanding, trailing-twelve-month revenue, and next earnings date — in the analysis prompt so the LLM can judge the materiality of an event relative to company scale (for example, a fixed-dollar contract is transformative for a small company and noise for a large one). Fundamentals are advisory prompt context only: they must never block analysis. When unavailable (no provider coverage, provider failure, or the feature disabled), the block is null and analysis proceeds unchanged. The exact fundamentals values shown to the model are persisted on the analysis row for audit, and only stable value fields (no provider/fetch timestamps) enter the prompt so that live and regeneration prompts stay byte-identical for the same underlying data.
+
 Market context may include:
 - Current price.
 - Previous close.
@@ -140,9 +142,15 @@ Required fields:
 Optional fields:
 - `event_type`
 - `price_impact_magnitude`
+- `impact_horizon`
 - `evidence_bullet_candidates`
 
-Allowed `candidate_strategy` values are `event_driven`, `sentiment_momentum`, `sector_rotation`, `contrarian_reversal`, and `trend_follow`. Allowed `direction` values are `buy`, `sell`, and `hold`. Invalid enum values, malformed confidence, missing required fields, or instrument mismatch must be persisted as a rejected analysis outcome and must not create an executable thesis card.
+Allowed `candidate_strategy` values are `event_driven`, `sentiment_momentum`, `sector_rotation`, `contrarian_reversal`, and `trend_follow`. Allowed `direction` values are `buy`, `sell`, and `hold`. Invalid enum values, malformed confidence, missing required fields, or instrument mismatch must be persisted as a rejected analysis outcome and must not create an executable thesis card. Unrecognized `price_impact_magnitude` or `impact_horizon` values degrade to null (they never fail the whole analysis), which keeps historical/cached responses that predate a field parseable.
+
+Impact-quantification fields (observe-only):
+- `price_impact_magnitude` (`low`, `medium`, `high`) estimates the expected direction-aligned price move for the analyzed instrument, anchored to the instrument's own volatility rather than an absolute percentage: `low` is below 0.5x `atr_20d`, `medium` is 0.5x-1.5x, and `high` is above 1.5x. The prompt supplies this rubric together with the market-context `atr_20d` and, when available, the fundamentals block (see §3.2) so the model can weigh the event's dollar scale against company size.
+- `impact_horizon` (`intraday`, `1d`, `5d`) is the window over which most of that move is expected to be realized.
+- These fields are quantified but not yet acted upon: they do not affect gates, card expiry, risk boxes, or the published signal. Their empirical value is measured offline by the Backtester impact-calibration report (`docs/design/product_components/backtester/behavior.md` §7) before any gating or bracket use is considered.
 
 ## 4. Evidence Aggregation
 

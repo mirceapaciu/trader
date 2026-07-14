@@ -198,6 +198,10 @@ Behavioral constraints:
 - Backtester confidence-calibration reports consume `confidence` from this table joined to closed
   rows in `t_backtest_trades`; no separate calibration table is required for the first measurement
   slice.
+- The Backtester impact-calibration report requires no Backtester-owned table at all: it reads
+  analyses through the ThesisBuilder analysis-history export contract and daily bars through the
+  MarketData historical-bars API, computing realized-move statistics in memory. Nothing is persisted
+  in the `backtester` schema for that report.
 
 ## Write Semantics
 

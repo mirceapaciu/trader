@@ -35,6 +35,13 @@ IBKR_MARKET_DATA_CLIENT_ID=2
 
 # Free or low-cost historical backfill
 ALPHA_VANTAGE_API_KEY=
+
+# Company fundamentals (optional, advisory prompt context)
+# Reuses the NewsFetcher Finnhub key. When disabled or unset, fundamentals are cache-only/null and
+# consumers proceed without them.
+FINNHUB_API_KEY=
+MARKET_DATA_FUNDAMENTALS_ENABLED=true
+MARKET_DATA_FUNDAMENTALS_REFRESH_HOURS=24
 ```
 
 ## Shared Dependencies

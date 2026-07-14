@@ -93,12 +93,14 @@ Logical fields:
 - `strategy`: candidate thesis strategy from the validated LLM output or deterministic policy.
 - `direction`: candidate direction (`buy`, `sell`, or `hold`).
 - `event_type`: optional event classification used by event-driven analysis.
-- `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`).
+- `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`), anchored to the instrument's `atr_20d` (see behavior spec §3.3). Observe-only; not yet consumed by gates.
+- `impact_horizon`: optional window over which the estimated impact is expected to be realized (`intraday`, `1d`, or `5d`). Observe-only.
 - `reasoning`: optional explanatory reasoning text.
 - `confidence`: confidence score.
 - `market_context_status`: optional status returned by the MarketData component API (`fresh`, `delayed`, `stale`, or `missing`).
 - `market_context_as_of`: optional timestamp of the copied market context snapshot.
 - `market_context_snapshot`: optional JSON copy of the MarketData context used for scoring or strategy validation.
+- `fundamentals_snapshot`: optional JSON copy of the company fundamentals (market cap, shares outstanding, TTM revenue, next earnings date) shown to the LLM for this analysis, copied from the MarketData `get_fundamentals` response for audit; null when fundamentals were unavailable.
 - `is_market_moving`: deterministic/LLM-derived flag indicating that the article was considered market moving for this instrument.
 - `validation_status`: deterministic output validation result (`valid` or `rejected`).
 - `validation_errors`: optional machine-readable validation failures.
@@ -163,6 +165,30 @@ Behavioral constraints:
 - A window becomes `satisfied` as soon as it can produce a valid thesis card under `docs/design/shared/product-constraint.md`.
 - The collection span is rolling: evidence older than the configured span relative to the latest analysis ages out of the window individually; the window itself never expires and keeps collecting.
 - Window rows are operational state, not executable trading inputs.
+
+## Analysis-History Export Contract (Consumed by Backtester)
+
+ThesisBuilder owns a second read-only export, `ThesisAnalysisHistoryExporter`, so offline consumers
+can study per-analysis records without querying ThesisBuilder-owned tables directly. This is the
+analysis analogue of the card-history export below and exists specifically so the Backtester
+impact-calibration report never reaches into the `thesis_builder` schema.
+
+Selection:
+- A time window over analysis `analyzed_at`.
+- Restricted to analyses with a `buy`/`sell` `direction` and a non-null `price_impact_magnitude`
+  (the population the calibration study measures), with optional `event_type`, magnitude, and
+  `validation_status='valid'` filters. Rejected analyses are included by default so the study is not
+  biased toward only the analyses that became cards.
+
+Per exported analysis, the contract returns `analysis_id`, `ticker`, `exchange_code`, `direction`,
+`event_type`, `price_impact_magnitude`, `impact_horizon`, `validation_status`, the article
+`published_at` (from the retained article snapshot), and the `atr_20d` the realized move is
+normalized against (from the retained market-context snapshot).
+
+Constraints:
+- Read-only; must not expose mutation of ThesisBuilder state.
+- The `thesis_schema` argument may target the production schema or a regeneration `sim_bt_<run_id>`
+  copy, so the same report runs over live analyses or a regenerated funnel.
 
 ## Card-History Export Contract (Consumed by Backtester)
 

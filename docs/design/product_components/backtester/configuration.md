@@ -106,6 +106,12 @@ BACKTESTER_LOG_LEVEL=INFO
   CLI arguments such as `--run-id`, `--entry-timing-scenario`, `--bucket-edges`, and
   `--format json`. The default bucket edges are `0,0.6,0.7,0.75,0.8,0.85,0.9,1` so the report
   exposes the currently observed 0.78-0.85 confidence cluster.
+- Impact calibration is likewise an operator report, not an environment setting. Run it with
+  `uv run python -m src.product_components.backtester.impact_calibration_report` and optional
+  arguments such as `--analysis-schema` (default `thesis_builder`; may be a `sim_bt_<run_id>` schema),
+  `--since` / `--until`, `--event-type`, `--magnitude`, `--valid-only`, `--min-sample-size`,
+  `--benchmark-ticker` (optional excess-vs-benchmark mode), and `--format json`. By default it reads
+  the cache only; pass `--refresh-bars` to allow on-demand daily-bar backfill through MarketData.
 
 ## Shared Dependencies
 

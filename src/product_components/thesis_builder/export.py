@@ -19,6 +19,20 @@ class ExportedEvidenceArticle:
 
 
 @dataclass(frozen=True)
+class ExportedAnalysis:
+    analysis_id: int
+    ticker: str
+    exchange_code: str
+    direction: str | None
+    event_type: str | None
+    price_impact_magnitude: str | None
+    impact_horizon: str | None
+    published_at: datetime | None
+    atr_20d: float | None
+    validation_status: str
+
+
+@dataclass(frozen=True)
 class ExportedThesisCard:
     id: str
     ticker: str
@@ -102,6 +116,87 @@ class ThesisCardHistoryExporter:
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)
+
+
+class ThesisAnalysisHistoryExporter:
+    """Read-only analysis-history export contract consumed by the Backtester.
+
+    Analogous to ``ThesisCardHistoryExporter`` but exposes per-analysis rows
+    (including rejected ones) with the fields needed for offline calibration:
+    predicted impact, direction, event type, and the point-in-time ATR the move
+    is measured against. Keeping this on the ThesisBuilder side means offline
+    consumers never query ``thesis_builder``-owned tables directly. ``thesis_schema``
+    may point at the production schema or a regeneration ``sim_bt_<run_id>`` copy.
+    """
+
+    def __init__(self, *, dsn: str, thesis_schema: str = "thesis_builder") -> None:
+        self._dsn = dsn
+        self._thesis_schema = _safe_identifier(thesis_schema)
+
+    def export_analyses(
+        self,
+        *,
+        window_start_at: datetime,
+        window_end_at: datetime,
+        event_type: str | None = None,
+        price_impact_magnitude: str | None = None,
+        valid_only: bool = False,
+    ) -> list[ExportedAnalysis]:
+        params: list[Any] = [_to_utc(window_start_at), _to_utc(window_end_at)]
+        filters = ""
+        if event_type is not None:
+            filters += "AND event_type = %s "
+            params.append(event_type)
+        if price_impact_magnitude is not None:
+            filters += "AND price_impact_magnitude = %s "
+            params.append(price_impact_magnitude)
+        if valid_only:
+            filters += "AND validation_status = 'valid' "
+        sql = (
+            f"SELECT id, ticker, exchange_code, direction, event_type, "
+            f"price_impact_magnitude, impact_horizon, validation_status, "
+            f"article_snapshot, market_context_snapshot "
+            f"FROM {self._thesis_schema}.t_news_analyses "
+            f"WHERE analyzed_at >= %s AND analyzed_at < %s "
+            f"AND direction IN ('buy', 'sell') "
+            f"AND price_impact_magnitude IS NOT NULL "
+            f"{filters}"
+            f"ORDER BY ticker, exchange_code, analyzed_at, id"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        return [build_exported_analysis(row) for row in rows]
+
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self._dsn, autocommit=False)
+
+
+def build_exported_analysis(row: dict[str, Any]) -> ExportedAnalysis:
+    snapshot = dict(row.get("article_snapshot") or {})
+    context = dict(row.get("market_context_snapshot") or {})
+    return ExportedAnalysis(
+        analysis_id=int(row["id"]),
+        ticker=str(row["ticker"]),
+        exchange_code=str(row["exchange_code"]),
+        direction=row["direction"],
+        event_type=row["event_type"],
+        price_impact_magnitude=row["price_impact_magnitude"],
+        impact_horizon=row["impact_horizon"],
+        published_at=_snapshot_timestamp(snapshot, "published_at"),
+        atr_20d=_snapshot_float(context, "atr_20d"),
+        validation_status=str(row["validation_status"]),
+    )
+
+
+def _snapshot_float(snapshot: dict[str, Any], key: str) -> float | None:
+    value = snapshot.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _collect_evidence_article_ids(card_rows: list[dict[str, Any]]) -> list[str]:

@@ -283,6 +283,19 @@ hit rate, P&L, return, profit-factor, and exit-reason metrics per bucket. Bucket
 trades are explicitly marked as insufficient sample; confidence gates must not be recalibrated from
 descriptive bucket output until the holdout sample is large enough for the decision being made.
 
+The Backtester additionally owns a repeatable impact-calibration report that measures whether the
+ThesisBuilder `price_impact_magnitude` label has predictive value. It reads analyses through the
+ThesisBuilder analysis-history export contract (not by querying the `thesis_builder` schema; see §9),
+computes each analysis's realized direction-aligned move in `atr_20d` units at 1- and 5-session
+horizons from daily bars obtained through the MarketData historical-bars API, and buckets those
+realized moves by predicted magnitude, by event-type-and-magnitude, and by magnitude-and-predicted-
+horizon. It is an article-level (not trade-level) study on purpose: measuring every analysis carrying
+a magnitude — including rejected ones — avoids the survivorship bias of looking only at analyses that
+became cards, needs no simulated trades, costs no LLM tokens on production data, and yields a far
+larger sample. Buckets below the sample threshold are marked insufficient, and the report states
+whether median realized move increases monotonically low -> medium -> high. Magnitude must not be
+wired into gates, brackets, or expiry until this report shows the label discriminates.
+
 Additional required breakdowns:
 
 - By card status: `approved`, `rejected`, and `stale_evidence`, plus the `card_was_live_expired`
@@ -362,6 +375,14 @@ Producer components and required read contracts:
   (Section 3.4). The Backtester must not query `thesis_builder`-owned tables directly. This contract
   is the card analogue of the NewsFetcher evaluation dataset export consumed by the Filter Quality
   Evaluator.
+- ThesisBuilder must also expose an analysis-history export contract returning per-analysis rows
+  (predicted magnitude, impact horizon, direction, event type, article `published_at`, and the
+  point-in-time `atr_20d`) for the impact-calibration report. The report consumes this contract rather
+  than reading `thesis_builder.t_news_analyses` directly — the same no-direct-query rule as the card
+  export, and it applies to offline report/CLI tools as much as to services. The export's schema
+  argument may target the production schema or a regeneration `sim_bt_<run_id>` copy. A boundary test
+  (`tests/product_components/backtester/test_boundary.py`) statically asserts the Backtester source
+  contains no `FROM <foreign_schema>.t_` SQL, so a copied-template violation fails loudly.
 - MarketData must expose a historical-bars read API,
   `get_historical_bars(ticker, exchange_code, interval, start, end)`, returning normalized OHLCV
   bars at the requested interval. The Backtester requires at least 1-minute resolution and relies on

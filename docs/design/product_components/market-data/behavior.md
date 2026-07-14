@@ -118,6 +118,35 @@ Historical bars are a permanent, reusable store, not a request cache:
   re-querying providers. The rolling quote and derived-context cache semantics in Sections 3 and 4
   are unchanged; durability applies to the bar store.
 
+### 4.3 Fundamentals read API
+
+MarketData also exposes optional slow-moving company fundamentals so consumers can judge the scale
+of a news event relative to company size:
+
+```python
+get_fundamentals(ticker: str, exchange_code: str, refresh_if_stale: bool = True) -> InstrumentFundamentals | None
+get_fundamentals_as_of(ticker: str, exchange_code: str, as_of: datetime) -> InstrumentFundamentals | None
+```
+
+API behavior:
+- Returns market cap, shares outstanding, trailing-twelve-month revenue, and next earnings date for
+  the canonical instrument identity, sourced from Finnhub (`stock/profile2`, `stock/metric`,
+  `calendar/earnings`).
+- Fundamentals are slow-moving, so they are refreshed at most once per
+  `MARKET_DATA_FUNDAMENTALS_REFRESH_HOURS` (default 24) and stored point-in-time: a new row is written
+  only when a value changes; unchanged refreshes advance a `last_checked_at` marker. This keeps prompt
+  inputs stable across days and lets regeneration reconstruct exactly what was known at a past time.
+- `get_fundamentals` returns the freshest usable row, refreshing from the provider when stale; any
+  provider failure falls back to the last cached row (or `None`) and is recorded as a failed fetch
+  run — it never raises to the caller, because fundamentals are advisory context and must not block a
+  consumer pipeline. `get_fundamentals_as_of` is a pure cache read used by the Backtester regeneration
+  path to select the row visible at a historical analysis time (no look-ahead, no provider calls).
+- When the feature is disabled (`MARKET_DATA_FUNDAMENTALS_ENABLED=false`) or no API key is configured,
+  the service is cache-only and returns whatever is stored (typically `None`).
+- Provider pacing, failure classification, fetch-run records, and shared API usage accounting apply as
+  for the rest of MarketData; each fundamentals endpoint call is recorded through the shared usage
+  contract.
+
 ## 5. Failure Handling
 
 MarketData must degrade by preserving existing cache rows and writing failed fetch-run records. Provider failures must not cause ThesisBuilder or TradeExecutor to fetch providers directly.

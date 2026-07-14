@@ -95,6 +95,32 @@ Behavioral constraints:
 - Consumers must evaluate source freshness before using a context snapshot.
 - ThesisBuilder must fail closed for strategies that require market context when the snapshot is stale or missing.
 
+### `t_instrument_fundamentals`
+
+Purpose:
+- Point-in-time cache of slow-moving company fundamentals used to judge the scale of a news event
+  relative to company size. Served through the `get_fundamentals` / `get_fundamentals_as_of` API.
+
+Logical fields:
+- `id`: primary key.
+- `ticker`, `exchange_code`: canonical instrument identity.
+- `provider`: source identifier (initially `finnhub`).
+- `market_cap_usd`, `shares_outstanding`, `revenue_ttm_usd`: normalized company scale figures in USD/shares.
+- `next_earnings_date`: next scheduled earnings date when known.
+- `payload_json`: raw provider responses retained for audit and re-derivation.
+- `fetched_at`: when this set of values was first observed.
+- `last_checked_at`: most recent refresh that confirmed these values unchanged.
+- `created_at`: row creation timestamp.
+
+Behavioral constraints:
+- Append-only with change detection: a new row is inserted only when a prompt-visible value
+  (market cap, shares, revenue, or next earnings date) differs from the latest stored row; an
+  unchanged refresh only advances `last_checked_at`. A row's validity window is therefore
+  `[fetched_at, next row's fetched_at)`, which is what `get_fundamentals_as_of` selects against for
+  look-ahead-free regeneration.
+- Fundamentals are advisory consumer context; missing coverage yields `None` rather than an error.
+- Served only through the MarketData API; consumers must not read this table directly.
+
 ### `t_market_data_fetch_runs`
 
 Purpose:

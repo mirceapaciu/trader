@@ -1,9 +1,12 @@
 """CLI: article-level impact calibration event study.
 
-Loads analyses carrying a price_impact_magnitude from a thesis schema (production
-``thesis_builder`` or a regeneration ``sim_bt_<run_id>`` schema), computes each
-analysis's realized direction-aligned move in ATR_20d units from cached daily
-bars, and prints predicted-vs-realized calibration tables.
+Loads analyses carrying a price_impact_magnitude through the ThesisBuilder-owned
+analysis-export contract (``ThesisAnalysisHistoryExporter``; production
+``thesis_builder`` schema or a regeneration ``sim_bt_<run_id>`` copy), computes
+each analysis's realized direction-aligned move in ATR_20d units from cached
+daily bars via the MarketData historical-bars API, and prints predicted-vs-
+realized calibration tables. Both data sources are owning-component contracts, so
+this CLI never queries another component's tables directly.
 
     uv run python -m src.product_components.backtester.impact_calibration_report \
         --analysis-schema thesis_builder --since 2026-07-14
@@ -13,17 +16,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-
-import psycopg
-from psycopg.rows import dict_row
 
 from src.product_components.market_data.factory import build_market_data_service
 from src.product_components.market_data.settings import MarketDataSettings
 from src.product_components.news_fetcher.env_loader import load_env_files
+from src.product_components.thesis_builder.export import (
+    ExportedAnalysis,
+    ThesisAnalysisHistoryExporter,
+)
 
 from .impact_calibration import (
     DailyBar,
@@ -35,13 +37,13 @@ from .impact_calibration import (
 )
 from .settings import BacktesterSettings
 
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 # Bars fetched around each instrument's article window: enough history before the
 # earliest article for the ATR fallback, enough after the latest for the 5-session
 # horizon.
 _BARS_LOOKBACK_DAYS = 60
 _BARS_LOOKAHEAD_DAYS = 10
+# Window floor when --since is omitted; the exporter requires an explicit range.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def main() -> None:
@@ -59,16 +61,23 @@ def main() -> None:
     args = _parse_args()
     settings = BacktesterSettings.from_env()
 
-    rows = _load_analyses(
-        dsn=settings.postgres_dsn,
-        schema=args.analysis_schema,
-        since=args.since,
-        until=args.until,
+    # Read through the ThesisBuilder-owned analysis-export contract rather than
+    # querying t_news_analyses directly, honoring the component boundary. The
+    # schema may be production thesis_builder or a regeneration sim_bt_<run_id>.
+    exporter = ThesisAnalysisHistoryExporter(
+        dsn=settings.postgres_dsn, thesis_schema=args.analysis_schema
+    )
+    # Rejected analyses are included by default on purpose: restricting the study
+    # to analyses that survived the gates would reintroduce survivorship bias.
+    analyses = exporter.export_analyses(
+        window_start_at=args.since or _EPOCH,
+        window_end_at=args.until or datetime.now(timezone.utc),
         event_type=args.event_type,
-        magnitude=args.magnitude,
+        price_impact_magnitude=args.magnitude,
         valid_only=args.valid_only,
     )
-    if not rows:
+    analyses = [a for a in analyses if a.published_at is not None]
+    if not analyses:
         print("No analyses with a price_impact_magnitude matched the filters.")
         return
 
@@ -77,7 +86,7 @@ def main() -> None:
     )
     try:
         observations = _build_observations(
-            rows,
+            analyses,
             market_data_service=market_data_service,
             benchmark_ticker=args.benchmark_ticker,
             benchmark_exchange_code=args.benchmark_exchange_code,
@@ -95,74 +104,22 @@ def main() -> None:
         print(format_impact_calibration_markdown(report))
 
 
-def _load_analyses(
-    *,
-    dsn: str,
-    schema: str,
-    since: datetime | None,
-    until: datetime | None,
-    event_type: str | None,
-    magnitude: str | None,
-    valid_only: bool,
-) -> list[dict[str, Any]]:
-    safe_schema = _safe_identifier(schema)
-    # Rejected analyses are included by default on purpose: restricting the study
-    # to analyses that survived the gates would reintroduce survivorship bias.
-    where = [
-        "direction IN ('buy', 'sell')",
-        "price_impact_magnitude IS NOT NULL",
-        "article_snapshot ->> 'published_at' IS NOT NULL",
-    ]
-    params: list[Any] = []
-    if since is not None:
-        where.append("analyzed_at >= %s")
-        params.append(since)
-    if until is not None:
-        where.append("analyzed_at < %s")
-        params.append(until)
-    if event_type:
-        where.append("event_type = %s")
-        params.append(event_type)
-    if magnitude:
-        where.append("price_impact_magnitude = %s")
-        params.append(magnitude)
-    if valid_only:
-        where.append("validation_status = 'valid'")
-
-    sql = (
-        "SELECT id, ticker, exchange_code, direction, event_type, "
-        "price_impact_magnitude, impact_horizon, "
-        "article_snapshot ->> 'published_at' AS published_at, "
-        "(market_context_snapshot ->> 'atr_20d')::float AS atr_20d "
-        f"FROM {safe_schema}.t_news_analyses "
-        f"WHERE {' AND '.join(where)} "
-        "ORDER BY ticker, exchange_code, analyzed_at"
-    )
-    with psycopg.connect(dsn, row_factory=dict_row) as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        return cur.fetchall()
-
-
 def _build_observations(
-    rows: list[dict[str, Any]],
+    analyses: list[ExportedAnalysis],
     *,
     market_data_service,
     benchmark_ticker: str | None,
     benchmark_exchange_code: str,
 ) -> list[ImpactObservation]:
-    by_instrument: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for row in rows:
-        published_at = _parse_published_at(row["published_at"])
-        if published_at is None:
-            continue
-        row["_published_at"] = published_at
-        key = (str(row["ticker"]), str(row["exchange_code"]))
-        by_instrument.setdefault(key, []).append(row)
+    by_instrument: dict[tuple[str, str], list[ExportedAnalysis]] = {}
+    for analysis in analyses:
+        key = (analysis.ticker, analysis.exchange_code)
+        by_instrument.setdefault(key, []).append(analysis)
 
     observations: list[ImpactObservation] = []
     benchmark_cache: dict[tuple[datetime, datetime], list[DailyBar]] = {}
     for (ticker, exchange_code), instrument_rows in sorted(by_instrument.items()):
-        published_times = [row["_published_at"] for row in instrument_rows]
+        published_times = [a.published_at for a in instrument_rows]
         start = min(published_times) - timedelta(days=_BARS_LOOKBACK_DAYS)
         end = max(published_times) + timedelta(days=_BARS_LOOKAHEAD_DAYS)
         bars = _daily_bars(
@@ -181,9 +138,9 @@ def _build_observations(
                 )
             benchmark_bars = benchmark_cache[window]
 
-        for row in instrument_rows:
-            published_at = row["_published_at"]
-            atr_20d = row["atr_20d"]
+        for analysis in instrument_rows:
+            published_at = analysis.published_at
+            atr_20d = analysis.atr_20d
             if atr_20d is None or atr_20d <= 0:
                 atr_20d = atr_20d_from_bars(bars, before=published_at)
             moves: dict[int, float | None] = {}
@@ -192,19 +149,19 @@ def _build_observations(
                     bars,
                     published_at=published_at,
                     atr_20d=atr_20d,
-                    direction=str(row["direction"]),
+                    direction=str(analysis.direction),
                     benchmark_bars=benchmark_bars,
                 )
             observations.append(
                 ImpactObservation(
-                    analysis_id=int(row["id"]),
+                    analysis_id=analysis.analysis_id,
                     ticker=ticker,
                     exchange_code=exchange_code,
                     published_at=published_at,
-                    direction=str(row["direction"]),
-                    event_type=row["event_type"],
-                    magnitude=str(row["price_impact_magnitude"]),
-                    impact_horizon=row["impact_horizon"],
+                    direction=str(analysis.direction),
+                    event_type=analysis.event_type,
+                    magnitude=str(analysis.price_impact_magnitude),
+                    impact_horizon=analysis.impact_horizon,
                     atr_20d=atr_20d,
                     moves_atr=moves,
                 )
@@ -231,16 +188,6 @@ def _daily_bars(
         )
         for bar in bars
     ]
-
-
-def _parse_published_at(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return _to_utc(parsed)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -280,12 +227,6 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
-
-
-def _safe_identifier(value: str) -> str:
-    if not _IDENTIFIER.match(value):
-        raise ValueError(f"Unsafe SQL identifier: {value!r}")
-    return value
 
 
 def _repo_root() -> Path:

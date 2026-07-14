@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.product_components.thesis_builder.export import (
+    ExportedAnalysis,
     ExportedThesisCard,
+    build_exported_analysis,
     build_exported_card,
 )
 
@@ -111,3 +113,54 @@ def test_evidence_entry_with_missing_timing_is_skipped() -> None:
 
     assert [item.article_id for item in card.evidence] == ["a1"]
     assert card.news_ready_at == datetime(2026, 6, 15, 10, 0, tzinfo=timezone.utc)
+
+
+def _analysis_row(**overrides):
+    row = {
+        "id": 42,
+        "ticker": "AAPL",
+        "exchange_code": "XNAS",
+        "direction": "buy",
+        "event_type": "guidance",
+        "price_impact_magnitude": "high",
+        "impact_horizon": "1d",
+        "validation_status": "valid",
+        "article_snapshot": {"published_at": "2026-06-15T10:00:00+00:00"},
+        "market_context_snapshot": {"atr_20d": 2.5, "return_1d": 0.01},
+    }
+    row.update(overrides)
+    return row
+
+
+def test_build_exported_analysis_maps_fields_and_parses_json() -> None:
+    analysis = build_exported_analysis(_analysis_row())
+
+    assert isinstance(analysis, ExportedAnalysis)
+    assert analysis.analysis_id == 42
+    assert analysis.ticker == "AAPL"
+    assert analysis.direction == "buy"
+    assert analysis.event_type == "guidance"
+    assert analysis.price_impact_magnitude == "high"
+    assert analysis.impact_horizon == "1d"
+    assert analysis.validation_status == "valid"
+    # published_at is pulled from the article snapshot; atr_20d from the context snapshot.
+    assert analysis.published_at == datetime(2026, 6, 15, 10, 0, tzinfo=timezone.utc)
+    assert analysis.atr_20d == 2.5
+
+
+def test_build_exported_analysis_tolerates_missing_snapshots() -> None:
+    analysis = build_exported_analysis(
+        _analysis_row(article_snapshot=None, market_context_snapshot=None, impact_horizon=None)
+    )
+
+    assert analysis.published_at is None
+    assert analysis.atr_20d is None
+    assert analysis.impact_horizon is None
+
+
+def test_build_exported_analysis_tolerates_non_numeric_atr() -> None:
+    analysis = build_exported_analysis(
+        _analysis_row(market_context_snapshot={"atr_20d": "n/a"})
+    )
+
+    assert analysis.atr_20d is None
