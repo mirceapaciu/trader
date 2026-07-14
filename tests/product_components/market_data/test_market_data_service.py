@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from src.product_components.market_data.models import (
     ContextSourceStatus,
     FetchRun,
     Instrument,
+    InstrumentFundamentals,
     MarketBar,
     MarketContextSnapshot,
     MarketDataProvider,
@@ -399,6 +401,161 @@ def test_refresh_synthesizes_provider_mappings_when_none_exist() -> None:
     assert any(s.provider is MarketDataProvider.IBKR for s in storage.provider_symbols)
     assert storage.quote is not None
     assert len(storage.bars) == 60
+
+
+# --- fundamentals -----------------------------------------------------------
+
+
+class _FundamentalsStorage(_FakeStorage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fundamentals_rows: list[InstrumentFundamentals] = []
+        self.as_of_calls: list[datetime] = []
+
+    def load_latest_fundamentals(self, *, ticker: str, exchange_code: str):
+        return self.fundamentals_rows[-1] if self.fundamentals_rows else None
+
+    def load_fundamentals_as_of(self, *, ticker: str, exchange_code: str, as_of: datetime):
+        self.as_of_calls.append(as_of)
+        eligible = [row for row in self.fundamentals_rows if row.fetched_at <= as_of]
+        return eligible[-1] if eligible else None
+
+    def save_fundamentals(self, snapshot: InstrumentFundamentals) -> None:
+        self.fundamentals_rows.append(snapshot)
+
+
+class _FakeFundamentalsClient:
+    endpoints = ("stock_profile2", "stock_metric", "calendar_earnings")
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[str] = []
+
+    def fetch(self, *, ticker: str):
+        self.calls.append(ticker)
+        if self.fail:
+            raise RuntimeError("finnhub down")
+        return SimpleNamespace(
+            market_cap_usd=2.0e9,
+            shares_outstanding=1.0e8,
+            revenue_ttm_usd=5.0e8,
+            next_earnings_date=None,
+            payload={"profile2": {}},
+        )
+
+
+def _fundamentals_row(*, checked_hours_ago: float) -> InstrumentFundamentals:
+    now = datetime.now(timezone.utc)
+    checked = now - timedelta(hours=checked_hours_ago)
+    return InstrumentFundamentals(
+        ticker="RHM",
+        exchange_code="XETR",
+        market_cap_usd=1.0e9,
+        shares_outstanding=5.0e7,
+        revenue_ttm_usd=2.0e8,
+        next_earnings_date=None,
+        provider=MarketDataProvider.FINNHUB,
+        fetched_at=checked,
+        last_checked_at=checked,
+    )
+
+
+def _fundamentals_service(storage, client) -> MarketDataService:
+    return MarketDataService(
+        storage=storage,  # type: ignore[arg-type]
+        provider_clients={},
+        quote_max_age_seconds=7200,
+        daily_bar_lookback_days=90,
+        fundamentals_client=client,
+        fundamentals_refresh_hours=24,
+    )
+
+
+def test_get_fundamentals_fetches_when_missing() -> None:
+    storage = _FundamentalsStorage()
+    client = _FakeFundamentalsClient()
+    service = _fundamentals_service(storage, client)
+
+    snapshot = service.get_fundamentals(ticker="RHM", exchange_code="XETR")
+
+    assert client.calls == ["RHM"]
+    assert snapshot is not None
+    assert snapshot.market_cap_usd == 2.0e9
+    assert snapshot.provider is MarketDataProvider.FINNHUB
+    # Each endpoint's external call is accounted and the run is recorded.
+    assert storage.api_usage == [
+        (MarketDataProvider.FINNHUB, "stock_profile2"),
+        (MarketDataProvider.FINNHUB, "stock_metric"),
+        (MarketDataProvider.FINNHUB, "calendar_earnings"),
+    ]
+    assert [run.operation for run in storage.fetch_runs] == ["fundamentals"]
+    assert storage.fetch_runs[0].status == "success"
+
+
+def test_get_fundamentals_uses_fresh_cache_without_fetching() -> None:
+    storage = _FundamentalsStorage()
+    storage.fundamentals_rows.append(_fundamentals_row(checked_hours_ago=1))
+    client = _FakeFundamentalsClient()
+    service = _fundamentals_service(storage, client)
+
+    snapshot = service.get_fundamentals(ticker="RHM", exchange_code="XETR")
+
+    assert client.calls == []
+    assert snapshot.market_cap_usd == 1.0e9
+
+
+def test_get_fundamentals_refreshes_stale_cache() -> None:
+    storage = _FundamentalsStorage()
+    storage.fundamentals_rows.append(_fundamentals_row(checked_hours_ago=48))
+    client = _FakeFundamentalsClient()
+    service = _fundamentals_service(storage, client)
+
+    snapshot = service.get_fundamentals(ticker="RHM", exchange_code="XETR")
+
+    assert client.calls == ["RHM"]
+    assert snapshot.market_cap_usd == 2.0e9
+
+
+def test_get_fundamentals_returns_stale_row_when_fetch_fails() -> None:
+    storage = _FundamentalsStorage()
+    storage.fundamentals_rows.append(_fundamentals_row(checked_hours_ago=48))
+    client = _FakeFundamentalsClient(fail=True)
+    service = _fundamentals_service(storage, client)
+
+    snapshot = service.get_fundamentals(ticker="RHM", exchange_code="XETR")
+
+    # Fetch failed but the caller still gets the stale cached row; the failure
+    # is visible in the fetch-run telemetry, not as an exception.
+    assert snapshot.market_cap_usd == 1.0e9
+    assert storage.fetch_runs[-1].status == "failed"
+    assert storage.api_usage == []
+
+
+def test_get_fundamentals_cache_only_when_no_client() -> None:
+    storage = _FundamentalsStorage()
+    service = _fundamentals_service(storage, None)
+
+    assert service.get_fundamentals(ticker="RHM", exchange_code="XETR") is None
+    assert storage.fetch_runs == []
+
+
+def test_get_fundamentals_as_of_is_pure_cache_read() -> None:
+    storage = _FundamentalsStorage()
+    old = _fundamentals_row(checked_hours_ago=100)
+    storage.fundamentals_rows.append(old)
+    client = _FakeFundamentalsClient()
+    service = _fundamentals_service(storage, client)
+
+    as_of = datetime.now(timezone.utc) - timedelta(hours=50)
+    before_any = service.get_fundamentals_as_of(
+        ticker="RHM", exchange_code="XETR", as_of=old.fetched_at - timedelta(hours=1)
+    )
+    at_time = service.get_fundamentals_as_of(ticker="RHM", exchange_code="XETR", as_of=as_of)
+
+    assert before_any is None
+    assert at_time is old
+    # Never triggers a provider fetch, no matter how stale.
+    assert client.calls == []
 
 
 def test_refresh_skips_daily_bars_when_cache_is_current() -> None:

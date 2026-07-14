@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
-from src.product_components.market_data.models import MarketDataProvider, ProviderSymbol
+from src.product_components.market_data.models import (
+    InstrumentFundamentals,
+    MarketDataProvider,
+    ProviderSymbol,
+)
 from src.product_components.market_data.storage_adapter import PostgresMarketDataStorageAdapter
 from src.product_components.shared.adapters import SharedInstrumentRecord
 
@@ -112,3 +116,80 @@ def test_record_api_usage_uses_shared_usage_writer() -> None:
     adapter.record_api_usage(provider=MarketDataProvider.IBKR, endpoint="quote", called_at=called_at)
 
     assert usage_writer.calls == [("ibkr", "quote", called_at)]
+
+
+def _adapter(monkeypatch, cursor: _FakeCursor, *, latest=None) -> PostgresMarketDataStorageAdapter:
+    connection = _FakeConnection(cursor)
+    adapter = PostgresMarketDataStorageAdapter(
+        dsn="unused",
+        market_data_schema="market_data",
+        instrument_registry=_FakeInstrumentRegistry(),
+        api_usage_writer=_FakeApiUsageWriter(),
+    )
+    monkeypatch.setattr(adapter, "_connect", lambda: connection)
+    monkeypatch.setattr(
+        adapter, "load_latest_fundamentals", lambda *, ticker, exchange_code: latest
+    )
+    return adapter
+
+
+def _fundamentals(**overrides) -> InstrumentFundamentals:
+    base = dict(
+        ticker="AAPL",
+        exchange_code="XNAS",
+        market_cap_usd=3.0e12,
+        shares_outstanding=1.5e10,
+        revenue_ttm_usd=4.0e11,
+        next_earnings_date=date(2026, 7, 30),
+        provider=MarketDataProvider.FINNHUB,
+        fetched_at=datetime(2026, 7, 10, tzinfo=timezone.utc),
+        last_checked_at=datetime(2026, 7, 13, tzinfo=timezone.utc),
+        payload={"profile2": {}},
+    )
+    base.update(overrides)
+    return InstrumentFundamentals(**base)
+
+
+def test_save_fundamentals_inserts_first_row(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    adapter = _adapter(monkeypatch, cursor, latest=None)
+
+    adapter.save_fundamentals(_fundamentals())
+
+    assert "INSERT INTO market_data.t_instrument_fundamentals" in cursor.sql
+    assert cursor.params[0] == "AAPL"
+    assert cursor.params[3] == 3.0e12
+
+
+def test_save_fundamentals_touches_last_checked_when_values_unchanged(monkeypatch) -> None:
+    latest = _fundamentals()
+    cursor = _FakeCursor()
+    adapter = _adapter(monkeypatch, cursor, latest=latest)
+
+    # Same prompt-visible values, later check time, different raw payload: the
+    # existing point-in-time row is touched instead of split.
+    adapter.save_fundamentals(
+        _fundamentals(
+            last_checked_at=datetime(2026, 7, 14, tzinfo=timezone.utc),
+            payload={"profile2": {"noise": True}},
+        )
+    )
+
+    assert "UPDATE market_data.t_instrument_fundamentals" in cursor.sql
+    assert "SET last_checked_at" in cursor.sql
+    # The touched row is addressed by the LATEST row's fetched_at.
+    assert cursor.params == (
+        datetime(2026, 7, 14, tzinfo=timezone.utc),
+        "AAPL",
+        "XNAS",
+        latest.fetched_at,
+    )
+
+
+def test_save_fundamentals_inserts_new_row_when_values_changed(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    adapter = _adapter(monkeypatch, cursor, latest=_fundamentals())
+
+    adapter.save_fundamentals(_fundamentals(market_cap_usd=3.1e12))
+
+    assert "INSERT INTO market_data.t_instrument_fundamentals" in cursor.sql

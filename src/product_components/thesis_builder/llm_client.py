@@ -132,12 +132,14 @@ class ThesisAnalyzer:
         ticker: str,
         exchange_code: str,
         market_context_snapshot: dict[str, Any] | None = None,
+        fundamentals_snapshot: dict[str, Any] | None = None,
     ) -> LlmAnalysisResult:
         prompt = _build_prompt(
             article=article,
             ticker=ticker,
             exchange_code=exchange_code,
             market_context_snapshot=market_context_snapshot,
+            fundamentals_snapshot=fundamentals_snapshot,
         )
         cached = _get_cached_analysis(
             self.client,
@@ -316,8 +318,11 @@ def parse_analysis_result(
         instrument_is_subject=bool(raw.get("instrument_is_subject", False)),
         content_type=_parse_content_type(raw.get("content_type")),
         event_type=str(raw["event_type"]) if raw.get("event_type") else None,
-        price_impact_magnitude=(
-            str(raw["price_impact_magnitude"]) if raw.get("price_impact_magnitude") else None
+        price_impact_magnitude=_enum_or_none(
+            raw.get("price_impact_magnitude"), allowed={"low", "medium", "high"}
+        ),
+        impact_horizon=_enum_or_none(
+            raw.get("impact_horizon"), allowed={"intraday", "1d", "5d"}
         ),
         evidence_bullet_candidates=[str(item).strip() for item in bullets if str(item).strip()],
     )
@@ -374,7 +379,14 @@ def parse_synthesis_result(raw: dict[str, Any]) -> LlmSynthesisResult:
     )
 
 
-def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_snapshot: dict[str, Any] | None) -> str:
+def _build_prompt(
+    *,
+    article,
+    ticker: str,
+    exchange_code: str,
+    market_context_snapshot: dict[str, Any] | None,
+    fundamentals_snapshot: dict[str, Any] | None = None,
+) -> str:
     return json.dumps(
         {
             "task": (
@@ -410,6 +422,25 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "If a buy thesis already had a sharp positive move, or a sell thesis already had a sharp negative move, lower confidence and prefer suggested_action=hold.",
                 "The deterministic ThesisBuilder gate is authoritative; this prompt instruction is advisory signal-quality guidance.",
             ],
+            "price_impact_rubric": [
+                "price_impact_magnitude estimates the direction-aligned price move this catalyst should "
+                "produce for THIS instrument over the chosen impact_horizon, measured against "
+                "market_context.atr_20d: low = expected move below 0.5x atr_20d; medium = 0.5x to 1.5x "
+                "atr_20d; high = above 1.5x atr_20d.",
+                "When market_context or atr_20d is absent, judge the buckets relative to a typical daily "
+                "trading range for this instrument.",
+                "Use fundamentals (when present) to judge materiality: weigh the event's dollar scale "
+                "against market_cap_usd and revenue_ttm_usd (e.g. a $500M contract is transformative for a "
+                "$1B-revenue company and noise for an $80B one).",
+                "A next_earnings_date close to the article date raises event risk and can amplify the "
+                "expected move.",
+                "Set price_impact_magnitude and impact_horizon to null only when is_market_moving is false.",
+            ],
+            "impact_horizon_rules": [
+                "impact_horizon is the window in which most of the estimated impact should be realized: "
+                "intraday = within the same trading session; 1d = by the next session close; 5d = within "
+                "five trading sessions.",
+            ],
             "strategy_scope_v1": ["event_driven", "sentiment_momentum"],
             "unsupported_strategies_must_still_be_labeled_if_best_fit": [
                 "sector_rotation",
@@ -428,6 +459,7 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "sentiment_source": article.sentiment_source,
             },
             "market_context": _prompt_market_context(market_context_snapshot),
+            "fundamentals": _prompt_fundamentals(fundamentals_snapshot),
             "required_json_fields": [
                 "ticker",
                 "exchange_code",
@@ -442,6 +474,9 @@ def _build_prompt(*, article, ticker: str, exchange_code: str, market_context_sn
                 "is_market_moving",
                 "instrument_is_subject",
                 "content_type",
+                "event_type",
+                "price_impact_magnitude",
+                "impact_horizon",
                 "evidence_bullet_candidates",
                 "estimated_tokens",
             ],
@@ -573,6 +608,24 @@ def _prompt_market_context(value: Any) -> Any:
     return value
 
 
+# The only fundamentals fields allowed into the prompt. Volatile provenance fields
+# (fetched_at, last_checked_at, provider, raw payload) must stay out so that live and
+# regeneration prompts are byte-identical whenever the underlying fundamentals row is
+# the same (mirrors _PROMPT_EXCLUDED_CONTEXT_KEYS for market context).
+_PROMPT_FUNDAMENTALS_KEYS = (
+    "market_cap_usd",
+    "shares_outstanding",
+    "revenue_ttm_usd",
+    "next_earnings_date",
+)
+
+
+def _prompt_fundamentals(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    return {key: snapshot.get(key) for key in _PROMPT_FUNDAMENTALS_KEYS}
+
+
 def _parse_content_type(value: Any) -> ContentType:
     try:
         return ContentType(str(value))
@@ -587,6 +640,14 @@ def _parse_content_type_recall_biased(value: Any) -> ContentType:
         return ContentType(str(value))
     except ValueError:
         return ContentType.NEWS_CATALYST
+
+
+def _enum_or_none(value: Any, *, allowed: set[str]) -> str | None:
+    # Cached backtester responses and fake clients may carry values outside the
+    # strict schema; anything unrecognized degrades to None (which the DB CHECK
+    # constraints accept) rather than failing the whole analysis.
+    parsed = str(value) if value else None
+    return parsed if parsed in allowed else None
 
 
 def _float_in_range(value: Any, *, minimum: float, maximum: float, field: str) -> float:
@@ -640,6 +701,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "content_type",
             "event_type",
             "price_impact_magnitude",
+            "impact_horizon",
             "evidence_bullet_candidates",
             "estimated_tokens",
         ],
@@ -671,6 +733,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             },
             "event_type": {"type": ["string", "null"]},
             "price_impact_magnitude": {"type": ["string", "null"], "enum": ["low", "medium", "high", None]},
+            "impact_horizon": {"type": ["string", "null"], "enum": ["intraday", "1d", "5d", None]},
             "evidence_bullet_candidates": {"type": "array", "items": {"type": "string"}},
             "estimated_tokens": {"type": "integer", "minimum": 0},
         },

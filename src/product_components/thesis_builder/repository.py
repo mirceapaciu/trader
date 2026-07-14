@@ -128,6 +128,7 @@ class PostgresThesisBuilderRepository:
         article: NewsArticle,
         result: LlmAnalysisResult,
         market_context_snapshot: dict[str, Any] | None,
+        fundamentals_snapshot: dict[str, Any] | None = None,
         required_evidence_count: int,
         min_confidence: float,
         min_relevance: float = 0.0,
@@ -161,6 +162,7 @@ class PostgresThesisBuilderRepository:
                 rejection_reason_code=rejection,
                 validation_errors=[rejection] if rejection else [],
                 market_context_snapshot=market_context_snapshot,
+                fundamentals_snapshot=fundamentals_snapshot,
             )
             signal = None
             if status is ValidationStatus.VALID:
@@ -255,16 +257,17 @@ class PostgresThesisBuilderRepository:
         rejection_reason_code: str | None,
         validation_errors: list[str],
         market_context_snapshot: dict[str, Any] | None,
+        fundamentals_snapshot: dict[str, Any] | None = None,
     ) -> int:
         market_status = _market_context_status(market_context_snapshot)
         market_as_of = _market_context_as_of(market_context_snapshot)
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_news_analyses "
             f"(article_id, ticker, exchange_code, sentiment, relevance, urgency, suggested_action, "
-            f"strategy, direction, event_type, price_impact_magnitude, reasoning, confidence, article_snapshot, "
-            f"market_context_status, market_context_as_of, market_context_snapshot, is_market_moving, "
+            f"strategy, direction, event_type, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
+            f"market_context_status, market_context_as_of, market_context_snapshot, fundamentals_snapshot, is_market_moving, "
             f"content_type, validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING id"
         )
         with conn.cursor() as cur:
@@ -282,12 +285,14 @@ class PostgresThesisBuilderRepository:
                     result.direction.value,
                     result.event_type,
                     result.price_impact_magnitude,
+                    result.impact_horizon,
                     result.reasoning,
                     result.confidence,
                     Json(_article_snapshot(article)),
                     market_status,
                     market_as_of,
                     Json(market_context_snapshot) if market_context_snapshot is not None else None,
+                    Json(fundamentals_snapshot) if fundamentals_snapshot is not None else None,
                     result.is_market_moving,
                     result.content_type.value,
                     validation_status.value,

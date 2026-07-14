@@ -31,6 +31,11 @@ _HEARTBEAT_EVERY = 25
 # to the analyzer, keeping analysis identical to live processing.
 MarketContextProvider = Callable[[str, str, datetime], Any | None]
 
+# (ticker, exchange_code, as_of) -> an InstrumentFundamentals dataclass (or None)
+# holding the fundamentals visible at as_of, so regenerated prompts match what
+# production saw at analysis time.
+FundamentalsProvider = Callable[[str, str, datetime], Any | None]
+
 # Reporting hook: (done, total, label) as articles are processed. The label is a
 # short human hint (e.g. the current instrument), or None.
 RegenerationProgress = Callable[[int, int, "str | None"], None]
@@ -106,6 +111,7 @@ class RegenerationRunner:
         instrument_registry: InstrumentRegistry,
         thresholds: RegenerationThresholds,
         market_context_provider: MarketContextProvider | None = None,
+        fundamentals_provider: FundamentalsProvider | None = None,
         card_delay_seconds: int = 180,
         progress: RegenerationProgress | None = None,
     ) -> None:
@@ -117,6 +123,7 @@ class RegenerationRunner:
         self._instrument_registry = instrument_registry
         self._thresholds = thresholds
         self._market_context_provider = market_context_provider
+        self._fundamentals_provider = fundamentals_provider
         self._card_delay_seconds = max(0, card_delay_seconds)
         self._progress = progress
 
@@ -193,6 +200,11 @@ class RegenerationRunner:
                     exchange_code=instrument.exchange_code,
                     as_of=analysis_time,
                 )
+                fundamentals_snapshot = self._fundamentals(
+                    ticker=instrument.ticker,
+                    exchange_code=instrument.exchange_code,
+                    as_of=analysis_time,
+                )
                 if self._thresholds.triage_enabled:
                     try:
                         triage = self._analyzer.triage_article(
@@ -227,6 +239,7 @@ class RegenerationRunner:
                         ticker=instrument.ticker,
                         exchange_code=instrument.exchange_code,
                         market_context_snapshot=context_snapshot,
+                        fundamentals_snapshot=fundamentals_snapshot,
                     )
                 except TokenBudgetExhausted:
                     LOGGER.info(
@@ -265,6 +278,7 @@ class RegenerationRunner:
                     article=article,
                     result=analysis,
                     market_context_snapshot=context_snapshot,
+                    fundamentals_snapshot=fundamentals_snapshot,
                     required_evidence_count=self._thresholds.required_evidence_count,
                     min_confidence=self._thresholds.min_confidence,
                     min_relevance=self._thresholds.min_relevance,
@@ -339,6 +353,20 @@ class RegenerationRunner:
             return None
         # Match production: MarketData snapshot dataclass -> JSON-ready dict.
         return _json_ready(asdict(snapshot))
+
+    def _fundamentals(
+        self, *, ticker: str, exchange_code: str, as_of: datetime
+    ) -> dict[str, Any] | None:
+        if self._fundamentals_provider is None:
+            return None
+        snapshot = self._fundamentals_provider(ticker, exchange_code, as_of)
+        if snapshot is None:
+            return None
+        # Match production (_load_fundamentals): dataclass -> JSON-ready dict, raw
+        # provider payload dropped.
+        snapshot_dict = _json_ready(asdict(snapshot))
+        snapshot_dict.pop("payload", None)
+        return snapshot_dict
 
     def _report(self, done: int, total: int, label: str | None) -> None:
         if self._progress is not None:

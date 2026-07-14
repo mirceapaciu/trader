@@ -15,12 +15,14 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_news_analyses (
     direction TEXT,
     event_type TEXT,
     price_impact_magnitude TEXT,
+    impact_horizon TEXT,
     reasoning TEXT,
     confidence DOUBLE PRECISION NOT NULL,
     article_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     market_context_status TEXT,
     market_context_as_of TIMESTAMPTZ,
     market_context_snapshot JSONB,
+    fundamentals_snapshot JSONB,
     is_market_moving BOOLEAN NOT NULL DEFAULT FALSE,
     content_type TEXT,
     validation_status TEXT NOT NULL DEFAULT 'valid',
@@ -48,6 +50,8 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_news_analyses (
         CHECK (direction IS NULL OR direction IN ('buy', 'sell', 'hold')),
     CONSTRAINT ck_news_analyses_price_impact
         CHECK (price_impact_magnitude IS NULL OR price_impact_magnitude IN ('low', 'medium', 'high')),
+    CONSTRAINT ck_news_analyses_impact_horizon
+        CHECK (impact_horizon IS NULL OR impact_horizon IN ('intraday', '1d', '5d')),
     CONSTRAINT ck_news_analyses_market_context_status
         CHECK (market_context_status IS NULL OR market_context_status IN ('fresh', 'delayed', 'stale', 'missing')),
     CONSTRAINT ck_news_analyses_validation_status
@@ -70,6 +74,12 @@ ALTER TABLE thesis_builder.t_news_analyses
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS price_impact_magnitude TEXT;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD COLUMN IF NOT EXISTS impact_horizon TEXT;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD COLUMN IF NOT EXISTS fundamentals_snapshot JSONB;
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS market_context_status TEXT;
@@ -104,6 +114,13 @@ ALTER TABLE thesis_builder.t_news_analyses
 ALTER TABLE thesis_builder.t_news_analyses
     ADD CONSTRAINT ck_news_analyses_content_type
         CHECK (content_type IS NULL OR content_type IN ('news_catalyst', 'opinion'));
+
+ALTER TABLE thesis_builder.t_news_analyses
+    DROP CONSTRAINT IF EXISTS ck_news_analyses_impact_horizon;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD CONSTRAINT ck_news_analyses_impact_horizon
+        CHECK (impact_horizon IS NULL OR impact_horizon IN ('intraday', '1d', '5d'));
 
 ALTER TABLE thesis_builder.t_news_analyses
     DROP CONSTRAINT IF EXISTS t_news_analyses_article_id_fkey;

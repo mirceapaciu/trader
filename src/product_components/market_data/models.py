@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -10,6 +10,7 @@ class MarketDataProvider(StrEnum):
     IBKR = "ibkr"
     ALPHA_VANTAGE = "alpha_vantage"
     POLYGON = "polygon"
+    FINNHUB = "finnhub"
 
 
 class QuoteDataType(StrEnum):
@@ -102,6 +103,27 @@ class MarketContextSnapshot:
     drawdown_from_high_20d: float | None
     quote_fetched_at: datetime | None
     bars_fetched_at: datetime | None
+
+
+@dataclass(frozen=True)
+class InstrumentFundamentals:
+    """Slow-moving company scale facts (point-in-time, append-only storage).
+
+    ``fetched_at`` is when these values were first observed; ``last_checked_at``
+    advances on every refresh that found identical values, so a row's validity
+    window is [fetched_at, next row's fetched_at).
+    """
+
+    ticker: str
+    exchange_code: str
+    market_cap_usd: float | None
+    shares_outstanding: float | None
+    revenue_ttm_usd: float | None
+    next_earnings_date: date | None
+    provider: MarketDataProvider
+    fetched_at: datetime
+    last_checked_at: datetime
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

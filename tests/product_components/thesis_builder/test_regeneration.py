@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from types import SimpleNamespace
 
@@ -49,9 +49,13 @@ class _FakeAnalyzer:
     def __init__(self, behaviors):
         self._behaviors = list(behaviors)
         self.contexts: list = []
+        self.fundamentals: list = []
 
-    def analyze_article(self, *, article, ticker, exchange_code, market_context_snapshot):
+    def analyze_article(
+        self, *, article, ticker, exchange_code, market_context_snapshot, fundamentals_snapshot=None
+    ):
         self.contexts.append(market_context_snapshot)
+        self.fundamentals.append(fundamentals_snapshot)
         behavior = self._behaviors.pop(0)
         if isinstance(behavior, Exception):
             raise behavior
@@ -98,7 +102,10 @@ def _instrument():
     return SimpleNamespace(ticker="AAA", exchange_code="XNAS")
 
 
-def _runner(monkeypatch, *, articles, analyzer, repo, market_context_provider=None):
+def _runner(
+    monkeypatch, *, articles, analyzer, repo, market_context_provider=None,
+    fundamentals_provider=None,
+):
     runner = RegenerationRunner(
         dsn="postgresql://unused",
         news_fetcher_schema="news_fetcher",
@@ -108,6 +115,7 @@ def _runner(monkeypatch, *, articles, analyzer, repo, market_context_provider=No
         instrument_registry=_Registry(),
         thresholds=_THRESHOLDS,
         market_context_provider=market_context_provider,
+        fundamentals_provider=fundamentals_provider,
         card_delay_seconds=180,
     )
     monkeypatch.setattr(
@@ -247,3 +255,46 @@ def test_regeneration_without_context_provider_passes_none(monkeypatch):
     runner.run(window_start_at=_WINDOW_START, window_end_at=_WINDOW_END)
 
     assert analyzer.contexts == [None]
+    assert analyzer.fundamentals == [None]
+
+
+@dataclass(frozen=True)
+class _FundamentalsSnapshot:
+    ticker: str
+    market_cap_usd: float
+    next_earnings_date: date
+    fetched_at: datetime
+    payload: dict
+
+
+def test_regeneration_passes_fundamentals_as_of(monkeypatch):
+    articles = [_article(0)]
+    analyzer = _FakeAnalyzer([object()])
+    repo = _FakeRepo()
+
+    captured_as_of: list[datetime] = []
+
+    def _fundamentals(ticker, exchange_code, as_of):
+        captured_as_of.append(as_of)
+        return _FundamentalsSnapshot(
+            ticker=ticker,
+            market_cap_usd=2.5e9,
+            next_earnings_date=date(2026, 7, 30),
+            fetched_at=_WINDOW_START,
+            payload={"profile2": {"raw": True}},
+        )
+
+    runner = _runner(
+        monkeypatch, articles=articles, analyzer=analyzer, repo=repo,
+        fundamentals_provider=_fundamentals,
+    )
+
+    runner.run(window_start_at=_WINDOW_START, window_end_at=_WINDOW_END)
+
+    # Fundamentals are requested as-of analysis time (published_at + card delay).
+    assert captured_as_of[0] == articles[0].published_at + timedelta(seconds=180)
+    snapshot = analyzer.fundamentals[0]
+    assert snapshot["market_cap_usd"] == 2.5e9
+    # Dates serialize like production and the raw provider payload is dropped.
+    assert snapshot["next_earnings_date"] == "2026-07-30"
+    assert "payload" not in snapshot

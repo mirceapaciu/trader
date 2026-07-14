@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.product_components.market_data.fundamentals_provider import FinnhubFundamentalsClient
 from src.product_components.market_data.providers import build_provider_clients
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.market_data.settings import MarketDataSettings
@@ -52,6 +53,7 @@ def build_market_data_service(
 
     ibkr_gateway = None
     provider_clients = {}
+    fundamentals_client = None
     if with_providers:
         # Imported lazily so cache-only consumers never pull in ib_async.
         from src.product_components.market_data.ibkr_gateway import (
@@ -60,6 +62,8 @@ def build_market_data_service(
 
         ibkr_gateway = build_market_data_ibkr_gateway(settings)
         provider_clients = build_provider_clients(settings, ibkr_gateway=ibkr_gateway)
+        if settings.fundamentals_enabled and settings.finnhub_api_key.strip():
+            fundamentals_client = FinnhubFundamentalsClient(api_key=settings.finnhub_api_key)
 
     service = MarketDataService(
         storage=PostgresMarketDataStorageAdapter(
@@ -78,5 +82,7 @@ def build_market_data_service(
         prefer_ibkr_historical=settings.prefer_ibkr_historical,
         max_requests_per_minute=settings.polygon_max_requests_per_minute,
         context_max_age_seconds=settings.context_max_age_seconds,
+        fundamentals_client=fundamentals_client,
+        fundamentals_refresh_hours=settings.fundamentals_refresh_hours,
     )
     return service, ibkr_gateway

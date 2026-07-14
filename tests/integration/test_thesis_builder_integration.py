@@ -71,6 +71,8 @@ def test_thesis_builder_persists_insufficient_evidence_without_signal() -> None:
     assert _count(settings, "t_evidence_windows") == 1
     assert _count(settings, "t_thesis_cards") == 0
     assert redis_client.xlen(settings.signal_queue) == 0
+    # The impact-quantification fields round-trip through persistence.
+    assert _impact_fields(settings) == [("medium", "1d")]
 
 
 def test_thesis_builder_creates_preapproved_card_and_signal() -> None:
@@ -285,10 +287,21 @@ def _buy_analysis(article_id: str) -> LlmAnalysisResult:
         content_type=ContentType.NEWS_CATALYST,
         event_type="guidance",
         price_impact_magnitude="medium",
+        impact_horizon="1d",
         evidence_bullet_candidates=[article_id],
         estimated_tokens=100,
         llm_model="test-model",
     )
+
+
+def _impact_fields(settings: ThesisBuilderSettings) -> list[tuple[str | None, str | None]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT price_impact_magnitude, impact_horizon "
+                f"FROM {settings.thesis_builder_db_schema}.t_news_analyses ORDER BY id"
+            )
+            return [(row[0], row[1]) for row in cur.fetchall()]
 
 
 def _evidence_window_rows(settings: ThesisBuilderSettings) -> list[tuple[str, list[str]]]:
@@ -404,6 +417,7 @@ class _FakeLlmClient:
             "content_type": ContentType.NEWS_CATALYST.value,
             "event_type": "guidance",
             "price_impact_magnitude": "medium",
+            "impact_horizon": "1d",
             "evidence_bullet_candidates": [payload["article"]["headline"]],
             "estimated_tokens": 100,
         }

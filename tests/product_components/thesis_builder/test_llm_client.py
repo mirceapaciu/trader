@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from src.product_components.thesis_builder.llm_client import (
     ThesisAnalyzer,
+    _THESIS_ANALYSIS_RESPONSE_FORMAT,
     _build_prompt,
     _build_triage_prompt,
     parse_analysis_result,
@@ -494,6 +495,137 @@ class _TriageClient:
 
     def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
         raise AssertionError("triage should use analyze_triage")
+
+
+def _analysis_payload(**overrides) -> dict:
+    payload = {
+        "ticker": "AAPL",
+        "exchange_code": "XNAS",
+        "sentiment": 0.8,
+        "relevance": 0.9,
+        "urgency": "today",
+        "suggested_action": "buy",
+        "candidate_strategy": "event_driven",
+        "direction": "buy",
+        "confidence": 0.75,
+        "reasoning": "Guidance improved.",
+        "is_market_moving": True,
+        "instrument_is_subject": True,
+        "content_type": "news_catalyst",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_parse_analysis_result_parses_impact_horizon() -> None:
+    result = parse_analysis_result(
+        _analysis_payload(price_impact_magnitude="high", impact_horizon="1d"),
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+
+    assert result.price_impact_magnitude == "high"
+    assert result.impact_horizon == "1d"
+
+
+def test_parse_analysis_result_normalizes_invalid_impact_fields() -> None:
+    # Cached backtester responses predate the field or may carry values outside
+    # the strict schema; anything unrecognized degrades to None so the DB CHECK
+    # constraints never reject the analysis.
+    missing = parse_analysis_result(
+        _analysis_payload(),
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+    assert missing.price_impact_magnitude is None
+    assert missing.impact_horizon is None
+
+    invalid = parse_analysis_result(
+        _analysis_payload(price_impact_magnitude="extreme", impact_horizon="2w"),
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+    assert invalid.price_impact_magnitude is None
+    assert invalid.impact_horizon is None
+
+
+def test_analysis_response_schema_required_matches_properties() -> None:
+    # OpenAI strict json_schema mode fails EVERY request when a property is
+    # missing from `required` (or vice versa); this invariant guards the
+    # add-a-field-in-one-place failure mode permanently.
+    schema = _THESIS_ANALYSIS_RESPONSE_FORMAT["schema"]
+    assert set(schema["required"]) == set(schema["properties"].keys())
+
+
+def test_build_prompt_includes_impact_rubric() -> None:
+    prompt = _build_prompt(
+        article=_article(),
+        ticker="AAPL",
+        exchange_code="XNAS",
+        market_context_snapshot={"atr_20d": 2.5},
+    )
+
+    assert '"price_impact_rubric"' in prompt
+    assert '"impact_horizon_rules"' in prompt
+    assert "atr_20d" in prompt
+    # The new output fields are demanded from the model explicitly.
+    for field in ("event_type", "price_impact_magnitude", "impact_horizon"):
+        assert f'"{field}"' in prompt
+
+
+def test_build_prompt_fundamentals_block_whitelists_stable_fields() -> None:
+    article = _article()
+    base = {
+        "ticker": "AAPL",
+        "exchange_code": "XNAS",
+        "provider": "finnhub",
+        "market_cap_usd": 3.1e12,
+        "shares_outstanding": 1.5e10,
+        "revenue_ttm_usd": 4.0e11,
+        "next_earnings_date": "2026-07-30",
+        "fetched_at": "2026-07-10T04:00:00+00:00",
+        "last_checked_at": "2026-07-13T04:00:00+00:00",
+    }
+    later_check = {**base, "fetched_at": "2026-07-11T04:00:00+00:00", "last_checked_at": "2026-07-14T04:00:00+00:00"}
+
+    prompt_a = _build_prompt(
+        article=article, ticker="AAPL", exchange_code="XNAS",
+        market_context_snapshot=None, fundamentals_snapshot=base,
+    )
+    prompt_b = _build_prompt(
+        article=article, ticker="AAPL", exchange_code="XNAS",
+        market_context_snapshot=None, fundamentals_snapshot=later_check,
+    )
+
+    # Snapshots differing only in provenance timestamps produce byte-identical
+    # prompts (live/regeneration parity).
+    assert prompt_a == prompt_b
+    assert "fetched_at" not in prompt_a
+    assert "last_checked_at" not in prompt_a
+    assert '"finnhub"' not in prompt_a
+    assert '"market_cap_usd": 3100000000000.0' in prompt_a
+    assert '"next_earnings_date": "2026-07-30"' in prompt_a
+
+    # Value changes must change the prompt (cache-sensitive).
+    changed = _build_prompt(
+        article=article, ticker="AAPL", exchange_code="XNAS",
+        market_context_snapshot=None,
+        fundamentals_snapshot={**base, "market_cap_usd": 3.2e12},
+    )
+    assert changed != prompt_a
+
+
+def test_build_prompt_fundamentals_null_when_missing() -> None:
+    prompt = _build_prompt(
+        article=_article(),
+        ticker="AAPL",
+        exchange_code="XNAS",
+        market_context_snapshot=None,
+    )
+
+    # The key is always present so prompt structure is deterministic; a missing
+    # snapshot renders as null.
+    assert '"fundamentals": null' in prompt
 
 
 def _article() -> NewsArticle:

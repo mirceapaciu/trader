@@ -5,10 +5,12 @@ from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 
 from src.product_components.market_data.context import build_market_context
+from src.product_components.market_data.fundamentals_provider import FinnhubFundamentalsClient
 from src.product_components.market_data.models import (
     ContextSourceStatus,
     FetchRun,
     Instrument,
+    InstrumentFundamentals,
     MarketBar,
     MarketContextSnapshot,
     MarketDataProvider,
@@ -43,6 +45,8 @@ class MarketDataService:
         prefer_ibkr_historical: bool = True,
         max_requests_per_minute: int = 5,
         context_max_age_seconds: int = 1800,
+        fundamentals_client: FinnhubFundamentalsClient | None = None,
+        fundamentals_refresh_hours: int = 24,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -54,6 +58,8 @@ class MarketDataService:
         self._historical_bars_provider = historical_bars_provider
         self._prefer_ibkr_historical = prefer_ibkr_historical
         self._max_requests_per_minute = max_requests_per_minute
+        self._fundamentals_client = fundamentals_client
+        self._fundamentals_refresh_hours = fundamentals_refresh_hours
         self._clock = clock
         self._sleep = sleep
 
@@ -80,6 +86,98 @@ class MarketDataService:
         # every caller request (the ThesisBuilder consumer loop is single-threaded).
         age = datetime.now(timezone.utc) - snapshot.as_of
         return age > timedelta(seconds=self._context_max_age_seconds)
+
+    def get_fundamentals(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        refresh_if_stale: bool = True,
+    ) -> InstrumentFundamentals | None:
+        """Return company fundamentals, refreshing from Finnhub when stale.
+
+        Any fetch failure falls back to the cached row (or None); fundamentals
+        must never block a caller's pipeline.
+        """
+        snapshot = self._storage.load_latest_fundamentals(
+            ticker=ticker, exchange_code=exchange_code
+        )
+        if (
+            refresh_if_stale
+            and self._fundamentals_client is not None
+            and self._fundamentals_needs_refresh(snapshot)
+        ):
+            refreshed = self._refresh_fundamentals(ticker=ticker, exchange_code=exchange_code)
+            if refreshed:
+                snapshot = self._storage.load_latest_fundamentals(
+                    ticker=ticker, exchange_code=exchange_code
+                )
+        return snapshot
+
+    def get_fundamentals_as_of(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        as_of: datetime,
+    ) -> InstrumentFundamentals | None:
+        """Pure cache read of the fundamentals visible at ``as_of`` (regeneration path)."""
+        return self._storage.load_fundamentals_as_of(
+            ticker=ticker, exchange_code=exchange_code, as_of=as_of
+        )
+
+    def _fundamentals_needs_refresh(self, snapshot: InstrumentFundamentals | None) -> bool:
+        if snapshot is None:
+            return True
+        age = datetime.now(timezone.utc) - snapshot.last_checked_at
+        return age > timedelta(hours=self._fundamentals_refresh_hours)
+
+    def _refresh_fundamentals(self, *, ticker: str, exchange_code: str) -> bool:
+        started_at = datetime.now(timezone.utc)
+        status = "success"
+        error_code = None
+        fetched_count = 0
+        try:
+            result = self._fundamentals_client.fetch(ticker=ticker)
+            now = datetime.now(timezone.utc)
+            self._storage.save_fundamentals(
+                InstrumentFundamentals(
+                    ticker=ticker.strip().upper(),
+                    exchange_code=exchange_code.strip().upper(),
+                    market_cap_usd=result.market_cap_usd,
+                    shares_outstanding=result.shares_outstanding,
+                    revenue_ttm_usd=result.revenue_ttm_usd,
+                    next_earnings_date=result.next_earnings_date,
+                    provider=MarketDataProvider.FINNHUB,
+                    fetched_at=now,
+                    last_checked_at=now,
+                    payload=result.payload,
+                )
+            )
+            fetched_count = 1
+            for endpoint in self._fundamentals_client.endpoints:
+                self._storage.record_api_usage(
+                    provider=MarketDataProvider.FINNHUB,
+                    endpoint=endpoint,
+                    called_at=started_at,
+                )
+        except Exception as exc:
+            status = "failed"
+            error_code = exc.__class__.__name__
+        self._storage.record_fetch_run(
+            FetchRun(
+                provider=MarketDataProvider.FINNHUB,
+                operation="fundamentals",
+                ticker=ticker,
+                exchange_code=exchange_code,
+                status=status,
+                error_code=error_code,
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc),
+                fetched_count=fetched_count,
+            )
+        )
+        return fetched_count > 0
 
     def get_historical_bars(
         self,

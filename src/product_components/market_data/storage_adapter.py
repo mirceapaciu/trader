@@ -12,6 +12,7 @@ from src.product_components.market_data.models import (
     ContextSourceStatus,
     FetchRun,
     Instrument,
+    InstrumentFundamentals,
     MarketBar,
     MarketContextSnapshot,
     MarketDataProvider,
@@ -425,6 +426,81 @@ class PostgresMarketDataStorageAdapter:
             row = cur.fetchone()
         return _context_snapshot(row) if row else None
 
+    _FUNDAMENTALS_COLUMNS = (
+        "ticker, exchange_code, provider, market_cap_usd, shares_outstanding, "
+        "revenue_ttm_usd, next_earnings_date, payload_json, fetched_at, last_checked_at"
+    )
+
+    def load_latest_fundamentals(
+        self, *, ticker: str, exchange_code: str
+    ) -> InstrumentFundamentals | None:
+        sql = (
+            f"SELECT {self._FUNDAMENTALS_COLUMNS} "
+            f"FROM {self._market_data_schema}.t_instrument_fundamentals "
+            f"WHERE ticker = %s AND exchange_code = %s "
+            f"ORDER BY fetched_at DESC LIMIT 1"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (ticker.strip().upper(), exchange_code.strip().upper()))
+            row = cur.fetchone()
+        return _instrument_fundamentals(row) if row else None
+
+    def load_fundamentals_as_of(
+        self, *, ticker: str, exchange_code: str, as_of: datetime
+    ) -> InstrumentFundamentals | None:
+        sql = (
+            f"SELECT {self._FUNDAMENTALS_COLUMNS} "
+            f"FROM {self._market_data_schema}.t_instrument_fundamentals "
+            f"WHERE ticker = %s AND exchange_code = %s AND fetched_at <= %s "
+            f"ORDER BY fetched_at DESC LIMIT 1"
+        )
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                sql,
+                (ticker.strip().upper(), exchange_code.strip().upper(), _to_utc(as_of)),
+            )
+            row = cur.fetchone()
+        return _instrument_fundamentals(row) if row else None
+
+    def save_fundamentals(self, snapshot: InstrumentFundamentals) -> None:
+        """Append-only with change detection: identical values only touch last_checked_at."""
+        latest = self.load_latest_fundamentals(
+            ticker=snapshot.ticker, exchange_code=snapshot.exchange_code
+        )
+        if latest is not None and _fundamentals_values_equal(latest, snapshot):
+            sql = (
+                f"UPDATE {self._market_data_schema}.t_instrument_fundamentals "
+                f"SET last_checked_at = %s "
+                f"WHERE ticker = %s AND exchange_code = %s AND fetched_at = %s"
+            )
+            params = (
+                _to_utc(snapshot.last_checked_at),
+                latest.ticker,
+                latest.exchange_code,
+                _to_utc(latest.fetched_at),
+            )
+        else:
+            sql = (
+                f"INSERT INTO {self._market_data_schema}.t_instrument_fundamentals "
+                f"({self._FUNDAMENTALS_COLUMNS}) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            )
+            params = (
+                snapshot.ticker.strip().upper(),
+                snapshot.exchange_code.strip().upper(),
+                snapshot.provider.value,
+                snapshot.market_cap_usd,
+                snapshot.shares_outstanding,
+                snapshot.revenue_ttm_usd,
+                snapshot.next_earnings_date,
+                Json(snapshot.payload),
+                _to_utc(snapshot.fetched_at),
+                _to_utc(snapshot.last_checked_at),
+            )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            conn.commit()
+
     def record_fetch_run(self, run: FetchRun) -> None:
         sql = (
             f"INSERT INTO {self._market_data_schema}.t_market_data_fetch_runs "
@@ -470,6 +546,35 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _instrument_fundamentals(row: dict[str, Any]) -> InstrumentFundamentals:
+    return InstrumentFundamentals(
+        ticker=str(row["ticker"]),
+        exchange_code=str(row["exchange_code"]),
+        provider=MarketDataProvider(str(row["provider"])),
+        market_cap_usd=float(row["market_cap_usd"]) if row["market_cap_usd"] is not None else None,
+        shares_outstanding=(
+            float(row["shares_outstanding"]) if row["shares_outstanding"] is not None else None
+        ),
+        revenue_ttm_usd=float(row["revenue_ttm_usd"]) if row["revenue_ttm_usd"] is not None else None,
+        next_earnings_date=row["next_earnings_date"],
+        payload=dict(row["payload_json"] or {}),
+        fetched_at=_to_utc(row["fetched_at"]),
+        last_checked_at=_to_utc(row["last_checked_at"]),
+    )
+
+
+def _fundamentals_values_equal(a: InstrumentFundamentals, b: InstrumentFundamentals) -> bool:
+    # Only the prompt-visible fields participate: a change in the raw payload
+    # alone must not create a new point-in-time row (it would needlessly split
+    # the validity window and perturb regeneration prompt selection).
+    return (
+        a.market_cap_usd == b.market_cap_usd
+        and a.shares_outstanding == b.shares_outstanding
+        and a.revenue_ttm_usd == b.revenue_ttm_usd
+        and a.next_earnings_date == b.next_earnings_date
+    )
 
 
 def _provider_symbol(row: dict[str, Any]) -> ProviderSymbol:

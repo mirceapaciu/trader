@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Protocol
 
 from src.core_components.event_ingestion_engine.errors import TransientPublishError
@@ -341,6 +341,7 @@ class ThesisBuilderRunner:
         signals_published = 0
         for instrument in instruments:
             context_snapshot = self._load_market_context(instrument)
+            fundamentals_snapshot = self._load_fundamentals(instrument)
             triage = self._triage_pair(article=article, instrument=instrument)
             triage_rejection = _triage_rejection(triage)
             if triage_rejection is not None:
@@ -360,6 +361,7 @@ class ThesisBuilderRunner:
                     ticker=instrument.ticker,
                     exchange_code=instrument.exchange_code,
                     market_context_snapshot=context_snapshot,
+                    fundamentals_snapshot=fundamentals_snapshot,
                 )
             except ValueError as exc:
                 self._repository.persist_rejected_analysis(
@@ -376,6 +378,7 @@ class ThesisBuilderRunner:
                 article=article,
                 result=analysis,
                 market_context_snapshot=context_snapshot,
+                fundamentals_snapshot=fundamentals_snapshot,
                 required_evidence_count=self._settings.required_evidence_count,
                 min_confidence=self._settings.min_confidence,
                 min_relevance=self._settings.min_relevance,
@@ -460,6 +463,29 @@ class ThesisBuilderRunner:
             return None
         return _json_ready(asdict(snapshot))
 
+    def _load_fundamentals(self, instrument: InstrumentIdentity) -> dict[str, Any] | None:
+        getter = getattr(self._market_context_client, "get_fundamentals", None)
+        if getter is None:
+            return None
+        try:
+            snapshot = getter(
+                ticker=instrument.ticker,
+                exchange_code=instrument.exchange_code,
+                refresh_if_stale=True,
+            )
+        except Exception:
+            # Fundamentals are advisory prompt context; never block the pipeline.
+            LOGGER.exception(
+                "ThesisBuilder fundamentals load failed ticker=%s", instrument.ticker
+            )
+            return None
+        if snapshot is None:
+            return None
+        snapshot_dict = _json_ready(asdict(snapshot))
+        # The raw provider payload lives in market_data; keep the audit copy small.
+        snapshot_dict.pop("payload", None)
+        return snapshot_dict
+
     def _triage_pair(
         self,
         *,
@@ -496,6 +522,8 @@ class ThesisBuilderRunner:
 def _json_ready(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.replace(microsecond=0).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if hasattr(value, "value"):
         return value.value
     if isinstance(value, dict):

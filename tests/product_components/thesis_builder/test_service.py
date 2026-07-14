@@ -1,7 +1,16 @@
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 from src.product_components.shared.adapters import SharedInstrumentRecord
-from src.product_components.thesis_builder.models import ContentType, LlmTriageResult, NewsArticle
+from src.product_components.thesis_builder.models import (
+    ContentType,
+    LlmAnalysisResult,
+    LlmTriageResult,
+    NewsArticle,
+    ThesisStrategy,
+    TradeDirection,
+)
 from src.product_components.thesis_builder.redis_io import NewsStreamMessage
 from src.product_components.thesis_builder.service import ThesisBuilderRunner, _resolve_instruments
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
@@ -312,6 +321,116 @@ def test_resolve_instruments_does_not_match_alias_only_in_url() -> None:
     )
 
     assert instruments == []
+
+
+def test_fundamentals_flow_to_analyzer_and_repository() -> None:
+    article = _article()
+    repo = _PersistingRepository()
+    analyzer = _CapturingAnalyzer()
+    runner = ThesisBuilderRunner(
+        settings=_settings(),
+        redis_io=_FakeIo(),
+        repository=repo,
+        analyzer=analyzer,
+        market_context_client=_FakeMarketClient(),
+        instrument_registry=_FakeInstrumentRegistry(
+            [SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",))]
+        ),
+        review_writer=_FakeReviewWriter(),
+    )
+
+    result = runner.process_message(_message(article_id=article.id))
+
+    assert result.analyses_created == 1
+    snapshot = analyzer.kwargs["fundamentals_snapshot"]
+    assert snapshot["market_cap_usd"] == 2.0e9
+    # date -> isoformat, raw provider payload dropped from the audit copy.
+    assert snapshot["next_earnings_date"] == "2026-07-30"
+    assert "payload" not in snapshot
+    # The exact prompt-input dict is persisted alongside the analysis.
+    assert repo.persist_kwargs["fundamentals_snapshot"] == snapshot
+
+
+def test_fundamentals_failure_never_blocks_analysis() -> None:
+    article = _article()
+    repo = _PersistingRepository()
+    analyzer = _CapturingAnalyzer()
+    runner = ThesisBuilderRunner(
+        settings=_settings(),
+        redis_io=_FakeIo(),
+        repository=repo,
+        analyzer=analyzer,
+        market_context_client=_FakeMarketClient(fundamentals_error=True),
+        instrument_registry=_FakeInstrumentRegistry(
+            [SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",))]
+        ),
+        review_writer=_FakeReviewWriter(),
+    )
+
+    result = runner.process_message(_message(article_id=article.id))
+
+    assert result.analyses_created == 1
+    assert analyzer.kwargs["fundamentals_snapshot"] is None
+    assert repo.persist_kwargs["fundamentals_snapshot"] is None
+
+
+class _FakeMarketClient:
+    def __init__(self, *, fundamentals_error: bool = False) -> None:
+        self._fundamentals_error = fundamentals_error
+
+    def get_market_context(self, *, ticker, exchange_code, refresh_if_stale=True):
+        return None
+
+    def get_fundamentals(self, *, ticker, exchange_code, refresh_if_stale=True):
+        if self._fundamentals_error:
+            raise RuntimeError("finnhub down")
+        return _FundamentalsSnapshot(
+            ticker=ticker,
+            market_cap_usd=2.0e9,
+            next_earnings_date=date(2026, 7, 30),
+            payload={"profile2": {"raw": True}},
+        )
+
+
+@dataclass(frozen=True)
+class _FundamentalsSnapshot:
+    ticker: str
+    market_cap_usd: float
+    next_earnings_date: date
+    payload: dict
+
+
+class _CapturingAnalyzer:
+    def __init__(self) -> None:
+        self.kwargs: dict = {}
+
+    def analyze_article(self, **kwargs):
+        self.kwargs = kwargs
+        return LlmAnalysisResult(
+            ticker="AAPL",
+            exchange_code="XNAS",
+            sentiment=0.5,
+            relevance=0.9,
+            urgency="today",
+            suggested_action="buy",
+            candidate_strategy=ThesisStrategy.EVENT_DRIVEN,
+            direction=TradeDirection.BUY,
+            confidence=0.8,
+            reasoning="test",
+            is_market_moving=True,
+            instrument_is_subject=True,
+            content_type=ContentType.NEWS_CATALYST,
+        )
+
+
+class _PersistingRepository(_FakeRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.persist_kwargs: dict = {}
+
+    def persist_analysis_and_update_evidence(self, **kwargs):
+        self.persist_kwargs = kwargs
+        return SimpleNamespace(analysis_id=1, signal=None)
 
 
 class _NoopAnalyzer:

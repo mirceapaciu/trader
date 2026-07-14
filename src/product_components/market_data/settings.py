@@ -27,6 +27,9 @@ class MarketDataSettings:
     polygon_max_requests_per_minute: int
     historical_bars_provider: str
     prefer_ibkr_historical: bool
+    finnhub_api_key: str = ""
+    fundamentals_enabled: bool = True
+    fundamentals_refresh_hours: int = 24
 
     @property
     def postgres_dsn(self) -> str:
@@ -66,6 +69,10 @@ class MarketDataSettings:
             polygon_max_requests_per_minute=_int_env("POLYGON_MAX_REQUESTS_PER_MINUTE", 5),
             historical_bars_provider=os.getenv("MARKET_DATA_HISTORICAL_BARS_PROVIDER", "polygon"),
             prefer_ibkr_historical=_bool_env("MARKET_DATA_PREFER_IBKR_HISTORICAL", True),
+            # Reuse the NewsFetcher Finnhub key for company fundamentals.
+            finnhub_api_key=os.getenv("FINNHUB_API_KEY", ""),
+            fundamentals_enabled=_bool_env("MARKET_DATA_FUNDAMENTALS_ENABLED", True),
+            fundamentals_refresh_hours=_int_env("MARKET_DATA_FUNDAMENTALS_REFRESH_HOURS", 24),
         )
 
 

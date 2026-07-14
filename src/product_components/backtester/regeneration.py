@@ -212,6 +212,7 @@ class ThesisRegenerationProvider:
             instrument_registry=self._instrument_registry,
             thresholds=thresholds,
             market_context_provider=self._market_context,
+            fundamentals_provider=self._fundamentals_as_of,
             card_delay_seconds=card_delay_seconds,
             progress=progress,
         )
@@ -227,6 +228,19 @@ class ThesisRegenerationProvider:
 
     def cards_provider(self, *, sim_schema: str) -> CardsProvider:
         return ThesisCardHistoryExporter(dsn=self._dsn, thesis_schema=sim_schema)
+
+    def _fundamentals_as_of(self, ticker: str, exchange_code: str, as_of: datetime):
+        """Fundamentals visible at analysis time (pure cache read, no look-ahead).
+
+        Articles predating fundamentals collection get None, which renders the same
+        `"fundamentals": null` prompt block production uses when the fetch fails.
+        Tolerates market-data fakes/stubs without the method (mirrors the live
+        service's getattr-based lookup).
+        """
+        getter = getattr(self._market_data_service, "get_fundamentals_as_of", None)
+        if getter is None:
+            return None
+        return getter(ticker=ticker, exchange_code=exchange_code, as_of=as_of)
 
     def _market_context(self, ticker: str, exchange_code: str, as_of: datetime):
         """Reconstruct as-of market context from stored daily bars (no look-ahead).
