@@ -61,6 +61,10 @@ def build_instrument_aliases(
     return _normalize_aliases(values)
 
 
+def normalize_instrument_aliases(aliases: tuple[str, ...]) -> tuple[str, ...]:
+    return _normalize_aliases(aliases)
+
+
 def required_instrument_aliases(*, ticker: str, display_name: str | None) -> tuple[str, ...]:
     values: set[str] = set()
     if ticker.strip():

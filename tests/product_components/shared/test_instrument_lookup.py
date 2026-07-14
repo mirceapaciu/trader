@@ -9,6 +9,7 @@ import psycopg
 from src.product_components.shared.adapters import (
     SharedInstrumentSeed,
     SharedLookupCacheEntry,
+    SharedWatchlistEntryInput,
     SharedWatchlistRecord,
 )
 from src.product_components.shared.instrument_lookup import (
@@ -51,6 +52,7 @@ class FakeAdmin:
         self.deactivated: tuple[str, str] | None = None
         self.persisted_seeds: list = []
         self.local_db_seeds: list = []
+        self.upsert_calls: list[tuple[object, bool, bool]] = []
 
     def load_lookup_cache(self, *, operation: str, target: str):
         return self.cache.get((operation, target))
@@ -66,7 +68,14 @@ class FakeAdmin:
             expires_at=expires_at,
         )
 
-    def upsert_watchlist_entry(self, entry, *, replace_aliases: bool = True):
+    def upsert_watchlist_entry(
+        self,
+        entry,
+        *,
+        replace_aliases: bool = True,
+        enrich_aliases: bool = True,
+    ):
+        self.upsert_calls.append((entry, replace_aliases, enrich_aliases))
         return None
 
     def deactivate_watchlist_entry(self, *, ticker: str, exchange_code: str):
@@ -1238,6 +1247,31 @@ def test_lookup_returns_local_db_result_when_strong_match() -> None:
     assert provider.search_calls == 0
     assert results[0].ticker == "NVDA"
     assert results[0].provider == "local_db"
+
+
+def test_update_watchlist_entry_preserves_manual_alias_replacement() -> None:
+    registry = FakeRegistry()
+    registry.rows = []
+    admin = FakeAdmin()
+    service = SharedInstrumentLookupAdminService(
+        registry=registry,
+        admin=admin,
+        providers=(),
+        lookup_cache_ttl_seconds=3600,
+        alias_cache_ttl_seconds=3600,
+    )
+
+    row = service.update_watchlist_entry(
+        SharedWatchlistEntryInput(
+            ticker="000660",
+            exchange_code="XKRX",
+            display_name="SK Hynix Inc.",
+            aliases=("hynix",),
+        )
+    )
+
+    assert admin.upsert_calls[0][2] is False
+    assert row.aliases == ("hynix",)
 
 
 def test_lookup_falls_through_to_provider_on_weak_local_match() -> None:

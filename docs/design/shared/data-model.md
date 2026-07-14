@@ -116,6 +116,8 @@ Behavioral constraints:
   not be used as a second source of truth.
 - Stored aliases must include derived press-style short names and common punctuation variants
   needed for text attribution (for example `novo-nordisk` and `novo nordisk`).
+- Lookup/import writes enrich aliases automatically; operator edits in the Watchlist UI replace
+  aliases with the submitted list and may intentionally leave `has_missing_aliases` warnings.
 - Provider-specific symbols do not belong here.
 
 ### `t_instrument_lookup_cache`

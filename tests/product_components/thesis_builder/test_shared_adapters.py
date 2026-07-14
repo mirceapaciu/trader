@@ -278,6 +278,36 @@ def test_shared_instrument_admin_enriches_watchlist_aliases_on_write(monkeypatch
     )
 
 
+def test_shared_instrument_admin_can_replace_watchlist_aliases_without_enrichment(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    admin = PostgresSharedInstrumentAdmin(
+        dsn="unused",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(admin, "_connect", lambda: connection)
+
+    admin.upsert_watchlist_entry(
+        SharedWatchlistEntryInput(
+            ticker="000660",
+            exchange_code="XKRX",
+            display_name="SK Hynix Inc.",
+            aliases=("hynix",),
+        ),
+        enrich_aliases=False,
+    )
+
+    alias_params = [
+        param
+        for params in cursor.params_history
+        if params
+        for param in params
+        if isinstance(param, list)
+    ]
+    assert ["hynix"] in alias_params
+    assert all("sk hynix" not in param for param in alias_params)
+
+
 def test_shared_instrument_admin_deactivates_watchlist_entry(monkeypatch) -> None:
     cursor = _FakeCursor()
     connection = _FakeConnection(cursor)

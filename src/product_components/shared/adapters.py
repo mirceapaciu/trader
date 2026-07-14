@@ -13,6 +13,7 @@ from src.product_components.shared.instrument_aliases import (
     build_instrument_aliases,
     has_missing_instrument_aliases,
     missing_instrument_aliases,
+    normalize_instrument_aliases,
 )
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -184,11 +185,22 @@ class PostgresSharedInstrumentAdmin:
                 self._upsert_instrument(cur, instrument)
             conn.commit()
 
-    def upsert_watchlist_entry(self, entry: SharedWatchlistEntryInput, *, replace_aliases: bool = True) -> None:  # noqa: ARG002
-        aliases = build_instrument_aliases(
-            ticker=entry.ticker,
-            display_name=entry.display_name,
-            aliases=tuple(alias.strip() for alias in entry.aliases if alias.strip()),
+    def upsert_watchlist_entry(
+        self,
+        entry: SharedWatchlistEntryInput,
+        *,
+        replace_aliases: bool = True,  # noqa: ARG002
+        enrich_aliases: bool = True,
+    ) -> None:
+        submitted_aliases = tuple(alias.strip() for alias in entry.aliases if alias.strip())
+        aliases = (
+            build_instrument_aliases(
+                ticker=entry.ticker,
+                display_name=entry.display_name,
+                aliases=submitted_aliases,
+            )
+            if enrich_aliases
+            else normalize_instrument_aliases(submitted_aliases)
         )
         normalized = SharedInstrumentSeed(
             ticker=entry.ticker.strip().upper(),
@@ -199,7 +211,7 @@ class PostgresSharedInstrumentAdmin:
             enabled=entry.enabled,
         )
         with self._connect() as conn, conn.cursor() as cur:
-            listing_id = self._upsert_instrument(cur, normalized)
+            listing_id = self._upsert_instrument(cur, normalized, enrich_aliases=False)
             cur.execute(
                 f"""
                 INSERT INTO {self._shared_schema}.t_watchlist_tickers
@@ -370,16 +382,20 @@ class PostgresSharedInstrumentAdmin:
                     )
             conn.commit()
 
-    def _upsert_instrument(self, cur, instrument: SharedInstrumentSeed) -> int:
+    def _upsert_instrument(self, cur, instrument: SharedInstrumentSeed, *, enrich_aliases: bool = True) -> int:
         # Extract ISIN: prefer explicit field, fall back to identifiers dict.
         identifiers = dict(instrument.identifiers)
         isin = instrument.isin or identifiers.pop("isin", None) or None
 
         aliases = list(
-            build_instrument_aliases(
-                ticker=instrument.ticker,
-                display_name=instrument.display_name,
-                aliases=instrument.aliases,
+            (
+                build_instrument_aliases(
+                    ticker=instrument.ticker,
+                    display_name=instrument.display_name,
+                    aliases=instrument.aliases,
+                )
+                if enrich_aliases
+                else normalize_instrument_aliases(instrument.aliases)
             )
         )
 

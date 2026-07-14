@@ -16,6 +16,7 @@ from src.product_components.market_data.provider_symbols import normalize_exchan
 from src.product_components.shared.instrument_aliases import (
     base_company_name,
     build_instrument_aliases,
+    normalize_instrument_aliases,
 )
 
 logger = logging.getLogger(__name__)
@@ -513,7 +514,7 @@ class SharedInstrumentLookupAdminService:
         )
 
     def update_watchlist_entry(self, entry: SharedWatchlistEntryInput) -> SharedWatchlistRecord:
-        self._admin.upsert_watchlist_entry(entry, replace_aliases=True)
+        self._admin.upsert_watchlist_entry(entry, replace_aliases=True, enrich_aliases=False)
         return self._registry.get_watchlist_record(
             ticker=entry.ticker,
             exchange_code=entry.exchange_code,
@@ -521,11 +522,7 @@ class SharedInstrumentLookupAdminService:
             ticker=entry.ticker.strip().upper(),
             exchange_code=entry.exchange_code.strip().upper(),
             display_name=entry.display_name.strip(),
-            aliases=build_instrument_aliases(
-                ticker=entry.ticker,
-                display_name=entry.display_name,
-                aliases=entry.aliases,
-            ),
+            aliases=normalize_instrument_aliases(entry.aliases),
             is_active=True,
             source=entry.source,
         )
