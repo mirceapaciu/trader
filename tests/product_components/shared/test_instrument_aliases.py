@@ -46,6 +46,14 @@ def test_missing_instrument_aliases_flags_curated_and_derived_gaps() -> None:
     assert missing == ("google",)
 
 
+def test_display_name_and_ticker_cover_identity_aliases() -> None:
+    assert missing_instrument_aliases(
+        ticker="RHM",
+        display_name="Rheinmetall AG",
+        aliases=(),
+    ) == ()
+
+
 def test_has_missing_instrument_aliases_passes_when_press_name_set_is_complete() -> None:
     assert has_missing_instrument_aliases(
         ticker="XOM",

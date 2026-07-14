@@ -4,7 +4,7 @@ import re
 
 _CLASS_DESIGNATION = re.compile(r"\s+class\s+[a-z]\b.*$", re.IGNORECASE)
 _CORPORATE_SUFFIX = re.compile(
-    r"[\s,]+(?:inc|corp|ltd|plc|llc|s\.a|n\.v|a\/s|co|company|corporation|incorporated|limited)\.?\s*$",
+    r"[\s,]+(?:ag|inc|corp|ltd|plc|llc|s\.a|n\.v|a\/s|co|company|corporation|incorporated|limited)\.?\s*$",
     re.IGNORECASE,
 )
 _NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
@@ -83,6 +83,7 @@ def missing_instrument_aliases(
     aliases: tuple[str, ...],
 ) -> tuple[str, ...]:
     stored = set(_normalize_aliases(aliases))
+    stored.update(_covered_identity_terms(ticker=ticker, display_name=display_name))
     required = set(required_instrument_aliases(ticker=ticker, display_name=display_name))
     return tuple(sorted(required - stored))
 
@@ -134,3 +135,11 @@ def _normalize_aliases(values: set[str] | tuple[str, ...]) -> tuple[str, ...]:
             }
         )
     )
+
+
+def _covered_identity_terms(*, ticker: str, display_name: str | None) -> set[str]:
+    values = {ticker.strip()}
+    if display_name and display_name.strip():
+        values.add(display_name.strip())
+        values.add(base_company_name(display_name))
+    return set(_normalize_aliases(tuple(values)))

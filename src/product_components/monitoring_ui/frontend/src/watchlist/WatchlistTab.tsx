@@ -80,10 +80,35 @@ export function WatchlistTab() {
   const aliasDiscoveryMutation = useMutation({
     mutationFn: ({ ticker, exchangeCode }: { ticker: string; exchangeCode: string }) =>
       discoverWatchlistAliases(ticker, exchangeCode),
-    onSuccess: (result) => {
-      if (result.found) {
-        setRepairAliasesText(result.aliases.join(", "));
+    onSuccess: (result, variables) => {
+      const item = (watchlist.data?.items ?? []).find(
+        (candidate) => candidate.ticker === variables.ticker && candidate.exchange_code === variables.exchangeCode
+      );
+      if (!item) {
+        return;
       }
+      if (!result.found) {
+        setRepairTarget(item);
+        setRepairAliasesText(item.aliases.join(", "));
+        return;
+      }
+      const displayName = item.display_name || result.display_name || item.ticker;
+      const aliases = normalizeAliases([...item.aliases, ...result.aliases]).filter(
+        (alias) => !isIdentityAlias(alias, item.ticker, displayName)
+      );
+      setRepairTarget(null);
+      setRepairAliasesText("");
+      updateMutation.mutate({
+        ticker: item.ticker,
+        exchangeCode: item.exchange_code,
+        payload: {
+          ticker: item.ticker,
+          exchange_code: item.exchange_code,
+          display_name: displayName,
+          aliases,
+          source: item.source
+        }
+      });
     }
   });
 
@@ -230,8 +255,9 @@ export function WatchlistTab() {
                         setRepairAliasesText(item.aliases.join(", "));
                         aliasDiscoveryMutation.mutate({ ticker: item.ticker, exchangeCode: item.exchange_code });
                       }}
+                      disabled={aliasDiscoveryMutation.isPending || updateMutation.isPending}
                     >
-                      Auto-find aliases
+                      {aliasDiscoveryMutation.isPending || updateMutation.isPending ? "Saving aliases" : "Auto-find aliases"}
                     </button>
                   </div>
                 ) : null}
@@ -537,14 +563,46 @@ function renderAliasDiscoveryStatus(data: AliasDiscoveryResponse | undefined, pe
 }
 
 function normalizeList(text: string): string[] {
+  return normalizeAliases(text.split(","));
+}
+
+function normalizeAliases(values: string[]): string[] {
   return Array.from(
     new Set(
-      text
-        .split(",")
+      values
+        .flatMap((value) => value.split(","))
         .map((value) => value.trim().toLowerCase())
         .filter(Boolean)
     )
   );
+}
+
+function isIdentityAlias(alias: string, ticker: string, displayName: string): boolean {
+  const normalizedAlias = normalizeAliasToken(alias);
+  if (!normalizedAlias) {
+    return true;
+  }
+  if (normalizedAlias === normalizeAliasToken(ticker)) {
+    return true;
+  }
+  const normalizedName = normalizeAliasToken(displayName);
+  const baseName = stripLegalSuffix(normalizedName);
+  return normalizedAlias === normalizedName || stripLegalSuffix(normalizedAlias) === baseName;
+}
+
+function normalizeAliasToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripLegalSuffix(value: string): string {
+  return value
+    .replace(/\s+(ag|inc|corp|ltd|plc|llc|s a|n v|a s|co|company|corporation|incorporated|limited)$/i, "")
+    .trim();
 }
 
 function normalizeLookupQuery(value: string): string {

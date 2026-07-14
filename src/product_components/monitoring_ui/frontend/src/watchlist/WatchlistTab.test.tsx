@@ -65,7 +65,7 @@ describe("WatchlistTab", () => {
       ticker: "RHM",
       exchange_code: "XETR",
       display_name: "Rheinmetall",
-      aliases: ["rheinmetall", "rheinmetall ag"],
+      aliases: ["rheinmetall ag", "rhm"],
       provider: "massive",
       found: true,
       cached: false,
@@ -74,7 +74,30 @@ describe("WatchlistTab", () => {
     deactivateWatchlistItem.mockResolvedValue(undefined);
   });
 
-  it("renders suggestions, preview, and alias repair flow", async () => {
+  it("renders suggestions, preview, and auto-repairs missing aliases", async () => {
+    const rhmItem = {
+      ticker: "RHM",
+      exchange_code: "XETR",
+      display_name: "Rheinmetall",
+      aliases: [],
+      is_active: true,
+      source: "manual",
+      has_missing_aliases: true,
+    };
+    fetchWatchlist
+      .mockResolvedValueOnce({
+        lookup_providers_configured: true,
+        lookup_message: null,
+        items: [rhmItem],
+        generated_at: "2026-06-15T00:00:00Z"
+      })
+      .mockResolvedValueOnce({
+        lookup_providers_configured: true,
+        lookup_message: null,
+        items: [{ ...rhmItem, aliases: [], has_missing_aliases: false }],
+        generated_at: "2026-06-15T00:00:00Z"
+      });
+
     renderWithQueryClient(<WatchlistTab />);
 
     expect(await screen.findByText("RHM:XETR")).toBeInTheDocument();
@@ -90,7 +113,16 @@ describe("WatchlistTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /auto-find aliases/i }));
 
-    expect(await screen.findByText("rheinmetall ag")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(updateWatchlistItem).toHaveBeenCalledWith("RHM", "XETR", {
+        ticker: "RHM",
+        exchange_code: "XETR",
+        display_name: "Rheinmetall",
+        aliases: [],
+        source: "manual",
+      })
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: /auto-find aliases/i })).not.toBeInTheDocument());
   });
 
   it("normalizes hyphenated company names before lookup", async () => {
