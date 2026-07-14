@@ -105,7 +105,14 @@
       "Bash(git restore *)",
       "Bash(git commit -q -m ' *)",
       "Bash(*)",
-      "PowerShell(*)"
+      "PowerShell(*)",
+      "PowerShell(uv run pytest -m \"not integration\" -q 2>&1)",
+      "PowerShell($env:PYTHONPATH='.'; uv run python C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\89ccc8df-7257-4686-bdbb-a42d35674bf0\\\\scratchpad\\\\probe_pg.py)",
+      "PowerShell(uv run pytest -m integration -q 2>&1)",
+      "PowerShell($env:PYTHONPATH='.'; uv run python C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\89ccc8df-7257-4686-bdbb-a42d35674bf0\\\\scratchpad\\\\smoke_fundamentals.py)",
+      "PowerShell(uv run pytest -m \"not integration\" -q tests/product_components/backtester/test_boundary.py tests/product_components/thesis_builder/test_export.py tests/product_components/backtester/test_impact_calibration.py 2>&1)",
+      "PowerShell($env:PYTHONPATH='.'; uv run python C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\89ccc8df-7257-4686-bdbb-a42d35674bf0\\\\scratchpad\\\\prove_guard.py)",
+      "PowerShell(uv run python -m src.product_components.backtester.impact_calibration_report --analysis-schema thesis_builder --since 2026-06-01 --min-sample-size 10 2>&1)"
     ],
     "additionalDirectories": [
       "D:\\src\\trader\\.claude\\skills"
