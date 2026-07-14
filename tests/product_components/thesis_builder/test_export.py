@@ -122,6 +122,7 @@ def _analysis_row(**overrides):
         "exchange_code": "XNAS",
         "direction": "buy",
         "event_type": "guidance",
+        "subject_relation": "direct",
         "price_impact_magnitude": "high",
         "impact_horizon": "1d",
         "validation_status": "valid",
@@ -140,6 +141,7 @@ def test_build_exported_analysis_maps_fields_and_parses_json() -> None:
     assert analysis.ticker == "AAPL"
     assert analysis.direction == "buy"
     assert analysis.event_type == "guidance"
+    assert analysis.subject_relation == "direct"
     assert analysis.price_impact_magnitude == "high"
     assert analysis.impact_horizon == "1d"
     assert analysis.validation_status == "valid"

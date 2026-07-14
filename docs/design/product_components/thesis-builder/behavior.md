@@ -138,6 +138,10 @@ Required fields:
 - `direction`
 - `confidence`
 - `reasoning`
+- `is_market_moving`
+- `instrument_is_subject`
+- `content_type`
+- `subject_relation`
 
 Optional fields:
 - `event_type`
@@ -145,12 +149,13 @@ Optional fields:
 - `impact_horizon`
 - `evidence_bullet_candidates`
 
-Allowed `candidate_strategy` values are `event_driven`, `sentiment_momentum`, `sector_rotation`, `contrarian_reversal`, and `trend_follow`. Allowed `direction` values are `buy`, `sell`, and `hold`. Invalid enum values, malformed confidence, missing required fields, or instrument mismatch must be persisted as a rejected analysis outcome and must not create an executable thesis card. Unrecognized `price_impact_magnitude` or `impact_horizon` values degrade to null (they never fail the whole analysis), which keeps historical/cached responses that predate a field parseable.
+Allowed `candidate_strategy` values are `event_driven`, `sentiment_momentum`, `sector_rotation`, `contrarian_reversal`, and `trend_follow`. Allowed `direction` values are `buy`, `sell`, and `hold`. Allowed `subject_relation` values are `direct`, `supply_chain`, `customer_or_peer`, `macro_sector`, and `none`; `instrument_is_subject` is a compatibility field derived from `subject_relation == direct`. Invalid enum values, malformed confidence, missing required fields, or instrument mismatch must be persisted as a rejected analysis outcome and must not create an executable thesis card. Unrecognized `price_impact_magnitude` or `impact_horizon` values degrade to null (they never fail the whole analysis), which keeps historical/cached responses that predate a field parseable.
 
 Impact-quantification fields (observe-only):
 - `price_impact_magnitude` (`low`, `medium`, `high`) estimates the expected direction-aligned price move for the analyzed instrument, anchored to the instrument's own volatility rather than an absolute percentage: `low` is below 0.5x `atr_20d`, `medium` is 0.5x-1.5x, and `high` is above 1.5x. The prompt supplies this rubric together with the market-context `atr_20d` and, when available, the fundamentals block (see §3.2) so the model can weigh the event's dollar scale against company size.
 - `impact_horizon` (`intraday`, `1d`, `5d`) is the window over which most of that move is expected to be realized.
-- These fields are quantified but not yet acted upon: they do not affect gates, card expiry, risk boxes, or the published signal. Their empirical value is measured offline by the Backtester impact-calibration report (`docs/design/product_components/backtester/behavior.md` §7) before any gating or bracket use is considered.
+- For `supply_chain` and `customer_or_peer` relations, ThesisBuilder deterministically caps `price_impact_magnitude` at `low` unless the analysis indicates a realized surprise rather than a consensus preview.
+- These fields are quantified but not yet acted upon: they do not affect card expiry, risk boxes, or the published signal. Their empirical value is measured offline by the Backtester impact-calibration report (`docs/design/product_components/backtester/behavior.md` §7) before any bracket use is considered.
 
 ## 4. Evidence Aggregation
 
@@ -160,6 +165,7 @@ Window satisfaction rules:
 - The window must meet all evidence rules from `docs/design/shared/product-constraint.md`.
 - The default required evidence count is read from `THESIS_CARD_REQUIRED_EVIDENCE_COUNT`.
 - Evidence must support one coherent instrument, direction, strategy, and time horizon.
+- Indirect evidence (`supply_chain` or `customer_or_peer`) is supplementary only. It is valid only when the instrument already has an active thesis card or direct evidence in the current collecting window, and a window containing only indirect evidence never satisfies the seed requirement.
 - Conflicting high-confidence evidence prevents card creation until the conflict is resolved by newer or stronger evidence.
 
 Window terminal states:

@@ -30,6 +30,14 @@ class ContentType(StrEnum):
     OPINION = "opinion"
 
 
+class SubjectRelation(StrEnum):
+    DIRECT = "direct"
+    SUPPLY_CHAIN = "supply_chain"
+    CUSTOMER_OR_PEER = "customer_or_peer"
+    MACRO_SECTOR = "macro_sector"
+    NONE = "none"
+
+
 @dataclass(frozen=True)
 class LlmTriageResult:
     ticker: str
@@ -75,6 +83,7 @@ class LlmAnalysisResult:
     is_market_moving: bool
     instrument_is_subject: bool = False
     content_type: ContentType = ContentType.OPINION
+    subject_relation: SubjectRelation = SubjectRelation.NONE
     event_type: str | None = None
     price_impact_magnitude: str | None = None
     impact_horizon: str | None = None
@@ -112,6 +121,7 @@ class PersistedAnalysis:
     reasoning: str | None
     validation_status: ValidationStatus
     rejection_reason_code: str | None
+    subject_relation: SubjectRelation | None
     analyzed_at: datetime
 
 

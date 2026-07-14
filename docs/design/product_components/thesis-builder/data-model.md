@@ -93,6 +93,7 @@ Logical fields:
 - `strategy`: candidate thesis strategy from the validated LLM output or deterministic policy.
 - `direction`: candidate direction (`buy`, `sell`, or `hold`).
 - `event_type`: optional event classification used by event-driven analysis.
+- `subject_relation`: optional relationship between the article event and the instrument (`direct`, `supply_chain`, `customer_or_peer`, `macro_sector`, or `none`). Existing rows may be null; new full-analysis rows persist the parsed relation for funnel attribution.
 - `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`), anchored to the instrument's `atr_20d` (see behavior spec §3.3). Observe-only; not yet consumed by gates.
 - `impact_horizon`: optional window over which the estimated impact is expected to be realized (`intraday`, `1d`, or `5d`). Observe-only.
 - `reasoning`: optional explanatory reasoning text.
@@ -181,7 +182,7 @@ Selection:
   biased toward only the analyses that became cards.
 
 Per exported analysis, the contract returns `analysis_id`, `ticker`, `exchange_code`, `direction`,
-`event_type`, `price_impact_magnitude`, `impact_horizon`, `validation_status`, the article
+`event_type`, `subject_relation`, `price_impact_magnitude`, `impact_horizon`, `validation_status`, the article
 `published_at` (from the retained article snapshot), and the `atr_20d` the realized move is
 normalized against (from the retained market-context snapshot).
 

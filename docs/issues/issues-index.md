@@ -35,5 +35,5 @@
 | 260709-05 | docs/trading-strategies.md describes a system that does not exist — align it with the implementation | resolved | docs/issues/issues-detail/260709-05.md |
 | 260709-06 | Add a strong-model card-synthesis pass at evidence-window satisfaction (tier 2) | resolved | docs/issues/issues-detail/260709-06.md |
 | 260709-07 | Soft dedupe is scoped per source; the same story ingested via two providers counts twice | new | docs/issues/issues-detail/260709-07.md |
-| 260714-01 | Binary instrument_is_subject gate mishandles supply-chain read-through articles | new | docs/issues/issues-detail/260714-01.md |
+| 260714-01 | Binary instrument_is_subject gate mishandles supply-chain read-through articles | resolved | docs/issues/issues-detail/260714-01.md |
 | 260714-02 | Watchlist instrument aliases lack common press names, breaking text-based attribution | resolved | docs/issues/issues-detail/260714-02.md |

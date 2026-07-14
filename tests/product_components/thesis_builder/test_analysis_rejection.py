@@ -1,12 +1,14 @@
 from src.product_components.thesis_builder.models import (
     ContentType,
     LlmAnalysisResult,
+    SubjectRelation,
     ThesisStrategy,
     TradeDirection,
 )
 from src.product_components.thesis_builder.repository import (
     _already_priced_rejection,
     _analysis_rejection,
+    _normalize_analysis_result,
     _tradeability_rejection,
 )
 
@@ -25,6 +27,7 @@ def _result(**overrides) -> LlmAnalysisResult:
         reasoning="About Micron.",
         is_market_moving=True,
         instrument_is_subject=True,
+        subject_relation=SubjectRelation.DIRECT,
         content_type=ContentType.NEWS_CATALYST,
     )
     base.update(overrides)
@@ -37,9 +40,66 @@ def test_accepts_grounded_relevant_analysis() -> None:
 
 def test_rejects_when_instrument_not_subject() -> None:
     rejection = _analysis_rejection(
-        _result(instrument_is_subject=False), min_confidence=0.6, min_relevance=0.5
+        _result(instrument_is_subject=False, subject_relation=SubjectRelation.NONE),
+        min_confidence=0.6,
+        min_relevance=0.5,
     )
     assert rejection == "instrument_not_subject"
+
+
+def test_rejects_indirect_without_anchor_evidence() -> None:
+    rejection = _analysis_rejection(
+        _result(
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.SUPPLY_CHAIN,
+            price_impact_magnitude="medium",
+        ),
+        min_confidence=0.6,
+        min_relevance=0.5,
+        has_anchor_evidence=False,
+    )
+
+    assert rejection == "indirect_no_anchor_evidence"
+
+
+def test_accepts_indirect_with_anchor_evidence() -> None:
+    rejection = _analysis_rejection(
+        _result(
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.CUSTOMER_OR_PEER,
+            price_impact_magnitude="medium",
+        ),
+        min_confidence=0.6,
+        min_relevance=0.5,
+        has_anchor_evidence=True,
+    )
+
+    assert rejection is None
+
+
+def test_rejects_macro_relation_with_distinct_reason() -> None:
+    rejection = _analysis_rejection(
+        _result(instrument_is_subject=False, subject_relation=SubjectRelation.MACRO_SECTOR),
+        min_confidence=0.6,
+        min_relevance=0.5,
+    )
+
+    assert rejection == "macro_sector_not_subject"
+
+
+def test_caps_indirect_preview_magnitude_to_low() -> None:
+    result = _normalize_analysis_result(
+        _result(
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.SUPPLY_CHAIN,
+            event_type="consensus_preview",
+            reasoning="TSMC is seen posting a record profit on AI demand.",
+            price_impact_magnitude="high",
+        )
+    )
+
+    assert result.price_impact_magnitude == "low"
+    assert result.instrument_is_subject is False
 
 
 def test_rejects_below_min_relevance() -> None:
@@ -68,7 +128,11 @@ def test_not_subject_discarded_before_opinion_routing() -> None:
     # An incidental name-drop (not the subject) that also reads as opinion is dropped as
     # noise, not retained for the analyst: the subject gate precedes the content_type gate.
     rejection = _analysis_rejection(
-        _result(instrument_is_subject=False, content_type=ContentType.OPINION),
+        _result(
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.NONE,
+            content_type=ContentType.OPINION,
+        ),
         min_confidence=0.6,
         min_relevance=0.5,
     )

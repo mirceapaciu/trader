@@ -13,6 +13,7 @@ from src.product_components.thesis_builder.llm_client import (
 from src.product_components.thesis_builder.models import (
     ContentType,
     NewsArticle,
+    SubjectRelation,
     ThesisStrategy,
     TradeDirection,
 )
@@ -33,6 +34,7 @@ def test_parse_analysis_result_validates_structured_response() -> None:
             "reasoning": "Guidance improved.",
             "is_market_moving": True,
             "instrument_is_subject": True,
+            "subject_relation": "direct",
             "event_type": "guidance",
             "price_impact_magnitude": "medium",
             "content_type": "news_catalyst",
@@ -46,6 +48,7 @@ def test_parse_analysis_result_validates_structured_response() -> None:
     assert result.direction is TradeDirection.BUY
     assert result.confidence == 0.75
     assert result.instrument_is_subject is True
+    assert result.subject_relation is SubjectRelation.DIRECT
     assert result.content_type is ContentType.NEWS_CATALYST
 
 
@@ -64,6 +67,7 @@ def test_parse_analysis_result_parses_opinion() -> None:
             "reasoning": "Undervalued vs peers on a DCF basis.",
             "is_market_moving": True,
             "instrument_is_subject": True,
+            "subject_relation": "direct",
             "content_type": "opinion",
         },
         expected_ticker="MSFT",
@@ -136,6 +140,33 @@ def test_parse_analysis_result_defaults_instrument_is_subject_false() -> None:
         expected_exchange_code="XNAS",
     )
 
+    assert result.instrument_is_subject is False
+    assert result.subject_relation is SubjectRelation.NONE
+
+
+def test_parse_analysis_result_maps_indirect_relation_and_derives_subject_boolean() -> None:
+    result = parse_analysis_result(
+        {
+            "ticker": "NVDA",
+            "exchange_code": "XNAS",
+            "sentiment": 0.6,
+            "relevance": 0.7,
+            "urgency": "today",
+            "suggested_action": "buy",
+            "candidate_strategy": "event_driven",
+            "direction": "buy",
+            "confidence": 0.75,
+            "reasoning": "TSMC AI demand reads through to Nvidia.",
+            "is_market_moving": True,
+            "instrument_is_subject": True,
+            "subject_relation": "supply_chain",
+            "content_type": "news_catalyst",
+        },
+        expected_ticker="NVDA",
+        expected_exchange_code="XNAS",
+    )
+
+    assert result.subject_relation is SubjectRelation.SUPPLY_CHAIN
     assert result.instrument_is_subject is False
 
 
@@ -511,6 +542,7 @@ def _analysis_payload(**overrides) -> dict:
         "reasoning": "Guidance improved.",
         "is_market_moving": True,
         "instrument_is_subject": True,
+        "subject_relation": "direct",
         "content_type": "news_catalyst",
     }
     payload.update(overrides)
@@ -569,7 +601,7 @@ def test_build_prompt_includes_impact_rubric() -> None:
     assert '"impact_horizon_rules"' in prompt
     assert "atr_20d" in prompt
     # The new output fields are demanded from the model explicitly.
-    for field in ("event_type", "price_impact_magnitude", "impact_horizon"):
+    for field in ("event_type", "subject_relation", "price_impact_magnitude", "impact_horizon"):
         assert f'"{field}"' in prompt
 
 

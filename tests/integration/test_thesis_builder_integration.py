@@ -21,6 +21,7 @@ from src.product_components.thesis_builder.models import (
     ContentType,
     LlmAnalysisResult,
     NewsArticle,
+    SubjectRelation,
     ThesisStrategy,
     TradeDirection,
 )
@@ -216,6 +217,72 @@ def test_rolling_window_ages_out_old_evidence_instead_of_swallowing_new() -> Non
     ]
 
 
+def test_indirect_evidence_requires_anchor_and_never_seeds_alone() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+    )
+    base = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+
+    def persist(article_id: str, result: LlmAnalysisResult, offset_minutes: int):
+        published_at = base + timedelta(minutes=offset_minutes)
+        return repository.persist_analysis_and_update_evidence(
+            article=_news_article(article_id, published_at),
+            result=result,
+            market_context_snapshot=_market_context(),
+            required_evidence_count=2,
+            min_confidence=settings.min_confidence,
+            min_relevance=settings.min_relevance,
+            risk_max_loss_usd=settings.risk_max_loss_usd,
+            tradeability_max_entry_price=settings.tradeability_max_entry_price,
+            tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+            default_time_horizon=settings.default_time_horizon,
+            evidence_collection_max_minutes=120,
+            max_evidence_age_minutes=180,
+            already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+            clock=lambda: published_at + timedelta(seconds=30),
+        )
+
+    indirect = _buy_analysis(
+        "tsmc-preview",
+        instrument_is_subject=False,
+        subject_relation=SubjectRelation.SUPPLY_CHAIN,
+        event_type="consensus_preview",
+        reasoning="TSMC seen posting record profit on AI demand.",
+        price_impact_magnitude="high",
+    )
+    assert persist("indirect-alone-1", indirect, 0).signal is None
+    assert persist("indirect-alone-2", indirect, 1).signal is None
+
+    assert _analysis_policy_rows(settings) == [
+        ("supply_chain", "low", "rejected", "indirect_no_anchor_evidence"),
+        ("supply_chain", "low", "rejected", "indirect_no_anchor_evidence"),
+    ]
+    assert _count(settings, "t_evidence_windows") == 0
+    assert _count(settings, "t_thesis_cards") == 0
+
+    _cleanup(settings, redis_client)
+    assert persist("direct-anchor", _buy_analysis("direct-anchor"), 0).signal is None
+    outcome = persist("indirect-supplement", indirect, 1)
+
+    assert outcome.signal is not None
+    assert _analysis_policy_rows(settings) == [
+        ("direct", "medium", "valid", None),
+        ("supply_chain", "low", "valid", None),
+    ]
+    assert _evidence_window_rows(settings) == [
+        ("satisfied", ["direct-anchor", "indirect-supplement"])
+    ]
+
+
 def test_untradeable_context_persists_rejected_card_without_signal() -> None:
     settings = _settings()
     redis_client = _redis_client()
@@ -270,8 +337,8 @@ def _news_article(article_id: str, published_at: datetime) -> NewsArticle:
     )
 
 
-def _buy_analysis(article_id: str) -> LlmAnalysisResult:
-    return LlmAnalysisResult(
+def _buy_analysis(article_id: str, **overrides) -> LlmAnalysisResult:
+    base = dict(
         ticker="AAPL",
         exchange_code="XNAS",
         sentiment=0.8,
@@ -285,6 +352,7 @@ def _buy_analysis(article_id: str) -> LlmAnalysisResult:
         is_market_moving=True,
         instrument_is_subject=True,
         content_type=ContentType.NEWS_CATALYST,
+        subject_relation=SubjectRelation.DIRECT,
         event_type="guidance",
         price_impact_magnitude="medium",
         impact_horizon="1d",
@@ -292,6 +360,8 @@ def _buy_analysis(article_id: str) -> LlmAnalysisResult:
         estimated_tokens=100,
         llm_model="test-model",
     )
+    base.update(overrides)
+    return LlmAnalysisResult(**base)
 
 
 def _impact_fields(settings: ThesisBuilderSettings) -> list[tuple[str | None, str | None]]:
@@ -302,6 +372,18 @@ def _impact_fields(settings: ThesisBuilderSettings) -> list[tuple[str | None, st
                 f"FROM {settings.thesis_builder_db_schema}.t_news_analyses ORDER BY id"
             )
             return [(row[0], row[1]) for row in cur.fetchall()]
+
+
+def _analysis_policy_rows(
+    settings: ThesisBuilderSettings,
+) -> list[tuple[str | None, str | None, str, str | None]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT subject_relation, price_impact_magnitude, validation_status, rejection_reason_code "
+                f"FROM {settings.thesis_builder_db_schema}.t_news_analyses ORDER BY id"
+            )
+            return [(row[0], row[1], row[2], row[3]) for row in cur.fetchall()]
 
 
 def _evidence_window_rows(settings: ThesisBuilderSettings) -> list[tuple[str, list[str]]]:

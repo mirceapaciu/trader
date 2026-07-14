@@ -637,7 +637,7 @@ class PostgresRedisMonitoringDataSource:
         generated_at = _utc_now()
         sql = (
             f"SELECT id, article_id, ticker, exchange_code, analyzed_at, "
-            f"content_type, validation_status, rejection_reason_code, "
+            f"content_type, subject_relation, validation_status, rejection_reason_code, "
             f"confidence, is_market_moving, direction, strategy, reasoning, "
             f"article_snapshot->>'headline' AS headline, "
             f"article_snapshot->>'summary' AS summary, "
@@ -667,6 +667,7 @@ class PostgresRedisMonitoringDataSource:
                 exchange_code=str(row["exchange_code"]),
                 analyzed_at=_to_utc(row["analyzed_at"]),
                 content_type=str(row["content_type"]) if row.get("content_type") else None,
+                subject_relation=str(row["subject_relation"]) if row.get("subject_relation") else None,
                 validation_status=str(row["validation_status"]),
                 rejection_reason_code=str(row["rejection_reason_code"]) if row.get("rejection_reason_code") else None,
                 confidence=float(row["confidence"]),

@@ -25,6 +25,7 @@ class ExportedAnalysis:
     exchange_code: str
     direction: str | None
     event_type: str | None
+    subject_relation: str | None
     price_impact_magnitude: str | None
     impact_horizon: str | None
     published_at: datetime | None
@@ -153,7 +154,7 @@ class ThesisAnalysisHistoryExporter:
         if valid_only:
             filters += "AND validation_status = 'valid' "
         sql = (
-            f"SELECT id, ticker, exchange_code, direction, event_type, "
+            f"SELECT id, ticker, exchange_code, direction, event_type, subject_relation, "
             f"price_impact_magnitude, impact_horizon, validation_status, "
             f"article_snapshot, market_context_snapshot "
             f"FROM {self._thesis_schema}.t_news_analyses "
@@ -181,6 +182,7 @@ def build_exported_analysis(row: dict[str, Any]) -> ExportedAnalysis:
         exchange_code=str(row["exchange_code"]),
         direction=row["direction"],
         event_type=row["event_type"],
+        subject_relation=row["subject_relation"],
         price_impact_magnitude=row["price_impact_magnitude"],
         impact_horizon=row["impact_horizon"],
         published_at=_snapshot_timestamp(snapshot, "published_at"),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -19,6 +19,7 @@ from .models import (
     LlmTriageResult,
     NewsArticle,
     PersistedAnalysis,
+    SubjectRelation,
     ThesisCardSignal,
     ThesisStrategy,
     TradeDirection,
@@ -106,6 +107,7 @@ class PostgresThesisBuilderRepository:
             is_market_moving=False,
             instrument_is_subject=instrument_is_subject,
             content_type=content_type,
+            subject_relation=SubjectRelation.DIRECT if instrument_is_subject else SubjectRelation.NONE,
             llm_model=llm_model,
             estimated_tokens=estimated_tokens,
         )
@@ -149,11 +151,21 @@ class PostgresThesisBuilderRepository:
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
-        rejection = _analysis_rejection(
-            result, min_confidence=min_confidence, min_relevance=min_relevance
-        )
-        status = ValidationStatus.REJECTED if rejection else ValidationStatus.VALID
+        result = _normalize_analysis_result(result)
         with self._connect() as conn:
+            rejection = _analysis_rejection(
+                result,
+                min_confidence=min_confidence,
+                min_relevance=min_relevance,
+                has_anchor_evidence=_has_anchor_evidence(
+                    conn=conn,
+                    schema=self._thesis_schema,
+                    result=result,
+                    reprocess_run_id=reprocess_run_id,
+                    now=clock() if clock is not None else datetime.now(timezone.utc),
+                ),
+            )
+            status = ValidationStatus.REJECTED if rejection else ValidationStatus.VALID
             analysis_id = self._insert_analysis(
                 conn=conn,
                 article=article,
@@ -264,10 +276,10 @@ class PostgresThesisBuilderRepository:
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_news_analyses "
             f"(article_id, ticker, exchange_code, sentiment, relevance, urgency, suggested_action, "
-            f"strategy, direction, event_type, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
+            f"strategy, direction, event_type, subject_relation, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
             f"market_context_status, market_context_as_of, market_context_snapshot, fundamentals_snapshot, is_market_moving, "
             f"content_type, validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING id"
         )
         with conn.cursor() as cur:
@@ -284,6 +296,7 @@ class PostgresThesisBuilderRepository:
                     result.candidate_strategy.value,
                     result.direction.value,
                     result.event_type,
+                    result.subject_relation.value,
                     result.price_impact_magnitude,
                     result.impact_horizon,
                     result.reasoning,
@@ -372,6 +385,8 @@ class PostgresThesisBuilderRepository:
             return None
 
         selected = unique_by_article[:required_evidence_count]
+        if not any(_is_direct_relation(analysis.subject_relation) for analysis in selected):
+            return None
         selected_article_ids = [analysis.article_id for analysis in selected]
         evidence = _evidence(selected=selected)
         max_age_seconds = max((now - _to_utc(item.article.published_at)).total_seconds() for item in selected)
@@ -598,7 +613,7 @@ class PostgresThesisBuilderRepository:
     def _load_valid_analyses(self, *, conn: psycopg.Connection, analysis_ids: list[int]) -> list[PersistedAnalysis]:
         sql = (
             f"SELECT id, article_id, article_snapshot, ticker, exchange_code, strategy, direction, confidence, reasoning, "
-            f"validation_status, rejection_reason_code, analyzed_at "
+            f"validation_status, rejection_reason_code, subject_relation, analyzed_at "
             f"FROM {self._thesis_schema}.t_news_analyses "
             f"WHERE id = ANY(%s) AND validation_status = 'valid' "
             f"ORDER BY analyzed_at, id"
@@ -830,13 +845,23 @@ def _reprocess_run(row: dict[str, Any]) -> ReprocessRunRecord:
 
 
 def _analysis_rejection(
-    result: LlmAnalysisResult, *, min_confidence: float, min_relevance: float = 0.0
+    result: LlmAnalysisResult,
+    *,
+    min_confidence: float,
+    min_relevance: float = 0.0,
+    has_anchor_evidence: bool = False,
 ) -> str | None:
     # Discard articles that are not genuinely about this instrument first, so incidental
     # name-drops (e.g. a comparison mention in another company's story) are dropped as noise
     # rather than retained for the analyst.
-    if not result.instrument_is_subject:
+    relation = _effective_subject_relation(result)
+    if relation is SubjectRelation.MACRO_SECTOR:
+        return "macro_sector_not_subject"
+    if relation is SubjectRelation.NONE:
         return "instrument_not_subject"
+    if relation in {SubjectRelation.SUPPLY_CHAIN, SubjectRelation.CUSTOMER_OR_PEER}:
+        if not has_anchor_evidence:
+            return "indirect_no_anchor_evidence"
     # Only news-catalyst articles may drive a thesis. Opinion articles that ARE about this
     # instrument never enter the evidence window; they are retained (validation_status=
     # 'rejected', but queryable via content_type) for a future stock-analyst component, which
@@ -854,6 +879,92 @@ def _analysis_rejection(
     if result.confidence < min_confidence:
         return "below_min_confidence"
     return None
+
+
+def _normalize_analysis_result(result: LlmAnalysisResult) -> LlmAnalysisResult:
+    relation = _effective_subject_relation(result)
+    normalized = result
+    if result.subject_relation is not relation or result.instrument_is_subject is not (
+        relation is SubjectRelation.DIRECT
+    ):
+        normalized = replace(
+            normalized,
+            subject_relation=relation,
+            instrument_is_subject=relation is SubjectRelation.DIRECT,
+        )
+    if (
+        relation is not SubjectRelation.DIRECT
+        and normalized.price_impact_magnitude in {"medium", "high"}
+        and not _reports_realized_surprise(normalized)
+    ):
+        normalized = replace(normalized, price_impact_magnitude="low")
+    return normalized
+
+
+def _effective_subject_relation(result: LlmAnalysisResult) -> SubjectRelation:
+    if result.subject_relation is SubjectRelation.NONE and result.instrument_is_subject:
+        return SubjectRelation.DIRECT
+    return result.subject_relation
+
+
+def _is_direct_relation(relation: SubjectRelation | None) -> bool:
+    return relation is None or relation is SubjectRelation.DIRECT
+
+
+def _reports_realized_surprise(result: LlmAnalysisResult) -> bool:
+    text = f"{result.event_type or ''} {result.reasoning}".lower()
+    surprise_terms = ("beat", "miss", "surprise", "actual", "reported", "results")
+    preview_terms = ("preview", "expected", "consensus", "forecast", "seen")
+    return any(term in text for term in surprise_terms) and not any(
+        term in text for term in preview_terms
+    )
+
+
+def _has_anchor_evidence(
+    *,
+    conn: psycopg.Connection,
+    schema: str,
+    result: LlmAnalysisResult,
+    reprocess_run_id: str | None,
+    now: datetime,
+) -> bool:
+    relation = _effective_subject_relation(result)
+    if relation is SubjectRelation.DIRECT:
+        return True
+    if relation not in {SubjectRelation.SUPPLY_CHAIN, SubjectRelation.CUSTOMER_OR_PEER}:
+        return False
+    active_card_sql = (
+        f"SELECT 1 FROM {schema}.t_thesis_cards "
+        f"WHERE ticker = %s AND exchange_code = %s "
+        f"AND validation_status = 'valid' AND expires_at > %s LIMIT 1"
+    )
+    direct_window_sql = (
+        f"SELECT 1 FROM {schema}.t_evidence_windows w "
+        f"JOIN LATERAL jsonb_array_elements_text(w.analysis_ids) AS ids(id_text) ON TRUE "
+        f"JOIN {schema}.t_news_analyses a ON a.id = ids.id_text::bigint "
+        f"WHERE w.ticker = %s AND w.exchange_code = %s AND w.strategy = %s "
+        f"AND COALESCE(w.direction, '') = COALESCE(%s, '') "
+        f"AND w.status = 'collecting' "
+        f"AND COALESCE(w.reprocess_run_id, '') = COALESCE(%s, '') "
+        f"AND a.validation_status = 'valid' "
+        f"AND COALESCE(a.subject_relation, 'direct') = 'direct' "
+        f"LIMIT 1"
+    )
+    with conn.cursor() as cur:
+        cur.execute(active_card_sql, (result.ticker, result.exchange_code, _to_utc(now)))
+        if cur.fetchone() is not None:
+            return True
+        cur.execute(
+            direct_window_sql,
+            (
+                result.ticker,
+                result.exchange_code,
+                result.candidate_strategy.value,
+                result.direction.value,
+                reprocess_run_id,
+            ),
+        )
+        return cur.fetchone() is not None
 
 
 def _already_priced_rejection(
@@ -1103,6 +1214,11 @@ def _analysis(row: dict[str, Any]) -> PersistedAnalysis:
         reasoning=row["reasoning"],
         validation_status=ValidationStatus(str(row["validation_status"])),
         rejection_reason_code=row["rejection_reason_code"],
+        subject_relation=(
+            SubjectRelation(str(row["subject_relation"]))
+            if row.get("subject_relation")
+            else None
+        ),
         analyzed_at=_to_utc(row["analyzed_at"]),
     )
 

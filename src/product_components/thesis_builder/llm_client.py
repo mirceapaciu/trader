@@ -10,6 +10,7 @@ from .models import (
     LlmAnalysisResult,
     LlmSynthesisResult,
     LlmTriageResult,
+    SubjectRelation,
     ThesisStrategy,
     TradeDirection,
 )
@@ -303,6 +304,9 @@ def parse_analysis_result(
     bullets = raw.get("evidence_bullet_candidates")
     if not isinstance(bullets, list):
         bullets = []
+    subject_relation = _parse_subject_relation(
+        raw.get("subject_relation"), instrument_is_subject=raw.get("instrument_is_subject")
+    )
     return LlmAnalysisResult(
         ticker=ticker,
         exchange_code=exchange_code,
@@ -315,8 +319,9 @@ def parse_analysis_result(
         confidence=confidence,
         reasoning=str(raw.get("reasoning") or ""),
         is_market_moving=bool(raw.get("is_market_moving", direction is not TradeDirection.HOLD)),
-        instrument_is_subject=bool(raw.get("instrument_is_subject", False)),
+        instrument_is_subject=subject_relation is SubjectRelation.DIRECT,
         content_type=_parse_content_type(raw.get("content_type")),
+        subject_relation=subject_relation,
         event_type=str(raw["event_type"]) if raw.get("event_type") else None,
         price_impact_magnitude=_enum_or_none(
             raw.get("price_impact_magnitude"), allowed={"low", "medium", "high"}
@@ -391,24 +396,27 @@ def _build_prompt(
         {
             "task": (
                 "Analyze whether this accepted financial news article supports a thesis "
-                "card for the SPECIFIED instrument. First decide whether the instrument is "
-                "genuinely a subject of the article (its company/ticker is discussed, not "
-                "merely listed among many names or matched incidentally). If the instrument "
-                "is not a clear subject, set instrument_is_subject=false, set relevance low, "
-                "and do NOT fabricate a thesis from generic market commentary, broad "
-                "'best stocks to buy' listicles, or unrelated news. Also classify the "
-                "article via content_type FOR THIS INSTRUMENT: only a news_catalyst may drive a thesis."
+                "card for the SPECIFIED instrument. First classify the relationship between "
+                "the article event and the instrument using subject_relation, then judge "
+                "whether the event is material to this instrument. Do NOT fabricate a thesis "
+                "from generic market commentary, broad 'best stocks to buy' listicles, or "
+                "unrelated news. Also classify the article via content_type FOR THIS "
+                "INSTRUMENT: only a news_catalyst may drive a thesis."
             ),
             "instrument_grounding_rules": [
-                "instrument_is_subject must be true only when the article is materially about this instrument.",
-                "Generic listicles, sector roundups, or articles where the instrument is not named are NOT about it.",
-                "When unsure, prefer instrument_is_subject=false and low relevance.",
+                "subject_relation=direct when the article event is about the specified company's own results, guidance, operations, products, contracts, litigation, regulation, management, or securities.",
+                "subject_relation=supply_chain when the event is about a supplier or customer demand channel that may read through to the instrument.",
+                "subject_relation=customer_or_peer when the event is about a customer, competitor, or peer and may read through by comparison.",
+                "subject_relation=macro_sector when the event is a broad macro, commodity, rates, policy, geopolitical, or sector event rather than company-specific.",
+                "subject_relation=none when the instrument is only incidentally tagged or unrelated.",
+                "instrument_is_subject is a compatibility field and must be true only for subject_relation=direct.",
+                "When unsure, prefer subject_relation=none, instrument_is_subject=false, and low relevance.",
             ],
             "content_type_rules": [
                 "content_type is judged for the SPECIFIED instrument, not the article as a whole.",
-                "content_type=news_catalyst only when the article reports a concrete, datable event about "
-                "THIS instrument likely to move ITS price (e.g. its earnings, guidance change, M&A, "
-                "regulatory action, product/contract news).",
+                "content_type=news_catalyst only when the article reports a concrete, datable event "
+                "likely to move THIS instrument's price, including direct catalysts and material "
+                "supply-chain/customer/peer read-throughs.",
                 "content_type=opinion for everything else about this instrument: valuation/opinion pieces, "
                 "listicles, 'best stocks to buy', price-target commentary, or analysis with no new event.",
                 "If the article's event concerns a DIFFERENT company and this instrument is only discussed by "
@@ -475,6 +483,7 @@ def _build_prompt(
                 "instrument_is_subject",
                 "content_type",
                 "event_type",
+                "subject_relation",
                 "price_impact_magnitude",
                 "impact_horizon",
                 "evidence_bullet_candidates",
@@ -642,6 +651,13 @@ def _parse_content_type_recall_biased(value: Any) -> ContentType:
         return ContentType.NEWS_CATALYST
 
 
+def _parse_subject_relation(value: Any, *, instrument_is_subject: Any) -> SubjectRelation:
+    try:
+        return SubjectRelation(str(value))
+    except ValueError:
+        return SubjectRelation.DIRECT if bool(instrument_is_subject) else SubjectRelation.NONE
+
+
 def _enum_or_none(value: Any, *, allowed: set[str]) -> str | None:
     # Cached backtester responses and fake clients may carry values outside the
     # strict schema; anything unrecognized degrades to None (which the DB CHECK
@@ -700,6 +716,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "instrument_is_subject",
             "content_type",
             "event_type",
+            "subject_relation",
             "price_impact_magnitude",
             "impact_horizon",
             "evidence_bullet_candidates",
@@ -732,6 +749,10 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
                 "enum": ["news_catalyst", "opinion"],
             },
             "event_type": {"type": ["string", "null"]},
+            "subject_relation": {
+                "type": "string",
+                "enum": ["direct", "supply_chain", "customer_or_peer", "macro_sector", "none"],
+            },
             "price_impact_magnitude": {"type": ["string", "null"], "enum": ["low", "medium", "high", None]},
             "impact_horizon": {"type": ["string", "null"], "enum": ["intraday", "1d", "5d", None]},
             "evidence_bullet_candidates": {"type": "array", "items": {"type": "string"}},

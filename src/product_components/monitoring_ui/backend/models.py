@@ -266,6 +266,7 @@ class NewsAnalysisItem(BaseModel):
     exchange_code: str
     analyzed_at: datetime
     content_type: str | None = None
+    subject_relation: str | None = None
     validation_status: str
     rejection_reason_code: str | None = None
     confidence: float

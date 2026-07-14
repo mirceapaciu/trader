@@ -552,6 +552,12 @@ function AnalysisDetail({ item }: { item: NewsAnalysisItem }) {
           <strong>{formatToken(item.content_type)}</strong>
         </div>
       )}
+      {item.subject_relation && (
+        <div className="pending-detail-row">
+          <span>Subject relation</span>
+          <strong>{formatToken(item.subject_relation)}</strong>
+        </div>
+      )}
       <div className="pending-detail-row">
         <span>Status</span>
         <strong>{formatToken(item.validation_status)}</strong>

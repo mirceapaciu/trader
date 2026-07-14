@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_news_analyses (
     strategy TEXT,
     direction TEXT,
     event_type TEXT,
+    subject_relation TEXT,
     price_impact_magnitude TEXT,
     impact_horizon TEXT,
     reasoning TEXT,
@@ -52,6 +53,11 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_news_analyses (
         CHECK (price_impact_magnitude IS NULL OR price_impact_magnitude IN ('low', 'medium', 'high')),
     CONSTRAINT ck_news_analyses_impact_horizon
         CHECK (impact_horizon IS NULL OR impact_horizon IN ('intraday', '1d', '5d')),
+    CONSTRAINT ck_news_analyses_subject_relation
+        CHECK (
+            subject_relation IS NULL
+            OR subject_relation IN ('direct', 'supply_chain', 'customer_or_peer', 'macro_sector', 'none')
+        ),
     CONSTRAINT ck_news_analyses_market_context_status
         CHECK (market_context_status IS NULL OR market_context_status IN ('fresh', 'delayed', 'stale', 'missing')),
     CONSTRAINT ck_news_analyses_validation_status
@@ -71,6 +77,9 @@ ALTER TABLE thesis_builder.t_news_analyses
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS event_type TEXT;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD COLUMN IF NOT EXISTS subject_relation TEXT;
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS price_impact_magnitude TEXT;
@@ -121,6 +130,16 @@ ALTER TABLE thesis_builder.t_news_analyses
 ALTER TABLE thesis_builder.t_news_analyses
     ADD CONSTRAINT ck_news_analyses_impact_horizon
         CHECK (impact_horizon IS NULL OR impact_horizon IN ('intraday', '1d', '5d'));
+
+ALTER TABLE thesis_builder.t_news_analyses
+    DROP CONSTRAINT IF EXISTS ck_news_analyses_subject_relation;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD CONSTRAINT ck_news_analyses_subject_relation
+        CHECK (
+            subject_relation IS NULL
+            OR subject_relation IN ('direct', 'supply_chain', 'customer_or_peer', 'macro_sector', 'none')
+        );
 
 ALTER TABLE thesis_builder.t_news_analyses
     DROP CONSTRAINT IF EXISTS t_news_analyses_article_id_fkey;

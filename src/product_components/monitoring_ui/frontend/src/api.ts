@@ -374,6 +374,7 @@ export type NewsAnalysisItem = {
   exchange_code: string;
   analyzed_at: string;
   content_type?: string | null;
+  subject_relation?: string | null;
   validation_status: string;
   rejection_reason_code?: string | null;
   confidence: number;
