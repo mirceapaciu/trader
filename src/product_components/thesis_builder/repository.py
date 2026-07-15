@@ -19,6 +19,7 @@ from .models import (
     LlmTriageResult,
     NewsArticle,
     PersistedAnalysis,
+    StoryAssignmentCandidate,
     SubjectRelation,
     ThesisCardSignal,
     ThesisStrategy,
@@ -69,10 +70,12 @@ class PostgresThesisBuilderRepository:
         dsn: str,
         thesis_schema: str,
         card_synthesizer: Any | None = None,
+        story_assigner: Any | None = None,
     ) -> None:
         self._dsn = dsn
         self._thesis_schema = _safe_identifier(thesis_schema)
         self._card_synthesizer = card_synthesizer
+        self._story_assigner = story_assigner
 
     def persist_rejected_analysis(
         self,
@@ -148,6 +151,9 @@ class PostgresThesisBuilderRepository:
         synthesis_model: str | None = None,
         synthesis_max_output_tokens: int | None = None,
         synthesis_fallback_to_mechanical: bool = False,
+        story_scoping_enabled: bool = False,
+        story_assignment_model: str | None = None,
+        story_assignment_max_output_tokens: int | None = None,
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
@@ -199,6 +205,9 @@ class PostgresThesisBuilderRepository:
                     synthesis_model=synthesis_model,
                     synthesis_max_output_tokens=synthesis_max_output_tokens,
                     synthesis_fallback_to_mechanical=synthesis_fallback_to_mechanical,
+                    story_scoping_enabled=story_scoping_enabled,
+                    story_assignment_model=story_assignment_model,
+                    story_assignment_max_output_tokens=story_assignment_max_output_tokens,
                     clock=clock,
                     reprocess_run_id=reprocess_run_id,
                 )
@@ -341,12 +350,38 @@ class PostgresThesisBuilderRepository:
         synthesis_model: str | None = None,
         synthesis_max_output_tokens: int | None = None,
         synthesis_fallback_to_mechanical: bool = False,
+        story_scoping_enabled: bool = False,
+        story_assignment_model: str | None = None,
+        story_assignment_max_output_tokens: int | None = None,
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> ThesisCardSignal | None:
         now = clock() if clock is not None else datetime.now(timezone.utc)
         real_now = datetime.now(timezone.utc)
-        window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, required_evidence_count=required_evidence_count, reprocess_run_id=reprocess_run_id)
+        if story_scoping_enabled:
+            target = self._resolve_story_target(
+                conn=conn,
+                article=article,
+                result=result,
+                analysis_id=analysis_id,
+                now=now,
+                required_evidence_count=required_evidence_count,
+                story_assignment_model=story_assignment_model,
+                story_assignment_max_output_tokens=story_assignment_max_output_tokens,
+                reprocess_run_id=reprocess_run_id,
+            )
+            if target["target_type"] == "card":
+                self._insert_card_corroboration(
+                    conn=conn,
+                    card_id=str(target["target_id"]),
+                    article_id=article.id,
+                    analysis_id=analysis_id,
+                    matched_at=now,
+                )
+                return None
+            window = target["window"]
+        else:
+            window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, required_evidence_count=required_evidence_count, reprocess_run_id=reprocess_run_id)
         candidate_analysis_ids = list(dict.fromkeys([*window["analysis_ids"], analysis_id]))
         analyses = self._load_valid_analyses(conn=conn, analysis_ids=candidate_analysis_ids)
         # Rolling window: evidence published more than evidence_collection_max_minutes
@@ -519,6 +554,7 @@ class PostgresThesisBuilderRepository:
             expires_at=expires_at,
             created_at=created_at,
             default_time_horizon=default_time_horizon,
+            story_narrative=window.get("story_narrative"),
         )
         if synthesis_result is not None:
             self._insert_synthesis_verdict(
@@ -541,6 +577,225 @@ class PostgresThesisBuilderRepository:
             return None
         return signal
 
+    def _resolve_story_target(
+        self,
+        *,
+        conn: psycopg.Connection,
+        article: NewsArticle,
+        result: LlmAnalysisResult,
+        analysis_id: int,
+        now: datetime,
+        required_evidence_count: int,
+        story_assignment_model: str | None,
+        story_assignment_max_output_tokens: int | None,
+        reprocess_run_id: str | None,
+    ) -> dict[str, Any]:
+        candidates = self._load_story_candidates(
+            conn=conn,
+            result=result,
+            now=now,
+            reprocess_run_id=reprocess_run_id,
+        )
+        candidate_targets = [candidate.target for candidate in candidates]
+        assignment_source = "new_story"
+        chosen_target = "new_story"
+        llm_model = story_assignment_model or ""
+        tokens_used = 0
+        response_json: dict[str, Any] = {}
+        error_code: str | None = None
+
+        if candidates:
+            try:
+                if self._story_assigner is None:
+                    raise RuntimeError("story_assignment_unavailable")
+                assignment = self._story_assigner.assign_story(
+                    article=article,
+                    analysis=result,
+                    candidates=candidates,
+                )
+                chosen_target = assignment.target
+                assignment_source = "matched" if chosen_target != "new_story" else "new_story"
+                llm_model = assignment.llm_model or llm_model
+                tokens_used = assignment.estimated_tokens
+                response_json = assignment.raw_response
+            except Exception as exc:
+                assignment_source = "fallback"
+                error_code = str(exc) or exc.__class__.__name__
+                fallback_window = self._load_oldest_collecting_window(
+                    conn=conn,
+                    result=result,
+                    reprocess_run_id=reprocess_run_id,
+                )
+                if fallback_window is not None:
+                    chosen_target = f"window:{fallback_window['id']}"
+                    self._insert_story_assignment(
+                        conn=conn,
+                        analysis_id=analysis_id,
+                        article_id=article.id,
+                        candidate_targets=candidate_targets,
+                        chosen_target=chosen_target,
+                        assignment_source=assignment_source,
+                        llm_model=llm_model,
+                        max_output_tokens=story_assignment_max_output_tokens,
+                        tokens_used=tokens_used,
+                        response_json=response_json,
+                        error_code=error_code,
+                        reprocess_run_id=reprocess_run_id,
+                    )
+                    return {"target_type": "window", "target_id": fallback_window["id"], "window": fallback_window}
+                chosen_target = "new_story"
+
+        if chosen_target == "new_story":
+            window = self._create_story_window(
+                conn=conn,
+                result=result,
+                article=article,
+                analysis_id=analysis_id,
+                required_evidence_count=required_evidence_count,
+                reprocess_run_id=reprocess_run_id,
+            )
+            chosen_target = f"window:{window['id']}"
+            self._insert_story_assignment(
+                conn=conn,
+                analysis_id=analysis_id,
+                article_id=article.id,
+                candidate_targets=candidate_targets,
+                chosen_target="new_story",
+                assignment_source=assignment_source,
+                llm_model=llm_model,
+                max_output_tokens=story_assignment_max_output_tokens,
+                tokens_used=tokens_used,
+                response_json=response_json,
+                error_code=error_code,
+                reprocess_run_id=reprocess_run_id,
+            )
+            return {"target_type": "window", "target_id": window["id"], "window": window}
+
+        target_type, _, target_id_text = chosen_target.partition(":")
+        self._insert_story_assignment(
+            conn=conn,
+            analysis_id=analysis_id,
+            article_id=article.id,
+            candidate_targets=candidate_targets,
+            chosen_target=chosen_target,
+            assignment_source=assignment_source,
+            llm_model=llm_model,
+            max_output_tokens=story_assignment_max_output_tokens,
+            tokens_used=tokens_used,
+            response_json=response_json,
+            error_code=error_code,
+            reprocess_run_id=reprocess_run_id,
+        )
+        if target_type == "card":
+            return {"target_type": "card", "target_id": target_id_text}
+        if target_type == "window":
+            window = self._load_window_by_id(conn=conn, window_id=int(target_id_text))
+            if window is not None:
+                return {"target_type": "window", "target_id": window["id"], "window": window}
+        raise ValueError("invalid_story_assignment_target")
+
+    def _load_story_candidates(
+        self,
+        *,
+        conn: psycopg.Connection,
+        result: LlmAnalysisResult,
+        now: datetime,
+        reprocess_run_id: str | None,
+    ) -> list[StoryAssignmentCandidate]:
+        candidates: list[StoryAssignmentCandidate] = []
+        sql = (
+            f"SELECT id, story_narrative FROM {self._thesis_schema}.t_evidence_windows "
+            f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s "
+            f"AND COALESCE(direction, '') = COALESCE(%s, '') AND status = 'collecting' "
+            f"AND COALESCE(reprocess_run_id, '') = COALESCE(%s, '') "
+            f"ORDER BY window_started_at, id"
+        )
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (result.ticker, result.exchange_code, result.candidate_strategy.value, result.direction.value, reprocess_run_id))
+            for row in cur.fetchall():
+                narrative = str(row["story_narrative"] or "").strip()
+                if narrative:
+                    candidates.append(StoryAssignmentCandidate(target=f"window:{row['id']}", narrative=narrative))
+        card_sql = (
+            f"SELECT id, story_narrative FROM {self._thesis_schema}.t_thesis_cards "
+            f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s AND direction = %s "
+            f"AND validation_status = 'valid' AND expires_at > %s "
+            f"ORDER BY created_at, id"
+        )
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(card_sql, (result.ticker, result.exchange_code, result.candidate_strategy.value, result.direction.value, _to_utc(now)))
+            for row in cur.fetchall():
+                narrative = str(row["story_narrative"] or "").strip()
+                if narrative:
+                    candidates.append(StoryAssignmentCandidate(target=f"card:{row['id']}", narrative=narrative))
+        return candidates
+
+    def _load_oldest_collecting_window(
+        self,
+        *,
+        conn: psycopg.Connection,
+        result: LlmAnalysisResult,
+        reprocess_run_id: str | None,
+    ) -> dict[str, Any] | None:
+        sql = (
+            f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative "
+            f"FROM {self._thesis_schema}.t_evidence_windows "
+            f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s "
+            f"AND COALESCE(direction, '') = COALESCE(%s, '') AND status = 'collecting' "
+            f"AND COALESCE(reprocess_run_id, '') = COALESCE(%s, '') "
+            f"ORDER BY window_started_at, id LIMIT 1"
+        )
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (result.ticker, result.exchange_code, result.candidate_strategy.value, result.direction.value, reprocess_run_id))
+            row = cur.fetchone()
+        return _window(row) if row is not None else None
+
+    def _load_window_by_id(self, *, conn: psycopg.Connection, window_id: int) -> dict[str, Any] | None:
+        sql = (
+            f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative "
+            f"FROM {self._thesis_schema}.t_evidence_windows WHERE id = %s"
+        )
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, (window_id,))
+            row = cur.fetchone()
+        return _window(row) if row is not None else None
+
+    def _create_story_window(
+        self,
+        *,
+        conn: psycopg.Connection,
+        result: LlmAnalysisResult,
+        article: NewsArticle,
+        analysis_id: int,
+        required_evidence_count: int,
+        reprocess_run_id: str | None,
+    ) -> dict[str, Any]:
+        story_narrative = _story_narrative(article=article, result=result)
+        sql = (
+            f"INSERT INTO {self._thesis_schema}.t_evidence_windows "
+            f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count, story_narrative) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s, %s) "
+            f"RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative"
+        )
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                sql,
+                (
+                    result.ticker,
+                    result.exchange_code,
+                    result.candidate_strategy.value,
+                    result.direction.value,
+                    Json([article.id]),
+                    Json([analysis_id]),
+                    _to_utc(article.published_at),
+                    _to_utc(article.published_at),
+                    reprocess_run_id,
+                    required_evidence_count,
+                    story_narrative,
+                ),
+            )
+            return _window(cur.fetchone())
+
     def _load_or_create_window(
         self,
         *,
@@ -553,7 +808,7 @@ class PostgresThesisBuilderRepository:
         reprocess_run_id: str | None = None,
     ) -> dict[str, Any]:
         select_sql = (
-            f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count "
+            f"SELECT id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative "
             f"FROM {self._thesis_schema}.t_evidence_windows "
             f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s "
             f"AND COALESCE(direction, '') = COALESCE(%s, '') AND status = 'collecting' "
@@ -571,7 +826,7 @@ class PostgresThesisBuilderRepository:
             insert_sql = (
                 f"INSERT INTO {self._thesis_schema}.t_evidence_windows "
                 f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count"
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative"
             )
             cur.execute(
                 insert_sql,
@@ -623,13 +878,13 @@ class PostgresThesisBuilderRepository:
             rows = cur.fetchall()
         return [_analysis(row) for row in rows]
 
-    def _insert_card(self, *, conn: psycopg.Connection, card_id: str, idempotency_key: str, result: LlmAnalysisResult, evidence: list[dict[str, Any]], source_analysis_ids: list[int], confidence: float, risk_box: dict[str, Any], market_context_snapshot: dict[str, Any] | None, validation_status: ValidationStatus, rejection_reason_code: str | None, max_evidence_age_seconds: float, allowed_max_evidence_age_seconds: float, evidence_age_exceeded_seconds: float, expires_at: datetime, created_at: datetime, default_time_horizon: str) -> bool:
+    def _insert_card(self, *, conn: psycopg.Connection, card_id: str, idempotency_key: str, result: LlmAnalysisResult, evidence: list[dict[str, Any]], source_analysis_ids: list[int], confidence: float, risk_box: dict[str, Any], market_context_snapshot: dict[str, Any] | None, validation_status: ValidationStatus, rejection_reason_code: str | None, max_evidence_age_seconds: float, allowed_max_evidence_age_seconds: float, evidence_age_exceeded_seconds: float, expires_at: datetime, created_at: datetime, default_time_horizon: str, story_narrative: str | None = None) -> bool:
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_thesis_cards "
             f"(id, idempotency_key, ticker, exchange_code, direction, time_horizon, strategy, evidence, source_analysis_ids, confidence, "
             f"risk_max_loss_usd, risk_stop_condition, risk_invalidation_condition, market_context_status, market_context_as_of, market_context_snapshot, "
-            f"validation_status, validation_errors, rejection_reason_code, max_evidence_age_seconds, allowed_max_evidence_age_seconds, evidence_age_exceeded_seconds, expires_at, created_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"validation_status, validation_errors, rejection_reason_code, max_evidence_age_seconds, allowed_max_evidence_age_seconds, evidence_age_exceeded_seconds, expires_at, created_at, story_narrative) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (idempotency_key) DO NOTHING"
         )
         with conn.cursor() as cur:
@@ -660,6 +915,7 @@ class PostgresThesisBuilderRepository:
                     evidence_age_exceeded_seconds,
                     _to_utc(expires_at),
                     _to_utc(created_at),
+                    story_narrative,
                 ),
             )
             return cur.rowcount == 1
@@ -700,6 +956,73 @@ class PostgresThesisBuilderRepository:
                     llm_model or "",
                     max_output_tokens,
                     Json(response_json),
+                ),
+            )
+
+    def _insert_card_corroboration(
+        self,
+        *,
+        conn: psycopg.Connection,
+        card_id: str,
+        article_id: str,
+        analysis_id: int,
+        matched_at: datetime,
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._thesis_schema}.t_card_corroborations "
+            f"(card_id, article_id, analysis_id, matched_at) "
+            f"VALUES (%s, %s, %s, %s) "
+            f"ON CONFLICT (card_id, article_id) DO NOTHING"
+        )
+        with conn.cursor() as cur:
+            cur.execute(sql, (card_id, article_id, analysis_id, _to_utc(matched_at)))
+
+    def _insert_story_assignment(
+        self,
+        *,
+        conn: psycopg.Connection,
+        analysis_id: int,
+        article_id: str,
+        candidate_targets: list[str],
+        chosen_target: str,
+        assignment_source: str,
+        llm_model: str,
+        max_output_tokens: int | None,
+        tokens_used: int,
+        response_json: dict[str, Any],
+        error_code: str | None,
+        reprocess_run_id: str | None,
+    ) -> None:
+        sql = (
+            f"INSERT INTO {self._thesis_schema}.t_story_assignments "
+            f"(analysis_id, article_id, candidate_targets, chosen_target, assignment_source, "
+            f"llm_model, max_output_tokens, tokens_used, response_json, error_code, reprocess_run_id) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"ON CONFLICT (analysis_id) DO UPDATE SET "
+            f"candidate_targets = EXCLUDED.candidate_targets, "
+            f"chosen_target = EXCLUDED.chosen_target, "
+            f"assignment_source = EXCLUDED.assignment_source, "
+            f"llm_model = EXCLUDED.llm_model, "
+            f"max_output_tokens = EXCLUDED.max_output_tokens, "
+            f"tokens_used = EXCLUDED.tokens_used, "
+            f"response_json = EXCLUDED.response_json, "
+            f"error_code = EXCLUDED.error_code"
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    analysis_id,
+                    article_id,
+                    Json(candidate_targets),
+                    chosen_target,
+                    assignment_source,
+                    llm_model,
+                    max_output_tokens,
+                    tokens_used,
+                    Json(response_json),
+                    error_code,
+                    reprocess_run_id,
                 ),
             )
 
@@ -1181,6 +1504,7 @@ def _window(row: dict[str, Any]) -> dict[str, Any]:
         "window_started_at": _to_utc(row["window_started_at"]),
         "last_evidence_at": _to_utc(row["last_evidence_at"]),
         "required_evidence_count": int(row["required_evidence_count"] or 3),
+        "story_narrative": row.get("story_narrative"),
     }
 
 
@@ -1235,6 +1559,19 @@ def _article_snapshot(article: NewsArticle) -> dict[str, Any]:
         "fetched_at": _to_utc(article.fetched_at).isoformat(),
         "sentiment_source": article.sentiment_source,
     }
+
+
+def _story_narrative(*, article: NewsArticle, result: LlmAnalysisResult) -> str:
+    parts = [f"Headline: {article.headline.strip()}"]
+    if result.event_type:
+        parts.append(f"Event type: {result.event_type.strip()}")
+    bullets = [bullet.strip() for bullet in result.evidence_bullet_candidates if bullet.strip()]
+    if bullets:
+        parts.append("Evidence bullets:")
+        parts.extend(f"- {bullet}" for bullet in bullets)
+    elif article.summary:
+        parts.append(f"Summary: {article.summary.strip()}")
+    return "\n".join(parts)
 
 
 def _safe_identifier(value: str) -> str:

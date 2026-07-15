@@ -913,6 +913,7 @@ function ThesisCardsPanel({ window }: { window: ThroughputPresetWindow }) {
                   <th>Confidence</th>
                   <th>Status</th>
                   <th>Expires in</th>
+                  <th>Corrob.</th>
                   <th>Created</th>
                   <th>Signal</th>
                 </tr>
@@ -941,6 +942,7 @@ function ThesisCardsPanel({ window }: { window: ThroughputPresetWindow }) {
                       </span>
                     </td>
                     <td>{formatExpiresIn(c.expires_in_seconds)}</td>
+                    <td>{c.corroboration_count}</td>
                     <td>{formatDate(c.created_at)}</td>
                     <td>
                       <span className={c.signal_published ? "chip" : "chip warning"}>
@@ -989,6 +991,12 @@ function ThesisCardDetail({ card: c }: { card: ThesisCardSummary }) {
         <span>Time horizon</span>
         <strong>{formatToken(c.time_horizon)}</strong>
       </div>
+      {c.story_narrative && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>Story</span>
+          <strong>{c.story_narrative}</strong>
+        </div>
+      )}
       <div className="pending-detail-row">
         <span>Confidence</span>
         <strong>{c.confidence.toFixed(2)}</strong>
@@ -1014,6 +1022,10 @@ function ThesisCardDetail({ card: c }: { card: ThesisCardSummary }) {
       <div className="pending-detail-row">
         <span>Evidence</span>
         <strong>{c.evidence_count} article{c.evidence_count === 1 ? "" : "s"}</strong>
+      </div>
+      <div className="pending-detail-row">
+        <span>Corroborations</span>
+        <strong>{c.corroboration_count} article{c.corroboration_count === 1 ? "" : "s"}</strong>
       </div>
       <div className="pending-detail-row">
         <span>Signal</span>

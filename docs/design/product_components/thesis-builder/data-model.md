@@ -34,6 +34,7 @@ Logical fields:
 - `max_evidence_age_seconds`: maximum age, in seconds, of any evidence article at card validation time.
 - `allowed_max_evidence_age_seconds`: freshness limit used for validation.
 - `evidence_age_exceeded_seconds`: amount by which evidence age exceeded the freshness limit; zero or null for non-stale cards.
+- `story_narrative`: optional seed-stable story narrative copied from the evidence window that produced the card.
 - `signal_published_at`: optional timestamp when the executable signal was published.
 - `expires_at`: card expiry timestamp.
 - `created_at`: card creation timestamp.
@@ -75,6 +76,41 @@ Behavioral constraints:
   fields should reflect the synthesis output when synthesis is enabled.
 - This table is ThesisBuilder-owned audit data; downstream components consume executable card
   signals and shared review state, not synthesis rows directly.
+
+### `t_card_corroborations`
+
+Purpose:
+- Records later valid analyses that match an unexpired satisfied card's story after the card is already frozen.
+
+Logical fields:
+- `id` (primary key): corroboration row identity.
+- `card_id`: frozen thesis card that received corroborating coverage.
+- `article_id`: incoming article identity.
+- `analysis_id`: valid analysis row for the incoming article/instrument pair.
+- `matched_at`: timestamp when story assignment matched the card.
+- `created_at`: row creation timestamp.
+
+Behavioral constraints:
+- Corroboration rows do not mutate the card, publish signals, or alter shared review state.
+- `(card_id, article_id)` is unique so repeated processing does not inflate corroboration counts.
+
+### `t_story_assignments`
+
+Purpose:
+- Durable audit trail for story-scoping decisions made after analysis persistence and before evidence-window mutation.
+
+Logical fields:
+- `id` (primary key): assignment row identity.
+- `analysis_id`: valid analysis being assigned; unique for idempotent audit updates.
+- `article_id`: incoming article identity.
+- `candidate_targets`: JSON list of candidate `window:<id>` and `card:<id>` targets shown to the assignment step.
+- `chosen_target`: `window:<id>`, `card:<id>`, or `new_story`.
+- `assignment_source`: `matched`, `new_story`, or `fallback`.
+- `llm_model`, `max_output_tokens`, `tokens_used`: configured assignment call metadata and token usage.
+- `response_json`: raw structured assignment response when available.
+- `error_code`: transport, parser, or schema error when fallback was used.
+- `reprocess_run_id`: optional regeneration/reprocess scope.
+- `created_at`: row creation timestamp.
 
 ### `t_news_analyses`
 
@@ -156,6 +192,7 @@ Logical fields:
 - `analysis_ids`: analysis ids currently in the window.
 - `window_started_at`: `published_at` of the oldest article still retained in the rolling window.
 - `last_evidence_at`: timestamp of most recent eligible article.
+- `story_narrative`: optional seed-stable narrative used to identify the underlying story when story scoping is enabled.
 - `status`: `collecting`, `satisfied`, or `rejected` (`expired` is a legacy value no longer produced).
 - `status_reason`: optional machine-readable reason for terminal states.
 - `created_at`: row creation timestamp.
@@ -211,6 +248,7 @@ Per exported card, the contract returns:
   publication and ingestion timestamps are sourced from the article snapshot ThesisBuilder already
   retains in `t_news_analyses.article_snapshot`, so consumers can compute NewsFetcher and
   ThesisBuilder pipeline delays without a separate NewsFetcher export.
+- `story_narrative` and `corroboration_count` for story-scoped cards.
 
 Constraints:
 - The export is read-only and must not expose mutation of ThesisBuilder state.

@@ -3,16 +3,20 @@ from datetime import datetime, timezone
 
 from src.product_components.thesis_builder.llm_client import (
     ThesisAnalyzer,
+    ThesisStoryAssigner,
     _THESIS_ANALYSIS_RESPONSE_FORMAT,
     _build_prompt,
     _build_triage_prompt,
     parse_analysis_result,
+    parse_story_assignment_result,
     parse_synthesis_result,
     parse_triage_result,
 )
 from src.product_components.thesis_builder.models import (
     ContentType,
+    LlmAnalysisResult,
     NewsArticle,
+    StoryAssignmentCandidate,
     SubjectRelation,
     ThesisStrategy,
     TradeDirection,
@@ -487,6 +491,38 @@ def test_triage_uses_same_token_budget_counter() -> None:
     assert analyzer.tokens_used == 37
 
 
+def test_parse_story_assignment_result_rejects_unknown_target() -> None:
+    assert parse_story_assignment_result(
+        {"target": "window:7", "estimated_tokens": 5},
+        allowed_targets={"window:7", "new_story"},
+    ).target == "window:7"
+    with pytest.raises(ValueError, match="invalid_story_assignment_target"):
+        parse_story_assignment_result(
+            {"target": "window:8", "estimated_tokens": 5},
+            allowed_targets={"window:7", "new_story"},
+        )
+
+
+def test_story_assigner_uses_story_assignment_endpoint_and_budget() -> None:
+    assigner = ThesisStoryAssigner(
+        client=_StoryAssignmentClient(),
+        model="story-model",
+        max_tokens_per_run=10000,
+        max_tokens_per_item=90,
+    )
+
+    result = assigner.assign_story(
+        article=_article(),
+        analysis=_story_analysis(),
+        candidates=[StoryAssignmentCandidate(target="window:1", narrative="Guidance raise")],
+    )
+
+    assert result.target == "window:1"
+    assert result.estimated_tokens == 29
+    assert result.llm_model == "story-model"
+    assert assigner.tokens_used == 29
+
+
 class _CachedClient:
     def get_cached_analysis(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
         return {
@@ -526,6 +562,38 @@ class _TriageClient:
 
     def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
         raise AssertionError("triage should use analyze_triage")
+
+
+class _StoryAssignmentClient:
+    def analyze_story_assignment(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
+        assert model == "story-model"
+        assert max_output_tokens == 90
+        assert "window:1" in prompt
+        return {"target": "window:1", "estimated_tokens": 29}
+
+    def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
+        raise AssertionError("story assignment should use analyze_story_assignment")
+
+
+def _story_analysis() -> LlmAnalysisResult:
+    return LlmAnalysisResult(
+        ticker="AAPL",
+        exchange_code="XNAS",
+        sentiment=0.8,
+        relevance=0.9,
+        urgency="today",
+        suggested_action="buy",
+        candidate_strategy=ThesisStrategy.EVENT_DRIVEN,
+        direction=TradeDirection.BUY,
+        confidence=0.75,
+        reasoning="Guidance improved.",
+        is_market_moving=True,
+        instrument_is_subject=True,
+        content_type=ContentType.NEWS_CATALYST,
+        subject_relation=SubjectRelation.DIRECT,
+        event_type="guidance",
+        evidence_bullet_candidates=["Guidance improved."],
+    )
 
 
 def _analysis_payload(**overrides) -> dict:

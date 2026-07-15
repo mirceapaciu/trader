@@ -57,6 +57,9 @@ class ThesisBuilderReprocessor:
         already_priced_event_driven_return_threshold: float = 0.04,
         already_priced_sentiment_momentum_atr_multiple: float = 2.0,
         already_priced_sentiment_momentum_return_threshold: float = 0.06,
+        story_scoping_enabled: bool = False,
+        story_assignment_model: str | None = None,
+        story_assignment_max_output_tokens: int | None = None,
     ) -> None:
         self._dsn = dsn
         self._news_fetcher_schema = news_fetcher_schema
@@ -80,6 +83,9 @@ class ThesisBuilderReprocessor:
         self._already_priced_event_driven_return_threshold = already_priced_event_driven_return_threshold
         self._already_priced_sentiment_momentum_atr_multiple = already_priced_sentiment_momentum_atr_multiple
         self._already_priced_sentiment_momentum_return_threshold = already_priced_sentiment_momentum_return_threshold
+        self._story_scoping_enabled = story_scoping_enabled
+        self._story_assignment_model = story_assignment_model
+        self._story_assignment_max_output_tokens = story_assignment_max_output_tokens
 
     def reprocess(self, *, days_back: int, max_articles: int = 200) -> ReprocessResult:
         run_id = str(uuid.uuid4())
@@ -220,6 +226,9 @@ class ThesisBuilderReprocessor:
                     already_priced_event_driven_return_threshold=self._already_priced_event_driven_return_threshold,
                     already_priced_sentiment_momentum_atr_multiple=self._already_priced_sentiment_momentum_atr_multiple,
                     already_priced_sentiment_momentum_return_threshold=self._already_priced_sentiment_momentum_return_threshold,
+                    story_scoping_enabled=self._story_scoping_enabled,
+                    story_assignment_model=self._story_assignment_model,
+                    story_assignment_max_output_tokens=self._story_assignment_max_output_tokens,
                     clock=clock,
                     reprocess_run_id=run_id,
                 )

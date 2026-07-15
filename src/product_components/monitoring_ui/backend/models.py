@@ -171,6 +171,8 @@ class ThesisCardSummary(BaseModel):
     signal_published: bool
     validation_status: str
     rejection_reason_code: str | None = None
+    story_narrative: str | None = None
+    corroboration_count: int = 0
 
 
 class ThesisCardListResponse(BaseModel):

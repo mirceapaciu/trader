@@ -7,6 +7,7 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     monkeypatch.delenv("THESIS_BUILDER_CONSUMER_GROUP", raising=False)
     monkeypatch.delenv("THESIS_CARD_REQUIRED_EVIDENCE_COUNT", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_TRIAGE_ENABLED", raising=False)
+    monkeypatch.delenv("THESIS_BUILDER_STORY_SCOPING_ENABLED", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_SYNTHESIS_ENABLED", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED", raising=False)
     monkeypatch.delenv("THESIS_BUILDER_TRADEABILITY_MAX_ENTRY_PRICE", raising=False)
@@ -31,6 +32,9 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.triage_enabled is False
     assert settings.triage_model == "gpt-4o-mini"
     assert settings.triage_max_output_tokens == 200
+    assert settings.story_scoping_enabled is False
+    assert settings.story_assignment_model == "gpt-4o-mini"
+    assert settings.story_assignment_max_output_tokens == 120
     assert settings.synthesis_enabled is False
     assert settings.synthesis_model == "gpt-4o-mini"
     assert settings.synthesis_max_output_tokens == 1200
@@ -62,6 +66,9 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_ENABLED", "true")
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MODEL", "gpt-4o-mini-triage")
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", "80")
+    monkeypatch.setenv("THESIS_BUILDER_STORY_SCOPING_ENABLED", "true")
+    monkeypatch.setenv("THESIS_BUILDER_STORY_ASSIGNMENT_MODEL", "gpt-4o-mini-story")
+    monkeypatch.setenv("THESIS_BUILDER_STORY_ASSIGNMENT_MAX_OUTPUT_TOKENS", "90")
     monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_ENABLED", "true")
     monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_MODEL", "gpt-5.5")
     monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS", "700")
@@ -93,6 +100,9 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.triage_enabled is True
     assert settings.triage_model == "gpt-4o-mini-triage"
     assert settings.triage_max_output_tokens == 80
+    assert settings.story_scoping_enabled is True
+    assert settings.story_assignment_model == "gpt-4o-mini-story"
+    assert settings.story_assignment_max_output_tokens == 90
     assert settings.synthesis_enabled is True
     assert settings.synthesis_model == "gpt-5.5"
     assert settings.synthesis_max_output_tokens == 700

@@ -16,6 +16,9 @@ THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS=1200
 THESIS_BUILDER_TRIAGE_ENABLED=false
 THESIS_BUILDER_TRIAGE_MODEL=gpt-4o-mini
 THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS=200
+THESIS_BUILDER_STORY_SCOPING_ENABLED=false
+THESIS_BUILDER_STORY_ASSIGNMENT_MODEL=gpt-4o-mini
+THESIS_BUILDER_STORY_ASSIGNMENT_MAX_OUTPUT_TOKENS=120
 THESIS_BUILDER_SYNTHESIS_ENABLED=false
 THESIS_BUILDER_SYNTHESIS_MODEL=gpt-4o-mini
 THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS=1200
@@ -63,6 +66,8 @@ ThesisBuilder first resolves article/instrument pairs deterministically. Alias m
 `THESIS_BUILDER_LISTICLE_PREFILTER_ENABLED` enables a conservative roundup heuristic. When enabled, an article tagged with more than `THESIS_BUILDER_LISTICLE_PREFILTER_TAG_THRESHOLD` active watchlist instruments and no headline alias match is persisted as rejected analyses with `rejection_reason_code=prefiltered_roundup` without an LLM call. The default is disabled.
 
 `THESIS_BUILDER_TRIAGE_ENABLED` enables a recall-biased small-LLM triage call before full analysis. Triage returns only subjecthood and `content_type`; clear non-subjects persist as `triage_not_subject`, clear non-catalysts persist as `triage_not_catalyst`, and ambiguous cases pass through to the full analysis prompt. Triage tokens share the same ThesisBuilder run budget as full analysis and are stored on the rejected analysis rows when triage rejects a pair. The default is disabled until replay validation shows acceptable recall.
+
+`THESIS_BUILDER_STORY_SCOPING_ENABLED` enables story-aware evidence grouping after a valid analysis is persisted. When disabled, ThesisBuilder preserves the legacy single collecting window per instrument/strategy/direction behavior and makes no assignment calls. When enabled, the assignment call uses `THESIS_BUILDER_STORY_ASSIGNMENT_MODEL` and `THESIS_BUILDER_STORY_ASSIGNMENT_MAX_OUTPUT_TOKENS` to choose `window:<id>`, `card:<id>`, or `new_story` from same-key candidates. Assignment tokens count against the ThesisBuilder LLM budget and assignment decisions are persisted in `thesis_builder.t_story_assignments`.
 
 ## Card Synthesis
 

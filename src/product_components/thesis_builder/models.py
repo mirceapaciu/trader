@@ -109,6 +109,20 @@ class LlmSynthesisResult:
 
 
 @dataclass(frozen=True)
+class StoryAssignmentCandidate:
+    target: str
+    narrative: str
+
+
+@dataclass(frozen=True)
+class LlmStoryAssignmentResult:
+    target: str
+    estimated_tokens: int = 0
+    llm_model: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class PersistedAnalysis:
     id: int
     article_id: str

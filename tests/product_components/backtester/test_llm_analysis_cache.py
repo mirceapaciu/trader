@@ -72,6 +72,12 @@ class _FakeInner:
             "estimated_tokens": 222,
         }
 
+    def analyze_story_assignment(self, *, model: str, prompt: str, max_output_tokens: int) -> dict:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return {"target": "window:1", "estimated_tokens": 123}
+
 
 def test_cached_client_miss_delegates_and_stores_raw_response() -> None:
     store = _FakeStore()
@@ -173,6 +179,39 @@ def test_cached_client_caches_synthesis_prompt_with_candidate_support_columns() 
     )
 
     assert raw["estimated_tokens"] == 222
+    assert cached["estimated_tokens"] == 0
+    assert inner.calls == 1
+    assert client.llm_calls == 1
+    assert client.cache_hits == 1
+    assert store.puts[0]["ticker"] == "MSFT"
+    assert store.puts[0]["exchange_code"] == "XNAS"
+
+
+def test_cached_client_caches_story_assignment_prompt_with_key_support_columns() -> None:
+    store = _FakeStore()
+    inner = _FakeInner()
+    client = CachedThesisLlmClient(inner=inner, cache=store)
+    prompt = json.dumps(
+        {
+            "incoming_article": {"headline": "Guidance raised"},
+            "key": {"ticker": "msft", "exchange_code": "xnas"},
+            "candidates": [{"target": "window:1", "story_narrative": "Guidance"}],
+        },
+        sort_keys=True,
+    )
+
+    raw = client.analyze_story_assignment(
+        model="story-model",
+        prompt=prompt,
+        max_output_tokens=120,
+    )
+    cached = client.analyze_story_assignment(
+        model="story-model",
+        prompt=prompt,
+        max_output_tokens=120,
+    )
+
+    assert raw["estimated_tokens"] == 123
     assert cached["estimated_tokens"] == 0
     assert inner.calls == 1
     assert client.llm_calls == 1

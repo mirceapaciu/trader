@@ -109,6 +109,8 @@ export type ThesisCardSummary = {
   signal_published: boolean;
   validation_status: string;
   rejection_reason_code?: string | null;
+  story_narrative?: string | null;
+  corroboration_count: number;
 };
 
 export type ThesisCardListResponse = {

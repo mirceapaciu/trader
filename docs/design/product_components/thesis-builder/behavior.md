@@ -55,7 +55,7 @@ For each accepted news event:
 5. Resolve market context through the MarketData component API when the candidate strategy requires price-derived validation.
 6. Call the configured full-analysis LLM only when deterministic prechecks and enabled triage leave a plausible trading impact.
 7. Persist one `t_news_analyses` row per analyzed, prefiltered, or triaged article/instrument pair.
-8. Add eligible analyses to an evidence window keyed by instrument, strategy, and candidate direction.
+8. Add eligible analyses to an evidence window keyed by instrument, strategy, candidate direction, and, when enabled, story identity.
 9. Attempt thesis-card creation immediately after each window update.
 
 ThesisBuilder must store analyses even when no thesis card is created, so rejected, weak, stale, or conflicting evidence remains auditable.
@@ -68,6 +68,8 @@ Deterministic pair resolution must avoid incidental URL-slug matches. Provider t
 When the optional roundup prefilter is enabled, an article tagged with more than the configured active-instrument threshold and no headline alias match is treated as a listicle or sector roundup. ThesisBuilder persists one rejected analysis row per tagged pair with `rejection_reason_code=prefiltered_roundup` and makes no LLM call for those pairs.
 
 When small-LLM triage is enabled, each surviving pair receives a narrow subjecthood/content-type classification before full analysis. The triage contract is recall-biased: ambiguous pairs pass through to full analysis. Clear non-subjects persist as `triage_not_subject`; clear non-catalysts or opinion/listicle content persist as `triage_not_catalyst`. Triage failures fail open to full analysis. Live processing, historical reprocess, and regeneration backtests use the same configured prefilter/triage behavior.
+
+When `THESIS_BUILDER_STORY_SCOPING_ENABLED=true`, valid analyses run a constrained story-assignment step before evidence-window mutation. Candidates are limited to the same instrument, strategy, direction, and reprocess scope, and include collecting evidence windows plus unexpired satisfied cards with stored story narratives. The assignment output must be exactly `window:<id>`, `card:<id>`, or `new_story`. Empty candidate sets skip the LLM call and seed a new window. Invalid output or transport failure fails open to the oldest collecting window for the key, or seeds a new window when none exists, and records `assignment_source=fallback` for audit.
 
 ## 3.1 Component Boundary Rules
 
@@ -161,6 +163,8 @@ Impact-quantification fields (observe-only):
 
 ThesisBuilder aggregates only until enough evidence exists to make a trade decision.
 
+When story scoping is enabled, each new window stores a seed-stable `story_narrative` derived from the seeding article headline, analysis `event_type`, and `evidence_bullet_candidates`. The seed narrative is not rewritten by later matched articles, so story identity cannot drift as coverage accumulates. Multiple collecting windows may exist for the same instrument, strategy, and direction; the assignment result, not a database uniqueness constraint, selects the target window.
+
 Window satisfaction rules:
 - The window must meet all evidence rules from `docs/design/shared/product-constraint.md`.
 - The default required evidence count is read from `THESIS_CARD_REQUIRED_EVIDENCE_COUNT`.
@@ -174,6 +178,8 @@ Window terminal states:
 - `expired`: legacy state from the anchored-window design; no longer produced (see below), retained only for pre-existing rows.
 
 The collection span is rolling, not anchored to the first article. On each new eligible analysis, evidence whose article `published_at` is older than `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES` (default 1000) relative to the analysis time ages out of the window individually; the window itself stays `collecting` and `window_started_at` tracks the oldest retained article. This guarantees a new arrival always lands in live collecting state (it is never discarded into a window that expired underneath it) and that evidence clusters straddling an arbitrary first-article anchor still form cards. The span is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately. Card-level freshness is enforced separately by `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`.
+
+If story assignment targets an unexpired satisfied card, the incoming article is recorded as card corroboration and the existing card remains frozen: evidence, confidence, validation status, shared review state, and signal publication are not modified.
 
 ## 5. Thesis-Card Creation
 
@@ -199,7 +205,7 @@ Card creation steps:
    per-article analyses as before.
 6. Generate ThesisBuilder-owned initial risk fields: max loss, stop condition, and invalidation condition.
 7. Validate the card deterministically.
-8. Persist the thesis card.
+8. Persist the thesis card, copying the evidence window `story_narrative` onto the card when story scoping is enabled.
 9. Write the initial shared review state.
 10. Publish the card signal only if validation passes and review state is approved.
 

@@ -116,6 +116,37 @@ class CachedThesisLlmClient:
         )
         return raw
 
+    def analyze_story_assignment(
+        self, *, model: str, prompt: str, max_output_tokens: int
+    ) -> dict[str, Any]:
+        cached = self.get_cached_analysis(
+            model=model, prompt=prompt, max_output_tokens=max_output_tokens
+        )
+        if cached is not None:
+            return cached
+
+        caller = getattr(self.inner, "analyze_story_assignment", None)
+        if caller is None:
+            raw = self.inner.analyze(
+                model=model, prompt=prompt, max_output_tokens=max_output_tokens
+            )
+        else:
+            raw = caller(model=model, prompt=prompt, max_output_tokens=max_output_tokens)
+        if not isinstance(raw, dict):
+            raise ValueError("thesis_response_not_object")
+        self.llm_calls += 1
+        support = _extract_support_columns(prompt)
+        self.cache.put(
+            llm_model=model,
+            max_output_tokens=max_output_tokens,
+            prompt_sha256=prompt_sha256(prompt),
+            response_json=dict(raw),
+            article_id=support["article_id"],
+            ticker=support["ticker"],
+            exchange_code=support["exchange_code"],
+        )
+        return raw
+
 
 @dataclass(frozen=True)
 class PostgresLlmAnalysisCache:
@@ -203,6 +234,12 @@ def _extract_support_columns(prompt: str) -> dict[str, str | None]:
         dossier = payload.get("dossier")
         candidate = dossier.get("candidate") if isinstance(dossier, dict) else None
         instrument = candidate if isinstance(candidate, dict) else None
+    if article is None and isinstance(payload, dict):
+        incoming = payload.get("incoming_article")
+        article = incoming if isinstance(incoming, dict) else None
+    if instrument is None and isinstance(payload, dict):
+        key = payload.get("key")
+        instrument = key if isinstance(key, dict) else None
     return {
         "article_id": str(article.get("id")) if isinstance(article, dict) and article.get("id") else None,
         "ticker": str(instrument.get("ticker")).upper()

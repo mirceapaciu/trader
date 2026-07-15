@@ -52,6 +52,8 @@ class ExportedThesisCard:
     signal_published_at: datetime | None
     evidence: list[ExportedEvidenceArticle]
     news_ready_at: datetime
+    story_narrative: str | None = None
+    corroboration_count: int = 0
 
 
 class ThesisCardHistoryExporter:
@@ -80,8 +82,10 @@ class ThesisCardHistoryExporter:
         card_sql = (
             f"SELECT id, ticker, exchange_code, direction, strategy, time_horizon, confidence, "
             f"risk_max_loss_usd, risk_stop_condition, risk_invalidation_condition, evidence, "
-            f"validation_status, rejection_reason_code, created_at, expires_at, signal_published_at "
-            f"FROM {self._thesis_schema}.t_thesis_cards "
+            f"validation_status, rejection_reason_code, created_at, expires_at, signal_published_at, "
+            f"story_narrative, "
+            f"(SELECT COUNT(*) FROM {self._thesis_schema}.t_card_corroborations cc WHERE cc.card_id = c.id) AS corroboration_count "
+            f"FROM {self._thesis_schema}.t_thesis_cards c "
             f"WHERE created_at >= %s AND created_at < %s "
             f"{filters}"
             f"ORDER BY created_at, id"
@@ -261,6 +265,8 @@ def build_exported_card(
         ),
         evidence=evidence,
         news_ready_at=news_ready_at,
+        story_narrative=card_row.get("story_narrative"),
+        corroboration_count=int(card_row.get("corroboration_count") or 0),
     )
 
 

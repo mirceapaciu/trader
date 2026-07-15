@@ -59,6 +59,9 @@ class RegenerationThresholds:
     synthesis_model: str = "gpt-4o-mini"
     synthesis_max_output_tokens: int = 1200
     synthesis_fallback_to_mechanical: bool = False
+    story_scoping_enabled: bool = False
+    story_assignment_model: str = "gpt-4o-mini"
+    story_assignment_max_output_tokens: int = 120
     already_priced_event_driven_atr_multiple: float = 1.5
     already_priced_event_driven_return_threshold: float = 0.04
     already_priced_sentiment_momentum_atr_multiple: float = 2.0
@@ -296,6 +299,9 @@ class RegenerationRunner:
                     synthesis_model=self._thresholds.synthesis_model,
                     synthesis_max_output_tokens=self._thresholds.synthesis_max_output_tokens,
                     synthesis_fallback_to_mechanical=self._thresholds.synthesis_fallback_to_mechanical,
+                    story_scoping_enabled=self._thresholds.story_scoping_enabled,
+                    story_assignment_model=self._thresholds.story_assignment_model,
+                    story_assignment_max_output_tokens=self._thresholds.story_assignment_max_output_tokens,
                     clock=clock,
                     reprocess_run_id=self._run_id,
                 )

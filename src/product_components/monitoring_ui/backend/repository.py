@@ -1219,8 +1219,9 @@ class PostgresRedisMonitoringDataSource:
             f"EXTRACT(EPOCH FROM (expires_at - NOW())) AS expires_in_seconds, "
             f"jsonb_array_length(evidence) AS evidence_count, "
             f"(signal_published_at IS NOT NULL) AS signal_published, "
-            f"validation_status, rejection_reason_code "
-            f"FROM {self._thesis_builder_schema}.t_thesis_cards "
+            f"validation_status, rejection_reason_code, story_narrative, "
+            f"(SELECT COUNT(*) FROM {self._thesis_builder_schema}.t_card_corroborations cc WHERE cc.card_id = c.id) AS corroboration_count "
+            f"FROM {self._thesis_builder_schema}.t_thesis_cards c "
             f"WHERE created_at >= %s AND created_at < %s "
             f"ORDER BY created_at DESC LIMIT %s"
         )
@@ -1247,6 +1248,10 @@ class PostgresRedisMonitoringDataSource:
                     if row["rejection_reason_code"]
                     else None
                 ),
+                story_narrative=(
+                    str(row["story_narrative"]) if row["story_narrative"] else None
+                ),
+                corroboration_count=int(row["corroboration_count"] or 0),
             )
             for row in rows
         ]
