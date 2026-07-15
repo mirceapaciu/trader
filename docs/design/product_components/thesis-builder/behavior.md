@@ -65,6 +65,8 @@ Analyses that classify an article as price-actionable for the analyzed instrumen
 
 Deterministic pair resolution must avoid incidental URL-slug matches. Provider ticker tags create pairs, and aliases match only article headline and summary text.
 
+Provider ticker tags are a recall channel only: they make an article/instrument pair eligible for analysis, but they are never evidence that the instrument is the article's subject. Per-symbol feeds (for example Finnhub company news) stamp the queried ticker on every returned article, including teaser articles whose headlines deliberately hide the subject company, so downstream attribution must rest on article text, not on the tag (see §3.3 subject attribution).
+
 When the optional roundup prefilter is enabled, an article tagged with more than the configured active-instrument threshold and no headline alias match is treated as a listicle or sector roundup. ThesisBuilder persists one rejected analysis row per tagged pair with `rejection_reason_code=prefiltered_roundup` and makes no LLM call for those pairs.
 
 When small-LLM triage is enabled, each surviving pair receives a narrow subjecthood/content-type classification before full analysis. The triage contract is recall-biased: ambiguous pairs pass through to full analysis. Clear non-subjects persist as `triage_not_subject`; clear non-catalysts or opinion/listicle content persist as `triage_not_catalyst`. Triage failures fail open to full analysis. Live processing, historical reprocess, and regeneration backtests use the same configured prefilter/triage behavior.
@@ -158,6 +160,14 @@ Impact-quantification fields (observe-only):
 - `impact_horizon` (`intraday`, `1d`, `5d`) is the window over which most of that move is expected to be realized.
 - For `supply_chain` and `customer_or_peer` relations, ThesisBuilder deterministically caps `price_impact_magnitude` at `low` unless the analysis indicates a realized surprise rather than a consensus preview.
 - These fields are quantified but not yet acted upon: they do not affect card expiry, risk boxes, or the published signal. Their empirical value is measured offline by the Backtester impact-calibration report (`docs/design/product_components/backtester/behavior.md` §7) before any bracket use is considered.
+
+Subject attribution rules:
+- The analysis and triage prompts present provider ticker tags as feed provenance (`feed_tags` — which feed returned the article), never as ground-truth attribution, and instruct the model that `subject_relation=direct` requires the company, its products, or its ticker to be explicitly named in the article headline or summary.
+- The `direct` label is not taken from the LLM on trust. After the LLM call, ThesisBuilder deterministically verifies that the instrument is named in the article headline or summary (matched against ticker, instrument aliases, and display name — the same matching used for pair resolution). An unverified `direct` is downgraded to `customer_or_peer` and the downgrade is recorded for audit; the downgraded analysis inherits the full indirect policy (anchor-evidence requirement, low-magnitude cap absent a realized surprise, ineligibility as a card seed).
+- Because unverified directs are downgraded before evidence-window mutation, anchor evidence and card seeds are always text-verified: a set of articles none of which names the instrument can never form a thesis card, regardless of provider tags.
+- Live processing, historical reprocess, and regeneration backtests apply identical prompt content and verification so sim funnels remain comparable to production.
+
+**Implementation status:** specified ahead of implementation by issues 260714-03 (deterministic direct-verification backstop) and 260715-02 (feed-tag provenance prompt change); as of 2026-07-15 neither is implemented, and `subject_relation=direct` is still self-reported by the LLM. The alias backfill preconditions in 260714-03 apply before the backstop goes live.
 
 ## 4. Evidence Aggregation
 

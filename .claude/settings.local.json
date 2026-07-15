@@ -112,7 +112,15 @@
       "PowerShell($env:PYTHONPATH='.'; uv run python C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\89ccc8df-7257-4686-bdbb-a42d35674bf0\\\\scratchpad\\\\smoke_fundamentals.py)",
       "PowerShell(uv run pytest -m \"not integration\" -q tests/product_components/backtester/test_boundary.py tests/product_components/thesis_builder/test_export.py tests/product_components/backtester/test_impact_calibration.py 2>&1)",
       "PowerShell($env:PYTHONPATH='.'; uv run python C:\\\\Users\\\\mirce\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--src-trader\\\\89ccc8df-7257-4686-bdbb-a42d35674bf0\\\\scratchpad\\\\prove_guard.py)",
-      "PowerShell(uv run python -m src.product_components.backtester.impact_calibration_report --analysis-schema thesis_builder --since 2026-06-01 --min-sample-size 10 2>&1)"
+      "PowerShell(uv run python -m src.product_components.backtester.impact_calibration_report --analysis-schema thesis_builder --since 2026-06-01 --min-sample-size 10 2>&1)",
+      "PowerShell(foreach \\($p in @\\(@{n='thesis-builder';id=22916}, @{n='monitoring-ui-backend';id=13780}, @{n='monitoring-ui-frontend';id=27212}\\)\\) { $proc = Get-Process -Id $p.id -ErrorAction SilentlyContinue; if \\($proc\\) { \"{0} \\(pid {1}\\): RUNNING - {2}\" -f $p.n, $p.id, $proc.ProcessName } else { \"{0} \\(pid {1}\\): not running\" -f $p.n, $p.id } })",
+      "PowerShell($parent = 22916; Get-CimInstance Win32_Process -Filter \"ProcessId = $parent\" | Select-Object ProcessId, Name, CommandLine | Format-List; \"--- children ---\"; Get-CimInstance Win32_Process -Filter \"ParentProcessId = $parent\" | Select-Object ProcessId, Name, CommandLine | Format-List)",
+      "PowerShell(Stop-Process -Id 19520 -Force -ErrorAction SilentlyContinue; Stop-Process -Id 22916 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; foreach \\($id in @\\(19520, 22916\\)\\) { $p = Get-Process -Id $id -ErrorAction SilentlyContinue; if \\($p\\) { \"pid ${id}: STILL RUNNING\" } else { \"pid ${id}: stopped\" } })",
+      "Bash(git check-ignore *)",
+      "Bash(git --no-pager diff -- docs src)",
+      "Bash(git --no-pager diff -- .claude/settings.local.json)",
+      "Bash(git --no-pager diff --cached --stat)",
+      "Bash(git commit -m '@ *)"
     ],
     "additionalDirectories": [
       "D:\\src\\trader\\.claude\\skills"
