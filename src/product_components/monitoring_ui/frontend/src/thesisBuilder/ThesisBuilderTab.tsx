@@ -287,7 +287,7 @@ function ThesisBuilderConfigPanel({ data, error }: { data?: ThesisBuilderConfigR
 
 function EvidenceWindowsPanel({ windows }: { windows: ThesisBuilderEvidenceWindow[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const sortedWindows = sortEvidenceWindowsByAgeDescending(windows);
+  const sortedWindows = sortEvidenceWindowsByAgeAscending(windows);
   const selectedWindow = windows.find((w) => w.window_id === selectedId) ?? null;
 
   return (
@@ -1432,9 +1432,9 @@ function aggregateThesisBuilderThroughputRows(response?: ThesisBuilderThroughput
 
 type ThesisBuilderThroughputChartRow = ReturnType<typeof aggregateThesisBuilderThroughputRows>[number];
 
-function sortEvidenceWindowsByAgeDescending(windows: ThesisBuilderEvidenceWindow[]) {
+function sortEvidenceWindowsByAgeAscending(windows: ThesisBuilderEvidenceWindow[]) {
   return [...windows].sort(
-    (left, right) => right.pending_age_seconds - left.pending_age_seconds || left.window_id - right.window_id
+    (left, right) => left.pending_age_seconds - right.pending_age_seconds || left.window_id - right.window_id
   );
 }
 

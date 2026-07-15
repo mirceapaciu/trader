@@ -262,7 +262,7 @@ describe("ThesisBuilderTab", () => {
     expect(screen.getByText("swing 1d 5d")).toBeInTheDocument();
   });
 
-  it("sorts evidence windows by descending age by default", () => {
+  it("sorts evidence windows by ascending age by default", () => {
     const windowsResult = {
       ...metricsQueryResult,
       data: {
@@ -335,9 +335,9 @@ describe("ThesisBuilderTab", () => {
     expect(evidenceSection).not.toBeNull();
     const rows = within(evidenceSection as HTMLElement).getAllByRole("row");
     expect(rows).toHaveLength(4);
-    expect(within(rows[1]).getByText("OLD")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("NEW")).toBeInTheDocument();
     expect(within(rows[2]).getByText("MID")).toBeInTheDocument();
-    expect(within(rows[3]).getByText("NEW")).toBeInTheDocument();
+    expect(within(rows[3]).getByText("OLD")).toBeInTheDocument();
   });
 
   it("defaults to valid buy/sell live cards and hides rejected/expired", () => {
