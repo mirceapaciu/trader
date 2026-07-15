@@ -24,6 +24,7 @@ class SharedInstrumentRecord:
     ticker: str
     exchange_code: str
     aliases: tuple[str, ...]
+    display_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class PostgresSharedInstrumentRegistry:
                 ticker=row.ticker,
                 exchange_code=row.exchange_code,
                 aliases=row.aliases,
+                display_name=row.display_name,
             )
             for row in self.list_watchlist_records(active_only=True)
         ]

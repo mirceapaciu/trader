@@ -282,6 +282,8 @@ class RegenerationRunner:
                     result=analysis,
                     market_context_snapshot=context_snapshot,
                     fundamentals_snapshot=fundamentals_snapshot,
+                    instrument_display_name=getattr(instrument, "display_name", None),
+                    instrument_aliases=getattr(instrument, "aliases", ()),
                     required_evidence_count=self._thresholds.required_evidence_count,
                     min_confidence=self._thresholds.min_confidence,
                     min_relevance=self._thresholds.min_relevance,

@@ -66,6 +66,8 @@ class NewsArticle:
 class InstrumentIdentity:
     ticker: str
     exchange_code: str
+    aliases: tuple[str, ...] = ()
+    display_name: str | None = None
 
 
 @dataclass(frozen=True)

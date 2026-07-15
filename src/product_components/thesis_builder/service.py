@@ -395,6 +395,8 @@ class ThesisBuilderRunner:
                 result=analysis,
                 market_context_snapshot=context_snapshot,
                 fundamentals_snapshot=fundamentals_snapshot,
+                instrument_display_name=getattr(instrument, "display_name", None),
+                instrument_aliases=getattr(instrument, "aliases", ()),
                 required_evidence_count=self._settings.required_evidence_count,
                 min_confidence=self._settings.min_confidence,
                 min_relevance=self._settings.min_relevance,
@@ -586,10 +588,13 @@ def _resolve_instrument_pairs(
         identity = InstrumentIdentity(
             ticker=instrument.ticker,
             exchange_code=instrument.exchange_code,
+            aliases=getattr(instrument, "aliases", ()),
+            display_name=getattr(instrument, "display_name", None),
         )
         ticker_match = instrument.ticker in article_tickers
-        alias_match = any(contains_term(text, alias) for alias in instrument.aliases)
-        headline_alias_match = any(contains_term(headline, alias) for alias in instrument.aliases)
+        aliases = getattr(instrument, "aliases", ())
+        alias_match = any(contains_term(text, alias) for alias in aliases)
+        headline_alias_match = any(contains_term(headline, alias) for alias in aliases)
         if ticker_match:
             tagged_matches.append(identity)
         if headline_alias_match:

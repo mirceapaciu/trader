@@ -1,13 +1,18 @@
+from datetime import datetime, timezone
+
 from src.product_components.thesis_builder.models import (
     ContentType,
     LlmAnalysisResult,
+    NewsArticle,
     SubjectRelation,
     ThesisStrategy,
     TradeDirection,
 )
 from src.product_components.thesis_builder.repository import (
+    _DIRECT_TEXT_DOWNGRADE_AUDIT,
     _already_priced_rejection,
     _analysis_rejection,
+    _normalization_validation_errors,
     _normalize_analysis_result,
     _tradeability_rejection,
 )
@@ -100,6 +105,73 @@ def test_caps_indirect_preview_magnitude_to_low() -> None:
 
     assert result.price_impact_magnitude == "low"
     assert result.instrument_is_subject is False
+
+
+def test_downgrades_direct_when_article_text_does_not_name_instrument() -> None:
+    original = _result(
+        ticker="NVDA",
+        exchange_code="XNAS",
+        instrument_is_subject=True,
+        subject_relation=SubjectRelation.DIRECT,
+        price_impact_magnitude="medium",
+        reasoning="The optics trade reads through to AI accelerators.",
+    )
+    result = _normalize_analysis_result(
+        original,
+        article=_article(
+            headline="Applied Optoelectronics rallies as Texas expansion fuels AI optics trade",
+            summary="A Pearland groundbreaking lifted optical networking suppliers.",
+            tickers=["NVDA"],
+        ),
+        instrument_display_name="NVIDIA Corporation",
+        instrument_aliases=("nvidia",),
+    )
+
+    assert result.subject_relation is SubjectRelation.CUSTOMER_OR_PEER
+    assert result.instrument_is_subject is False
+    assert result.price_impact_magnitude == "low"
+    assert _analysis_rejection(
+        result,
+        min_confidence=0.6,
+        min_relevance=0.5,
+        has_anchor_evidence=False,
+    ) == "indirect_no_anchor_evidence"
+    assert _normalization_validation_errors(original, result) == [
+        _DIRECT_TEXT_DOWNGRADE_AUDIT
+    ]
+
+
+def test_keeps_direct_when_article_text_names_ticker_display_name_or_alias() -> None:
+    ticker = _normalize_analysis_result(
+        _result(ticker="MU", exchange_code="XNAS"),
+        article=_article(headline="MU raises guidance", summary=None, tickers=[]),
+        instrument_display_name="Micron Technology",
+        instrument_aliases=("micron",),
+    )
+    display_name = _normalize_analysis_result(
+        _result(ticker="MU", exchange_code="XNAS"),
+        article=_article(
+            headline="Micron Technology raises guidance",
+            summary=None,
+            tickers=[],
+        ),
+        instrument_display_name="Micron Technology",
+        instrument_aliases=(),
+    )
+    alias = _normalize_analysis_result(
+        _result(ticker="GOOGL", exchange_code="XNAS"),
+        article=_article(
+            headline="Google launches new AI product",
+            summary=None,
+            tickers=[],
+        ),
+        instrument_display_name="Alphabet Inc.",
+        instrument_aliases=("google",),
+    )
+
+    assert ticker.subject_relation is SubjectRelation.DIRECT
+    assert display_name.subject_relation is SubjectRelation.DIRECT
+    assert alias.subject_relation is SubjectRelation.DIRECT
 
 
 def test_rejects_below_min_relevance() -> None:
@@ -300,3 +372,22 @@ def _context(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def _article(
+    *,
+    headline: str,
+    summary: str | None,
+    tickers: list[str],
+) -> NewsArticle:
+    now = datetime.now(timezone.utc)
+    return NewsArticle(
+        id="article-1",
+        source="test",
+        headline=headline,
+        summary=summary,
+        url="https://example.com/article",
+        tickers=tickers,
+        published_at=now,
+        fetched_at=now,
+    )

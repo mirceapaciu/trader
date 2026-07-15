@@ -213,6 +213,8 @@ class ThesisBuilderReprocessor:
                     article=article,
                     result=analysis,
                     market_context_snapshot=None,
+                    instrument_display_name=getattr(instrument, "display_name", None),
+                    instrument_aliases=getattr(instrument, "aliases", ()),
                     required_evidence_count=self._required_evidence_count,
                     min_confidence=self._min_confidence,
                     min_relevance=self._min_relevance,

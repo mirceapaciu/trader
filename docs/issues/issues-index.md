@@ -37,6 +37,6 @@
 | 260709-07 | Soft dedupe is scoped per source; the same story ingested via two providers counts twice | new | docs/issues/issues-detail/260709-07.md |
 | 260714-01 | Binary instrument_is_subject gate mishandles supply-chain read-through articles | resolved | docs/issues/issues-detail/260714-01.md |
 | 260714-02 | Watchlist instrument aliases lack common press names, breaking text-based attribution | resolved | docs/issues/issues-detail/260714-02.md |
-| 260714-03 | subject_relation=direct is self-reported by the LLM; misclassified sector stories bypass the indirect-evidence gates | new | docs/issues/issues-detail/260714-03.md |
+| 260714-03 | subject_relation=direct is self-reported by the LLM; misclassified sector stories bypass the indirect-evidence gates | resolved | docs/issues/issues-detail/260714-03.md |
 | 260715-01 | Group evidence windows by story: narrative assignment, per-story cards, post-card corroboration | resolved | docs/issues/issues-detail/260715-01.md |
 | 260715-02 | Analysis prompt presents provider feed tags as ground-truth attribution; teaser articles form fully off-instrument cards | new | docs/issues/issues-detail/260715-02.md |

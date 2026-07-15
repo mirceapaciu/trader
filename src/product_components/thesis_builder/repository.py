@@ -11,6 +11,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from src.product_components.shared.text_match import contains_term
+
 from .models import (
     ContentType,
     InstrumentIdentity,
@@ -32,6 +34,7 @@ _SUPPORTED_EXECUTABLE_STRATEGIES = {
     ThesisStrategy.EVENT_DRIVEN,
     ThesisStrategy.SENTIMENT_MOMENTUM,
 }
+_DIRECT_TEXT_DOWNGRADE_AUDIT = "direct_subject_text_mismatch_downgraded"
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,8 @@ class PostgresThesisBuilderRepository:
         result: LlmAnalysisResult,
         market_context_snapshot: dict[str, Any] | None,
         fundamentals_snapshot: dict[str, Any] | None = None,
+        instrument_display_name: str | None = None,
+        instrument_aliases: tuple[str, ...] = (),
         required_evidence_count: int,
         min_confidence: float,
         min_relevance: float = 0.0,
@@ -157,7 +162,14 @@ class PostgresThesisBuilderRepository:
         clock: Callable[[], datetime] | None = None,
         reprocess_run_id: str | None = None,
     ) -> AnalysisPersistenceResult:
-        result = _normalize_analysis_result(result)
+        original_result = result
+        result = _normalize_analysis_result(
+            result,
+            article=article,
+            instrument_display_name=instrument_display_name,
+            instrument_aliases=instrument_aliases,
+        )
+        normalization_errors = _normalization_validation_errors(original_result, result)
         with self._connect() as conn:
             rejection = _analysis_rejection(
                 result,
@@ -178,7 +190,10 @@ class PostgresThesisBuilderRepository:
                 result=result,
                 validation_status=status,
                 rejection_reason_code=rejection,
-                validation_errors=[rejection] if rejection else [],
+                validation_errors=[
+                    *normalization_errors,
+                    *([rejection] if rejection else []),
+                ],
                 market_context_snapshot=market_context_snapshot,
                 fundamentals_snapshot=fundamentals_snapshot,
             )
@@ -1204,8 +1219,25 @@ def _analysis_rejection(
     return None
 
 
-def _normalize_analysis_result(result: LlmAnalysisResult) -> LlmAnalysisResult:
+def _normalize_analysis_result(
+    result: LlmAnalysisResult,
+    *,
+    article: NewsArticle | None = None,
+    instrument_display_name: str | None = None,
+    instrument_aliases: tuple[str, ...] = (),
+) -> LlmAnalysisResult:
     relation = _effective_subject_relation(result)
+    if (
+        relation is SubjectRelation.DIRECT
+        and article is not None
+        and not _article_text_names_instrument(
+            article=article,
+            ticker=result.ticker,
+            display_name=instrument_display_name,
+            aliases=instrument_aliases,
+        )
+    ):
+        relation = SubjectRelation.CUSTOMER_OR_PEER
     normalized = result
     if result.subject_relation is not relation or result.instrument_is_subject is not (
         relation is SubjectRelation.DIRECT
@@ -1224,10 +1256,35 @@ def _normalize_analysis_result(result: LlmAnalysisResult) -> LlmAnalysisResult:
     return normalized
 
 
+def _normalization_validation_errors(
+    original: LlmAnalysisResult,
+    normalized: LlmAnalysisResult,
+) -> list[str]:
+    if (
+        _effective_subject_relation(original) is SubjectRelation.DIRECT
+        and normalized.subject_relation is SubjectRelation.CUSTOMER_OR_PEER
+        and not normalized.instrument_is_subject
+    ):
+        return [_DIRECT_TEXT_DOWNGRADE_AUDIT]
+    return []
+
+
 def _effective_subject_relation(result: LlmAnalysisResult) -> SubjectRelation:
     if result.subject_relation is SubjectRelation.NONE and result.instrument_is_subject:
         return SubjectRelation.DIRECT
     return result.subject_relation
+
+
+def _article_text_names_instrument(
+    *,
+    article: NewsArticle,
+    ticker: str,
+    display_name: str | None,
+    aliases: tuple[str, ...],
+) -> bool:
+    text = " ".join(part for part in (article.headline, article.summary or "") if part)
+    terms = [ticker, *(alias for alias in aliases if alias), display_name or ""]
+    return any(contains_term(text, term) for term in terms)
 
 
 def _is_direct_relation(relation: SubjectRelation | None) -> bool:

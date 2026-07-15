@@ -360,7 +360,14 @@ def test_fundamentals_flow_to_analyzer_and_repository() -> None:
         analyzer=analyzer,
         market_context_client=_FakeMarketClient(),
         instrument_registry=_FakeInstrumentRegistry(
-            [SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",))]
+            [
+                SharedInstrumentRecord(
+                    ticker="AAPL",
+                    exchange_code="XNAS",
+                    aliases=("apple",),
+                    display_name="Apple Inc.",
+                )
+            ]
         ),
         review_writer=_FakeReviewWriter(),
     )
@@ -375,6 +382,8 @@ def test_fundamentals_flow_to_analyzer_and_repository() -> None:
     assert "payload" not in snapshot
     # The exact prompt-input dict is persisted alongside the analysis.
     assert repo.persist_kwargs["fundamentals_snapshot"] == snapshot
+    assert repo.persist_kwargs["instrument_display_name"] == "Apple Inc."
+    assert repo.persist_kwargs["instrument_aliases"] == ("apple",)
 
 
 def test_fundamentals_failure_never_blocks_analysis() -> None:
