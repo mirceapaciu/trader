@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from datetime import datetime, timezone
 
@@ -366,6 +368,23 @@ def test_build_prompt_includes_already_priced_advisory() -> None:
     assert "deterministic ThesisBuilder gate is authoritative" in prompt
 
 
+def test_build_prompt_labels_article_tickers_as_feed_tags_provenance() -> None:
+    prompt = _build_prompt(
+        article=_article(),
+        ticker="AAPL",
+        exchange_code="XNAS",
+        market_context_snapshot=None,
+    )
+    payload = json.loads(prompt)
+
+    assert payload["article"]["feed_tags"] == ["AAPL"]
+    assert "tickers" not in payload["article"]
+    provenance_rules = " ".join(payload["provenance_grounding_rules"])
+    assert "feed provenance tags only" in provenance_rules
+    assert "not attribution" in provenance_rules
+    assert "not evidence that the specified instrument is the article subject" in provenance_rules
+
+
 def test_cached_analysis_does_not_reserve_or_consume_token_budget() -> None:
     analyzer = ThesisAnalyzer(
         client=_CachedClient(),
@@ -390,6 +409,18 @@ def test_triage_prompt_is_recall_biased() -> None:
 
     assert "When unsure" in prompt
     assert "pass through" in prompt
+
+
+def test_triage_prompt_labels_article_tickers_as_feed_tags_provenance() -> None:
+    prompt = _build_triage_prompt(article=_article(), ticker="AAPL", exchange_code="XNAS")
+    payload = json.loads(prompt)
+
+    assert payload["article"]["feed_tags"] == ["AAPL"]
+    assert "tickers" not in payload["article"]
+    provenance_rules = " ".join(payload["provenance_grounding_rules"])
+    assert "feed provenance tags only" in provenance_rules
+    assert "not attribution" in provenance_rules
+    assert "not evidence that the specified instrument is the article subject" in provenance_rules
 
 
 def test_parse_triage_result_defaults_missing_content_type_to_pass_through() -> None:

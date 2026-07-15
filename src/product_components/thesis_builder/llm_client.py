@@ -550,6 +550,13 @@ def _build_prompt(
                 "intraday = within the same trading session; 1d = by the next session close; 5d = within "
                 "five trading sessions.",
             ],
+            "provenance_grounding_rules": [
+                "article.feed_tags are upstream feed provenance tags only; they are not attribution, "
+                "not a claim that the article is about each tag, and not evidence that the specified "
+                "instrument is the article subject.",
+                "Ground ticker attribution, subject_relation, instrument_is_subject, and relevance in "
+                "the headline and summary for the SPECIFIED instrument.",
+            ],
             "strategy_scope_v1": ["event_driven", "sentiment_momentum"],
             "unsupported_strategies_must_still_be_labeled_if_best_fit": [
                 "sector_rotation",
@@ -563,7 +570,7 @@ def _build_prompt(
                 "headline": article.headline,
                 "summary": article.summary,
                 "url": article.url,
-                "tickers": article.tickers,
+                "feed_tags": article.tickers,
                 "published_at": article.published_at.isoformat(),
                 "sentiment_source": article.sentiment_source,
             },
@@ -609,13 +616,20 @@ def _build_triage_prompt(*, article, ticker: str, exchange_code: str) -> str:
                 "If the instrument may be a real subject, pass through.",
                 "If the article may contain a concrete catalyst for this instrument, pass through.",
             ],
+            "provenance_grounding_rules": [
+                "article.feed_tags are upstream feed provenance tags only; they are not attribution, "
+                "not a claim that the article is about each tag, and not evidence that the specified "
+                "instrument is the article subject.",
+                "Ground instrument_is_subject and content_type in the headline and summary for the "
+                "SPECIFIED instrument.",
+            ],
             "instrument": {"ticker": ticker, "exchange_code": exchange_code},
             "article": {
                 "id": article.id,
                 "source": article.source,
                 "headline": article.headline,
                 "summary": article.summary,
-                "tickers": article.tickers,
+                "feed_tags": article.tickers,
                 "published_at": article.published_at.isoformat(),
             },
             "required_json_fields": [
