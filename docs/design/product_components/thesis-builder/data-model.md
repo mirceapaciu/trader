@@ -129,6 +129,7 @@ Logical fields:
 - `strategy`: candidate thesis strategy from the validated LLM output or deterministic policy.
 - `direction`: candidate direction (`buy`, `sell`, or `hold`).
 - `event_type`: optional event classification used by event-driven analysis.
+- `event_occurred_at`: optional timestamp of the underlying reported event, extracted by the LLM from the article text (null when the text does not date the event; unparseable values degrade to null). Existing rows are null. Feeds the effective evidence timestamp used by the retention cutoff and card freshness gate (behavior spec §3.3/§5, issue 260715-03).
 - `subject_relation`: optional relationship between the article event and the instrument (`direct`, `supply_chain`, `customer_or_peer`, `macro_sector`, or `none`). Existing rows may be null; new full-analysis rows persist the parsed relation for funnel attribution.
 - `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`), anchored to the instrument's `atr_20d` (see behavior spec §3.3). Observe-only; not yet consumed by gates.
 - `impact_horizon`: optional window over which the estimated impact is expected to be realized (`intraday`, `1d`, or `5d`). Observe-only.

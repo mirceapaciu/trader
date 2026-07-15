@@ -149,6 +149,7 @@ Required fields:
 
 Optional fields:
 - `event_type`
+- `event_occurred_at`
 - `price_impact_magnitude`
 - `impact_horizon`
 - `evidence_bullet_candidates`
@@ -160,6 +161,14 @@ Impact-quantification fields (observe-only):
 - `impact_horizon` (`intraday`, `1d`, `5d`) is the window over which most of that move is expected to be realized.
 - For `supply_chain` and `customer_or_peer` relations, ThesisBuilder deterministically caps `price_impact_magnitude` at `low` unless the analysis indicates a realized surprise rather than a consensus preview.
 - These fields are quantified but not yet acted upon: they do not affect card expiry, risk boxes, or the published signal. Their empirical value is measured offline by the Backtester impact-calibration report (`docs/design/product_components/backtester/behavior.md` §7) before any bracket use is considered.
+
+Event dating rules:
+- `published_at` is feed publication time, not event time. Recap articles republish old events under fresh timestamps, so a freshness measure keyed to `published_at` alone misreads them as breaking news — and the already-priced gate simultaneously misreads them as un-priced, because the settled move no longer shows in the 1-day return.
+- The full-analysis prompt requires the model to return `event_occurred_at`: the ISO 8601 date (or datetime, when stated) on which the reported event actually occurred or was announced, extracted from the headline/summary text (e.g. "On July 9, Micron ... said"), resolving relative expressions ("last week") against `published_at`. When the text does not date the event, the field is null and freshness falls back to `published_at`. The triage prompt does not extract it; deterministic enforcement happens at window/card level.
+- An absent or unparseable `event_occurred_at` degrades to null and never fails the whole analysis, keeping historical/cached responses that predate the field parseable.
+- Each analyzed article's **effective evidence timestamp** is `min(published_at, event_occurred_at)` when the event date is present, else `published_at`. The evidence-window retention cutoff (§4) and the card freshness gate (§5) measure age from this timestamp.
+
+**Implementation status:** specified ahead of implementation by issue 260715-03; as of 2026-07-15 not implemented — no event date is extracted and all freshness measures key off `published_at`.
 
 Subject attribution rules:
 - The analysis and triage prompts present provider ticker tags as feed provenance (`feed_tags` — which feed returned the article), never as ground-truth attribution, and instruct the model that `subject_relation=direct` requires the company, its products, or its ticker to be explicitly named in the article headline or summary.
@@ -187,7 +196,7 @@ Window terminal states:
 - `rejected`: evidence is structurally invalid, contradictory, below confidence, or otherwise non-actionable.
 - `expired`: legacy state from the anchored-window design; no longer produced (see below), retained only for pre-existing rows.
 
-The collection span is rolling, not anchored to the first article. On each new eligible analysis, evidence whose article `published_at` is older than `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES` (default 1000) relative to the analysis time ages out of the window individually; the window itself stays `collecting` and `window_started_at` tracks the oldest retained article. This guarantees a new arrival always lands in live collecting state (it is never discarded into a window that expired underneath it) and that evidence clusters straddling an arbitrary first-article anchor still form cards. The span is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately. Card-level freshness is enforced separately by `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`.
+The collection span is rolling, not anchored to the first article. On each new eligible analysis, evidence whose effective evidence timestamp (§3.3; `published_at` until 260715-03 lands) is older than `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES` (default 1000) relative to the analysis time ages out of the window individually; the window itself stays `collecting` and `window_started_at` tracks the oldest retained article. This guarantees a new arrival always lands in live collecting state (it is never discarded into a window that expired underneath it) and that evidence clusters straddling an arbitrary first-article anchor still form cards. The span is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately. Card-level freshness is enforced separately by `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`.
 
 If story assignment targets an unexpired satisfied card, the incoming article is recorded as card corroboration and the existing card remains frozen: evidence, confidence, validation status, shared review state, and signal publication are not modified.
 
@@ -203,7 +212,7 @@ ThesisBuilder may emit longer trend-following cards when the evidence indicates 
 
 Card creation steps:
 1. Select the best evidence set from the satisfied window.
-2. Measure evidence freshness from each article `published_at` to the card validation decision time.
+2. Measure evidence freshness from each article's effective evidence timestamp (§3.3) to the card validation decision time.
 3. Apply deterministic gates such as freshness and already-priced suppression.
 4. If card synthesis is enabled, send the full evidence dossier and market-context snapshot to the
    configured synthesis model for an `approve` / `reject` verdict. Reject, malformed output, or
@@ -223,11 +232,11 @@ Initially, all valid cards are preapproved by system policy. ThesisBuilder write
 The physical review state is owned by the shared contract; ThesisBuilder code should use the shared review API/adapter instead of ad hoc SQL against shared tables.
 
 Freshness policy:
-- The maximum allowed age for evidence used in an executable thesis card is `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`, defaulting to 1400 minutes.
-- `max_evidence_age_seconds` is the oldest evidence article age at validation time.
+- The maximum allowed age for evidence used in an executable thesis card is `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`, defaulting to 1400 minutes. The same limit applies to article age and event age; there is no separate event-age knob.
+- `max_evidence_age_seconds` is the oldest evidence age at validation time, measured from each article's effective evidence timestamp (§3.3).
 - `allowed_max_evidence_age_seconds` is the configured freshness limit.
 - `evidence_age_exceeded_seconds` is `max(0, max_evidence_age_seconds - allowed_max_evidence_age_seconds)`.
-- If evidence would otherwise create a thesis card but exceeds the freshness limit, ThesisBuilder persists a non-executable audit card with `validation_status=rejected` and `rejection_reason_code=stale_evidence`. The operator-facing UI label for this status is `stale`.
+- If evidence would otherwise create a thesis card but exceeds the freshness limit, ThesisBuilder persists a non-executable audit card with `validation_status=rejected`. The reason code is `stale_event` when the violation exists only because of an article's `event_occurred_at` (its `published_at` age alone would have passed) — i.e. a recap of an old event — and `stale_evidence` otherwise. The operator-facing UI label for both is `stale`.
 - Stale audit cards must not receive shared review rows and must not be published to `signal_queue`.
 
 ### 5.1 Regime Posture (informative)
@@ -247,6 +256,10 @@ configured return threshold or ATR-20 multiple. Missing or stale market context
 fails closed with `market_context_unavailable`. The LLM prompt also includes an
 advisory instruction to lower confidence or prefer `hold` when market context
 shows the move is already realized; the deterministic gate remains authoritative.
+Note the gate measures the *recent* move at analysis time: an event old enough
+that its move has settled out of the 1-day return passes this gate while being
+maximally priced-in. That blind spot is closed by the event-age freshness gate
+(`stale_event`, §5 and 260715-03), not by widening the return window here.
 
 ## 6. Strategy Policy
 
