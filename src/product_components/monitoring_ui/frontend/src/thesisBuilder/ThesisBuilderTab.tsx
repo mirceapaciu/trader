@@ -287,6 +287,7 @@ function ThesisBuilderConfigPanel({ data, error }: { data?: ThesisBuilderConfigR
 
 function EvidenceWindowsPanel({ windows }: { windows: ThesisBuilderEvidenceWindow[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const sortedWindows = sortEvidenceWindowsByAgeDescending(windows);
   const selectedWindow = windows.find((w) => w.window_id === selectedId) ?? null;
 
   return (
@@ -314,7 +315,7 @@ function EvidenceWindowsPanel({ windows }: { windows: ThesisBuilderEvidenceWindo
                 </tr>
               </thead>
               <tbody>
-                {windows.map((w) => (
+                {sortedWindows.map((w) => (
                   <tr
                     key={w.window_id}
                     data-selectable
@@ -1427,6 +1428,12 @@ function aggregateThesisBuilderThroughputRows(response?: ThesisBuilderThroughput
 }
 
 type ThesisBuilderThroughputChartRow = ReturnType<typeof aggregateThesisBuilderThroughputRows>[number];
+
+function sortEvidenceWindowsByAgeDescending(windows: ThesisBuilderEvidenceWindow[]) {
+  return [...windows].sort(
+    (left, right) => right.pending_age_seconds - left.pending_age_seconds || left.window_id - right.window_id
+  );
+}
 
 function getThesisBuilderThroughputAxisDomain(
   chartRows: ThesisBuilderThroughputChartRow[],

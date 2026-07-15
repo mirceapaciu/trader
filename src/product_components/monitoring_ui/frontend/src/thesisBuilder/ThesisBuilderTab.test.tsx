@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { ThesisBuilderTab } from "./ThesisBuilderTab";
 
@@ -260,6 +260,84 @@ describe("ThesisBuilderTab", () => {
 
     expect(screen.getByText("Time horizon")).toBeInTheDocument();
     expect(screen.getByText("swing 1d 5d")).toBeInTheDocument();
+  });
+
+  it("sorts evidence windows by descending age by default", () => {
+    const windowsResult = {
+      ...metricsQueryResult,
+      data: {
+        ...metricsQueryResult.data,
+        pending_windows: [
+          {
+            window_id: 2,
+            ticker: "MID",
+            exchange_code: "XNYS",
+            strategy: "event_driven",
+            direction: "buy",
+            window_started_at: "2026-06-16T09:00:00Z",
+            last_evidence_at: "2026-06-16T09:30:00Z",
+            pending_age_seconds: 3600,
+            expires_in_seconds: 3600,
+            evidence_count: 1,
+            required_evidence_count: 3,
+            story_narrative: null,
+          },
+          {
+            window_id: 3,
+            ticker: "NEW",
+            exchange_code: "XNYS",
+            strategy: "event_driven",
+            direction: "buy",
+            window_started_at: "2026-06-16T09:45:00Z",
+            last_evidence_at: "2026-06-16T09:50:00Z",
+            pending_age_seconds: 900,
+            expires_in_seconds: 6300,
+            evidence_count: 1,
+            required_evidence_count: 3,
+            story_narrative: null,
+          },
+          {
+            window_id: 1,
+            ticker: "OLD",
+            exchange_code: "XNYS",
+            strategy: "event_driven",
+            direction: "buy",
+            window_started_at: "2026-06-16T07:00:00Z",
+            last_evidence_at: "2026-06-16T08:00:00Z",
+            pending_age_seconds: 10800,
+            expires_in_seconds: 0,
+            evidence_count: 2,
+            required_evidence_count: 3,
+            story_narrative: null,
+          },
+        ],
+      },
+    };
+    useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
+      if (options?.queryKey?.includes("reprocess")) {
+        return { data: undefined, error: null };
+      }
+      if (options?.queryKey?.includes("cards")) {
+        return cardsQueryResult;
+      }
+      if (options?.queryKey?.includes("throughput")) {
+        return throughputQueryResult;
+      }
+      if (options?.queryKey?.includes("analyses")) {
+        return analysesQueryResult;
+      }
+      return windowsResult;
+    });
+
+    render(<ThesisBuilderTab />);
+
+    const evidenceSection = screen.getByRole("heading", { name: "Evidence windows" }).closest("section");
+    expect(evidenceSection).not.toBeNull();
+    const rows = within(evidenceSection as HTMLElement).getAllByRole("row");
+    expect(rows).toHaveLength(4);
+    expect(within(rows[1]).getByText("OLD")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("MID")).toBeInTheDocument();
+    expect(within(rows[3]).getByText("NEW")).toBeInTheDocument();
   });
 
   it("defaults to valid buy/sell live cards and hides rejected/expired", () => {
