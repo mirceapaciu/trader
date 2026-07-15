@@ -35,6 +35,39 @@ _SUPPORTED_EXECUTABLE_STRATEGIES = {
     ThesisStrategy.SENTIMENT_MOMENTUM,
 }
 _DIRECT_TEXT_DOWNGRADE_AUDIT = "direct_subject_text_mismatch_downgraded"
+_STORY_GENERIC_TOKENS = {
+    "about",
+    "after",
+    "against",
+    "announces",
+    "announcement",
+    "business",
+    "capacity",
+    "company",
+    "deal",
+    "demand",
+    "event",
+    "expansion",
+    "guidance",
+    "major",
+    "market",
+    "markets",
+    "news",
+    "partnership",
+    "platform",
+    "profit",
+    "revenue",
+    "sales",
+    "sector",
+    "shares",
+    "stock",
+    "story",
+    "supplier",
+    "supports",
+    "technology",
+    "today",
+    "unveils",
+}
 
 
 @dataclass(frozen=True)
@@ -640,6 +673,10 @@ class PostgresThesisBuilderRepository:
         candidate_targets = [candidate.target for candidate in candidates]
         assignment_source = "new_story"
         chosen_target = "new_story"
+        resolved_target = "new_story"
+        verification_status = "skipped"
+        verification_reason_code: str | None = None
+        verification_details: dict[str, Any] = {}
         llm_model = story_assignment_model or ""
         tokens_used = 0
         response_json: dict[str, Any] = {}
@@ -673,13 +710,27 @@ class PostgresThesisBuilderRepository:
                         conn=conn,
                         analysis_ids=fallback_window["analysis_ids"],
                     )
+                    verification = _verify_story_assignment_target(
+                        article=article,
+                        result=result,
+                        target=chosen_target,
+                        narrative=str(fallback_window.get("story_narrative") or ""),
+                    )
+                    resolved_target = verification["resolved_target"]
+                    verification_status = verification["verification_status"]
+                    verification_reason_code = verification["verification_reason_code"]
+                    verification_details = verification["verification_details"]
                     self._insert_story_assignment(
                         conn=conn,
                         analysis_id=analysis_id,
                         article_id=article.id,
                         candidate_targets=candidate_targets,
                         chosen_target=chosen_target,
+                        resolved_target=resolved_target,
                         assignment_source=assignment_source,
+                        verification_status=verification_status,
+                        verification_reason_code=verification_reason_code,
+                        verification_details_json=verification_details,
                         llm_model=llm_model,
                         max_output_tokens=story_assignment_max_output_tokens,
                         tokens_used=tokens_used,
@@ -687,6 +738,8 @@ class PostgresThesisBuilderRepository:
                         error_code=error_code,
                         reprocess_run_id=reprocess_run_id,
                     )
+                    if resolved_target == "new_story":
+                        return {"target_type": "new_story", "target_id": None}
                     return {"target_type": "window", "target_id": fallback_window["id"], "window": fallback_window}
                 chosen_target = "new_story"
 
@@ -697,7 +750,11 @@ class PostgresThesisBuilderRepository:
                 article_id=article.id,
                 candidate_targets=candidate_targets,
                 chosen_target="new_story",
+                resolved_target="new_story",
                 assignment_source=assignment_source,
+                verification_status="skipped",
+                verification_reason_code=None,
+                verification_details_json={},
                 llm_model=llm_model,
                 max_output_tokens=story_assignment_max_output_tokens,
                 tokens_used=tokens_used,
@@ -707,6 +764,17 @@ class PostgresThesisBuilderRepository:
             )
             return {"target_type": "new_story", "target_id": None}
 
+        candidate_narratives = {candidate.target: candidate.narrative for candidate in candidates}
+        verification = _verify_story_assignment_target(
+            article=article,
+            result=result,
+            target=chosen_target,
+            narrative=candidate_narratives.get(chosen_target, ""),
+        )
+        resolved_target = verification["resolved_target"]
+        verification_status = verification["verification_status"]
+        verification_reason_code = verification["verification_reason_code"]
+        verification_details = verification["verification_details"]
         target_type, _, target_id_text = chosen_target.partition(":")
         self._insert_story_assignment(
             conn=conn,
@@ -714,7 +782,11 @@ class PostgresThesisBuilderRepository:
             article_id=article.id,
             candidate_targets=candidate_targets,
             chosen_target=chosen_target,
+            resolved_target=resolved_target,
             assignment_source=assignment_source,
+            verification_status=verification_status,
+            verification_reason_code=verification_reason_code,
+            verification_details_json=verification_details,
             llm_model=llm_model,
             max_output_tokens=story_assignment_max_output_tokens,
             tokens_used=tokens_used,
@@ -722,6 +794,8 @@ class PostgresThesisBuilderRepository:
             error_code=error_code,
             reprocess_run_id=reprocess_run_id,
         )
+        if resolved_target == "new_story":
+            return {"target_type": "new_story", "target_id": None}
         if target_type == "card":
             return {"target_type": "card", "target_id": target_id_text}
         if target_type == "window":
@@ -1042,7 +1116,11 @@ class PostgresThesisBuilderRepository:
         article_id: str,
         candidate_targets: list[str],
         chosen_target: str,
+        resolved_target: str,
         assignment_source: str,
+        verification_status: str,
+        verification_reason_code: str | None,
+        verification_details_json: dict[str, Any],
         llm_model: str,
         max_output_tokens: int | None,
         tokens_used: int,
@@ -1052,13 +1130,18 @@ class PostgresThesisBuilderRepository:
     ) -> None:
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_story_assignments "
-            f"(analysis_id, article_id, candidate_targets, chosen_target, assignment_source, "
+            f"(analysis_id, article_id, candidate_targets, chosen_target, resolved_target, "
+            f"assignment_source, verification_status, verification_reason_code, verification_details_json, "
             f"llm_model, max_output_tokens, tokens_used, response_json, error_code, reprocess_run_id) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (analysis_id) DO UPDATE SET "
             f"candidate_targets = EXCLUDED.candidate_targets, "
             f"chosen_target = EXCLUDED.chosen_target, "
+            f"resolved_target = EXCLUDED.resolved_target, "
             f"assignment_source = EXCLUDED.assignment_source, "
+            f"verification_status = EXCLUDED.verification_status, "
+            f"verification_reason_code = EXCLUDED.verification_reason_code, "
+            f"verification_details_json = EXCLUDED.verification_details_json, "
             f"llm_model = EXCLUDED.llm_model, "
             f"max_output_tokens = EXCLUDED.max_output_tokens, "
             f"tokens_used = EXCLUDED.tokens_used, "
@@ -1073,7 +1156,11 @@ class PostgresThesisBuilderRepository:
                     article_id,
                     Json(candidate_targets),
                     chosen_target,
+                    resolved_target,
                     assignment_source,
+                    verification_status,
+                    verification_reason_code,
+                    Json(verification_details_json),
                     llm_model,
                     max_output_tokens,
                     tokens_used,
@@ -1402,6 +1489,87 @@ def _target_has_anchor_evidence(*, target: dict[str, Any], result: LlmAnalysisRe
     window = target.get("window") or {}
     analyses = window.get("analyses") or []
     return any(_is_direct_relation(analysis.subject_relation) for analysis in analyses)
+
+
+def _verify_story_assignment_target(
+    *,
+    article: NewsArticle,
+    result: LlmAnalysisResult,
+    target: str,
+    narrative: str,
+) -> dict[str, Any]:
+    if target == "new_story":
+        return _story_verification(
+            resolved_target="new_story",
+            verification_status="skipped",
+            verification_reason_code=None,
+            incoming_tokens=[],
+            target_tokens=[],
+            overlap=[],
+        )
+    incoming_tokens = _story_tokens(
+        " ".join(
+            [
+                article.headline,
+                article.summary or "",
+                result.event_type or "",
+                " ".join(result.evidence_bullet_candidates),
+            ]
+        ),
+        excluded_tokens={result.ticker.lower()},
+    )
+    target_tokens = _story_tokens(narrative, excluded_tokens={result.ticker.lower()})
+    overlap = sorted(incoming_tokens & target_tokens)
+    if overlap:
+        return _story_verification(
+            resolved_target=target,
+            verification_status="passed",
+            verification_reason_code=None,
+            incoming_tokens=sorted(incoming_tokens),
+            target_tokens=sorted(target_tokens),
+            overlap=overlap,
+        )
+    return _story_verification(
+        resolved_target="new_story",
+        verification_status="downgraded",
+        verification_reason_code="story_text_mismatch",
+        incoming_tokens=sorted(incoming_tokens),
+        target_tokens=sorted(target_tokens),
+        overlap=overlap,
+    )
+
+
+def _story_tokens(text: str, *, excluded_tokens: set[str]) -> set[str]:
+    tokens = set()
+    for token in re.findall(r"[a-z0-9][a-z0-9-]{2,}", text.lower()):
+        normalized = token.strip("-")
+        if len(normalized) < 4:
+            continue
+        if normalized in excluded_tokens or normalized in _STORY_GENERIC_TOKENS:
+            continue
+        tokens.add(normalized)
+    return tokens
+
+
+def _story_verification(
+    *,
+    resolved_target: str,
+    verification_status: str,
+    verification_reason_code: str | None,
+    incoming_tokens: list[str],
+    target_tokens: list[str],
+    overlap: list[str],
+) -> dict[str, Any]:
+    return {
+        "resolved_target": resolved_target,
+        "verification_status": verification_status,
+        "verification_reason_code": verification_reason_code,
+        "verification_details": {
+            "incoming_tokens": incoming_tokens[:20],
+            "target_tokens": target_tokens[:20],
+            "overlap": overlap[:20],
+        },
+    }
 
 
 def _already_priced_rejection(

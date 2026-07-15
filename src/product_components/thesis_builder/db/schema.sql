@@ -381,7 +381,11 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_story_assignments (
     article_id TEXT NOT NULL,
     candidate_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
     chosen_target TEXT NOT NULL,
+    resolved_target TEXT NOT NULL DEFAULT 'new_story',
     assignment_source TEXT NOT NULL,
+    verification_status TEXT NOT NULL DEFAULT 'skipped',
+    verification_reason_code TEXT,
+    verification_details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     llm_model TEXT NOT NULL DEFAULT '',
     max_output_tokens INTEGER,
     tokens_used BIGINT NOT NULL DEFAULT 0,
@@ -390,8 +394,29 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_story_assignments (
     reprocess_run_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_story_assignments_source
-        CHECK (assignment_source IN ('matched', 'new_story', 'fallback'))
+        CHECK (assignment_source IN ('matched', 'new_story', 'fallback')),
+    CONSTRAINT ck_story_assignments_verification_status
+        CHECK (verification_status IN ('skipped', 'passed', 'downgraded'))
 );
+
+ALTER TABLE thesis_builder.t_story_assignments
+    ADD COLUMN IF NOT EXISTS resolved_target TEXT NOT NULL DEFAULT 'new_story';
+
+ALTER TABLE thesis_builder.t_story_assignments
+    ADD COLUMN IF NOT EXISTS verification_status TEXT NOT NULL DEFAULT 'skipped';
+
+ALTER TABLE thesis_builder.t_story_assignments
+    ADD COLUMN IF NOT EXISTS verification_reason_code TEXT;
+
+ALTER TABLE thesis_builder.t_story_assignments
+    ADD COLUMN IF NOT EXISTS verification_details_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE thesis_builder.t_story_assignments
+    DROP CONSTRAINT IF EXISTS ck_story_assignments_verification_status;
+
+ALTER TABLE thesis_builder.t_story_assignments
+    ADD CONSTRAINT ck_story_assignments_verification_status
+        CHECK (verification_status IN ('skipped', 'passed', 'downgraded'));
 
 CREATE INDEX IF NOT EXISTS ix_story_assignments_source
     ON thesis_builder.t_story_assignments (assignment_source, created_at DESC);

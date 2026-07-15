@@ -447,6 +447,170 @@ def test_story_scoped_indirect_can_join_assigned_window_with_direct_anchor() -> 
     assert assignment_rows[0] == ("new_story", "new_story")
     assert assignment_rows[1][0].startswith("window:")
     assert assignment_rows[1][1] == "matched"
+    audit_rows = _story_assignment_audit_rows(settings)
+    assert audit_rows[1][1].startswith("window:")
+    assert audit_rows[1][3:] == ("passed", None)
+
+
+def test_story_assignment_verification_downgrades_off_story_window_match() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+        story_assigner=_FakeStoryAssigner(["window:first"]),
+    )
+    base = datetime(2026, 7, 15, 16, 0, tzinfo=timezone.utc)
+
+    repository.persist_analysis_and_update_evidence(
+        article=_news_article("apple-guidance", base),
+        result=_buy_analysis("apple-guidance"),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: base + timedelta(seconds=30),
+    )
+    outcome = repository.persist_analysis_and_update_evidence(
+        article=_news_article_with_text(
+            "saturn-lilac",
+            base + timedelta(minutes=1),
+            headline="Saturn Cloud Partners With Lilac on Token Factory Capacity",
+            summary="The enterprise GPU capacity agreement expands a cloud token factory.",
+        ),
+        result=_buy_analysis(
+            "saturn-lilac",
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.CUSTOMER_OR_PEER,
+            event_type="partner_capacity",
+            reasoning="A separate cloud capacity deal may read through to the instrument.",
+            price_impact_magnitude="low",
+            evidence_bullet_candidates=["Saturn Cloud and Lilac expand token factory capacity."],
+        ),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: base + timedelta(minutes=1, seconds=30),
+    )
+
+    assert outcome.signal is None
+    assert _analysis_policy_rows(settings) == [
+        ("direct", "medium", "valid", None),
+        ("customer_or_peer", "low", "rejected", "indirect_no_anchor_evidence"),
+    ]
+    assert _evidence_window_rows(settings) == [("collecting", ["apple-guidance"])]
+    audit_rows = _story_assignment_audit_rows(settings)
+    assert audit_rows[1][0].startswith("window:")
+    assert audit_rows[1][1] == "new_story"
+    assert audit_rows[1][2:] == ("matched", "downgraded", "story_text_mismatch")
+
+
+def test_story_assignment_verification_applies_to_fallback_window() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+        story_assigner=_FakeStoryAssigner(["__raise__"]),
+    )
+    base = datetime(2026, 7, 15, 16, 0, tzinfo=timezone.utc)
+
+    repository.persist_analysis_and_update_evidence(
+        article=_news_article("apple-guidance", base),
+        result=_buy_analysis("apple-guidance"),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: base + timedelta(seconds=30),
+    )
+    outcome = repository.persist_analysis_and_update_evidence(
+        article=_news_article_with_text(
+            "saturn-lilac",
+            base + timedelta(minutes=1),
+            headline="Saturn Cloud Partners With Lilac on Token Factory Capacity",
+            summary="The enterprise GPU capacity agreement expands a cloud token factory.",
+        ),
+        result=_buy_analysis(
+            "saturn-lilac",
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.CUSTOMER_OR_PEER,
+            event_type="partner_capacity",
+            reasoning="A separate cloud capacity deal may read through to the instrument.",
+            price_impact_magnitude="low",
+            evidence_bullet_candidates=["Saturn Cloud and Lilac expand token factory capacity."],
+        ),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: base + timedelta(minutes=1, seconds=30),
+    )
+
+    assert outcome.signal is None
+    audit_rows = _story_assignment_audit_rows(settings)
+    assert audit_rows[1][0].startswith("window:")
+    assert audit_rows[1][1] == "new_story"
+    assert audit_rows[1][2:] == ("fallback", "downgraded", "story_text_mismatch")
 
 
 def test_untradeable_context_persists_rejected_card_without_signal() -> None:
@@ -643,6 +807,26 @@ def _news_article(article_id: str, published_at: datetime) -> NewsArticle:
     )
 
 
+def _news_article_with_text(
+    article_id: str,
+    published_at: datetime,
+    *,
+    headline: str,
+    summary: str,
+) -> NewsArticle:
+    return NewsArticle(
+        id=article_id,
+        source="integration",
+        headline=headline,
+        summary=summary,
+        url=f"https://example.com/{article_id}",
+        tickers=["AAPL"],
+        published_at=published_at,
+        fetched_at=published_at,
+        sentiment_source=0.8,
+    )
+
+
 def _buy_analysis(article_id: str, **overrides) -> LlmAnalysisResult:
     base = dict(
         ticker="AAPL",
@@ -732,6 +916,20 @@ def _story_assignment_rows(settings: ThesisBuilderSettings) -> list[tuple[str, s
                 f"ORDER BY id"
             )
             return [(row[0], row[1]) for row in cur.fetchall()]
+
+
+def _story_assignment_audit_rows(
+    settings: ThesisBuilderSettings,
+) -> list[tuple[str, str, str, str, str | None]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT chosen_target, resolved_target, assignment_source, "
+                f"verification_status, verification_reason_code "
+                f"FROM {settings.thesis_builder_db_schema}.t_story_assignments "
+                f"ORDER BY id"
+            )
+            return [(row[0], row[1], row[2], row[3], row[4]) for row in cur.fetchall()]
 
 
 def _indirect_only_window_count(settings: ThesisBuilderSettings) -> int:
@@ -861,6 +1059,8 @@ class _FakeStoryAssigner:
 
     def assign_story(self, *, article, analysis, candidates) -> LlmStoryAssignmentResult:
         target = self._targets.pop(0)
+        if target == "__raise__":
+            raise RuntimeError("story_assignment_unavailable")
         if target == "window:first":
             target = candidates[0].target
         return LlmStoryAssignmentResult(

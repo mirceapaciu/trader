@@ -104,8 +104,12 @@ Logical fields:
 - `analysis_id`: valid analysis being assigned; unique for idempotent audit updates.
 - `article_id`: incoming article identity.
 - `candidate_targets`: JSON list of candidate `window:<id>` and `card:<id>` targets shown to the assignment step.
-- `chosen_target`: `window:<id>`, `card:<id>`, or `new_story`.
+- `chosen_target`: raw assignment result (`window:<id>`, `card:<id>`, or `new_story`) before deterministic verification.
+- `resolved_target`: final target after deterministic verification. Cross-story `window:<id>` or `card:<id>` assignments are downgraded to `new_story`.
 - `assignment_source`: `matched`, `new_story`, or `fallback`.
+- `verification_status`: `skipped`, `passed`, or `downgraded`.
+- `verification_reason_code`: deterministic verifier reason such as `story_text_mismatch`.
+- `verification_details_json`: bounded token-overlap audit details used by the verifier.
 - `llm_model`, `max_output_tokens`, `tokens_used`: configured assignment call metadata and token usage.
 - `response_json`: raw structured assignment response when available.
 - `error_code`: transport, parser, or schema error when fallback was used.

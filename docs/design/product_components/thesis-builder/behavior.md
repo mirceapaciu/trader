@@ -182,6 +182,14 @@ ThesisBuilder aggregates only until enough evidence exists to make a trade decis
 
 When story scoping is enabled, each new window stores a seed-stable `story_narrative` derived from the seeding article headline, analysis `event_type`, and `evidence_bullet_candidates`. The seed narrative is not rewritten by later matched articles, so story identity cannot drift as coverage accumulates. Multiple collecting windows may exist for the same instrument, strategy, and direction; the assignment result, not a database uniqueness constraint, selects the target window.
 
+Story assignment is not taken from the LLM on trust. When assignment chooses an existing
+`window:<id>` or `card:<id>`, ThesisBuilder performs a deterministic story-text overlap check
+between the incoming article/story terms and the target's stored `story_narrative`. Generic
+market words and the ticker itself do not count as overlap. A mismatch is audited in
+`t_story_assignments` and downgraded to `new_story`; if the analysis is indirect, the assigned
+target then has no anchor and is rejected by the indirect-evidence gate. The same verification
+applies to fail-open fallback placement.
+
 Window satisfaction rules:
 - The window must meet all evidence rules from `docs/design/shared/product-constraint.md`.
 - The default required evidence count is read from `THESIS_CARD_REQUIRED_EVIDENCE_COUNT`.
