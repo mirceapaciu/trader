@@ -20,6 +20,7 @@ from src.product_components.thesis_builder.llm_client import ThesisAnalyzer
 from src.product_components.thesis_builder.models import (
     ContentType,
     LlmAnalysisResult,
+    LlmStoryAssignmentResult,
     NewsArticle,
     SubjectRelation,
     ThesisStrategy,
@@ -281,6 +282,171 @@ def test_indirect_evidence_requires_anchor_and_never_seeds_alone() -> None:
     assert _evidence_window_rows(settings) == [
         ("satisfied", ["direct-anchor", "indirect-supplement"])
     ]
+
+
+def test_story_scoped_indirect_new_story_is_rejected_without_seeding_window() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+        story_assigner=_FakeStoryAssigner(["new_story"]),
+    )
+    base = datetime(2026, 7, 15, 15, 0, tzinfo=timezone.utc)
+    direct_at = base
+    indirect_at = base + timedelta(minutes=1)
+
+    direct = repository.persist_analysis_and_update_evidence(
+        article=_news_article("direct-anchor", direct_at),
+        result=_buy_analysis("direct-anchor"),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: direct_at + timedelta(seconds=30),
+    )
+    assert direct.signal is None
+
+    indirect = _buy_analysis(
+        "off-story-supplier",
+        instrument_is_subject=False,
+        subject_relation=SubjectRelation.CUSTOMER_OR_PEER,
+        event_type="supplier_partnership",
+        reasoning="A supplier partnership may read through to Apple but is a different story.",
+        price_impact_magnitude="low",
+    )
+    outcome = repository.persist_analysis_and_update_evidence(
+        article=_news_article("off-story-supplier", indirect_at),
+        result=indirect,
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: indirect_at + timedelta(seconds=30),
+    )
+
+    assert outcome.signal is None
+    assert _analysis_policy_rows(settings) == [
+        ("direct", "medium", "valid", None),
+        ("customer_or_peer", "low", "rejected", "indirect_no_anchor_evidence"),
+    ]
+    assert _evidence_window_rows(settings) == [("collecting", ["direct-anchor"])]
+    assert _indirect_only_window_count(settings) == 0
+    assert _story_assignment_rows(settings) == [
+        ("new_story", "new_story"),
+        ("new_story", "new_story"),
+    ]
+
+
+def test_story_scoped_indirect_can_join_assigned_window_with_direct_anchor() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+        story_assigner=_FakeStoryAssigner(["window:first"]),
+    )
+    base = datetime(2026, 7, 15, 15, 0, tzinfo=timezone.utc)
+    direct_at = base
+    indirect_at = base + timedelta(minutes=1)
+
+    repository.persist_analysis_and_update_evidence(
+        article=_news_article("direct-anchor", direct_at),
+        result=_buy_analysis("direct-anchor"),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: direct_at + timedelta(seconds=30),
+    )
+    outcome = repository.persist_analysis_and_update_evidence(
+        article=_news_article("same-story-supplier", indirect_at),
+        result=_buy_analysis(
+            "same-story-supplier",
+            instrument_is_subject=False,
+            subject_relation=SubjectRelation.SUPPLY_CHAIN,
+            event_type="supplier_expansion",
+            reasoning="A supplier expansion corroborates the same Apple guidance story.",
+            price_impact_magnitude="low",
+        ),
+        market_context_snapshot=_market_context(),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        story_scoping_enabled=True,
+        story_assignment_model=settings.story_assignment_model,
+        story_assignment_max_output_tokens=settings.story_assignment_max_output_tokens,
+        clock=lambda: indirect_at + timedelta(seconds=30),
+    )
+
+    assert outcome.signal is None
+    assert _analysis_policy_rows(settings) == [
+        ("direct", "medium", "valid", None),
+        ("supply_chain", "low", "valid", None),
+    ]
+    assert _evidence_window_rows(settings) == [
+        ("collecting", ["direct-anchor", "same-story-supplier"])
+    ]
+    assert _indirect_only_window_count(settings) == 0
+    assignment_rows = _story_assignment_rows(settings)
+    assert assignment_rows[0] == ("new_story", "new_story")
+    assert assignment_rows[1][0].startswith("window:")
+    assert assignment_rows[1][1] == "matched"
 
 
 def test_untradeable_context_persists_rejected_card_without_signal() -> None:
@@ -557,6 +723,38 @@ def _thesis_card_rows(settings: ThesisBuilderSettings) -> list[tuple[str, str | 
             return [(row[0], row[1]) for row in cur.fetchall()]
 
 
+def _story_assignment_rows(settings: ThesisBuilderSettings) -> list[tuple[str, str]]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT chosen_target, assignment_source "
+                f"FROM {settings.thesis_builder_db_schema}.t_story_assignments "
+                f"ORDER BY id"
+            )
+            return [(row[0], row[1]) for row in cur.fetchall()]
+
+
+def _indirect_only_window_count(settings: ThesisBuilderSettings) -> int:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) "
+                f"FROM {settings.thesis_builder_db_schema}.t_evidence_windows w "
+                f"WHERE EXISTS ("
+                f"  SELECT 1 FROM jsonb_array_elements_text(w.analysis_ids) AS ids(id_text)"
+                f") "
+                f"AND NOT EXISTS ("
+                f"  SELECT 1 "
+                f"  FROM jsonb_array_elements_text(w.analysis_ids) AS ids(id_text) "
+                f"  JOIN {settings.thesis_builder_db_schema}.t_news_analyses a "
+                f"    ON a.id = ids.id_text::bigint "
+                f"  WHERE a.validation_status = 'valid' "
+                f"  AND COALESCE(a.subject_relation, 'direct') = 'direct'"
+                f")"
+            )
+            return int(cur.fetchone()[0])
+
+
 def _runner(
     settings: ThesisBuilderSettings, *, llm_client: "_FakeLlmClient | None" = None
 ) -> ThesisBuilderRunner:
@@ -655,6 +853,22 @@ class _FakeLlmClient:
         }
         result.update(self._overrides)
         return result
+
+
+class _FakeStoryAssigner:
+    def __init__(self, targets: list[str]) -> None:
+        self._targets = list(targets)
+
+    def assign_story(self, *, article, analysis, candidates) -> LlmStoryAssignmentResult:
+        target = self._targets.pop(0)
+        if target == "window:first":
+            target = candidates[0].target
+        return LlmStoryAssignmentResult(
+            target=target,
+            estimated_tokens=10,
+            llm_model="test-story-model",
+            raw_response={"target": target},
+        )
 
 
 def _settings() -> ThesisBuilderSettings:
@@ -759,6 +973,7 @@ def _cleanup(settings: ThesisBuilderSettings, redis_client: redis.Redis) -> None
     with psycopg.connect(**db_config()) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM {settings.shared_db_schema}.t_thesis_card_reviews")
+            cur.execute(f"DELETE FROM {settings.thesis_builder_db_schema}.t_story_assignments")
             cur.execute(f"DELETE FROM {settings.thesis_builder_db_schema}.t_thesis_cards")
             cur.execute(f"DELETE FROM {settings.thesis_builder_db_schema}.t_evidence_windows")
             cur.execute(f"DELETE FROM {settings.thesis_builder_db_schema}.t_news_analyses")

@@ -176,8 +176,6 @@ Subject attribution rules:
 - Because unverified directs are downgraded before evidence-window mutation, anchor evidence and card seeds are always text-verified: a set of articles none of which names the instrument can never form a thesis card, regardless of provider tags.
 - Live processing, historical reprocess, and regeneration backtests apply identical prompt content and verification so sim funnels remain comparable to production.
 
-**Implementation status:** specified ahead of implementation by issues 260714-03 (deterministic direct-verification backstop) and 260715-02 (feed-tag provenance prompt change); as of 2026-07-15 neither is implemented, and `subject_relation=direct` is still self-reported by the LLM. The alias backfill preconditions in 260714-03 apply before the backstop goes live.
-
 ## 4. Evidence Aggregation
 
 ThesisBuilder aggregates only until enough evidence exists to make a trade decision.
@@ -188,7 +186,7 @@ Window satisfaction rules:
 - The window must meet all evidence rules from `docs/design/shared/product-constraint.md`.
 - The default required evidence count is read from `THESIS_CARD_REQUIRED_EVIDENCE_COUNT`.
 - Evidence must support one coherent instrument, direction, strategy, and time horizon.
-- Indirect evidence (`supply_chain` or `customer_or_peer`) is supplementary only. It is valid only when the instrument already has an active thesis card or direct evidence in the current collecting window, and a window containing only indirect evidence never satisfies the seed requirement.
+- Indirect evidence (`supply_chain` or `customer_or_peer`) is supplementary only. It is valid only when the assigned story target already has an active thesis card or direct evidence in the assigned collecting window. If story assignment resolves to `new_story`, indirect evidence is rejected with `indirect_no_anchor_evidence` and no new window is created. With story scoping disabled, the same rule falls back to the legacy instrument/strategy/direction window key. A window containing only indirect evidence never satisfies the seed requirement.
 - Conflicting high-confidence evidence prevents card creation until the conflict is resolved by newer or stronger evidence.
 
 Window terminal states:

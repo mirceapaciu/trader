@@ -171,17 +171,19 @@ class PostgresThesisBuilderRepository:
         )
         normalization_errors = _normalization_validation_errors(original_result, result)
         with self._connect() as conn:
+            now = clock() if clock is not None else datetime.now(timezone.utc)
+            has_anchor_evidence = True if story_scoping_enabled else _has_anchor_evidence(
+                conn=conn,
+                schema=self._thesis_schema,
+                result=result,
+                reprocess_run_id=reprocess_run_id,
+                now=now,
+            )
             rejection = _analysis_rejection(
                 result,
                 min_confidence=min_confidence,
                 min_relevance=min_relevance,
-                has_anchor_evidence=_has_anchor_evidence(
-                    conn=conn,
-                    schema=self._thesis_schema,
-                    result=result,
-                    reprocess_run_id=reprocess_run_id,
-                    now=clock() if clock is not None else datetime.now(timezone.utc),
-                ),
+                has_anchor_evidence=has_anchor_evidence,
             )
             status = ValidationStatus.REJECTED if rejection else ValidationStatus.VALID
             analysis_id = self._insert_analysis(
@@ -223,7 +225,7 @@ class PostgresThesisBuilderRepository:
                     story_scoping_enabled=story_scoping_enabled,
                     story_assignment_model=story_assignment_model,
                     story_assignment_max_output_tokens=story_assignment_max_output_tokens,
-                    clock=clock,
+                    clock=lambda: now,
                     reprocess_run_id=reprocess_run_id,
                 )
             conn.commit()
@@ -395,7 +397,24 @@ class PostgresThesisBuilderRepository:
                     matched_at=now,
                 )
                 return None
-            window = target["window"]
+            if not _target_has_anchor_evidence(target=target, result=result):
+                self._reject_analysis(
+                    conn=conn,
+                    analysis_id=analysis_id,
+                    rejection_reason_code="indirect_no_anchor_evidence",
+                )
+                return None
+            if target["target_type"] == "new_story":
+                window = self._create_story_window(
+                    conn=conn,
+                    result=result,
+                    article=article,
+                    analysis_id=analysis_id,
+                    required_evidence_count=required_evidence_count,
+                    reprocess_run_id=reprocess_run_id,
+                )
+            else:
+                window = target["window"]
         else:
             window = self._load_or_create_window(conn=conn, result=result, article=article, analysis_id=analysis_id, now=now, required_evidence_count=required_evidence_count, reprocess_run_id=reprocess_run_id)
         candidate_analysis_ids = list(dict.fromkeys([*window["analysis_ids"], analysis_id]))
@@ -650,6 +669,10 @@ class PostgresThesisBuilderRepository:
                 )
                 if fallback_window is not None:
                     chosen_target = f"window:{fallback_window['id']}"
+                    fallback_window["analyses"] = self._load_valid_analyses(
+                        conn=conn,
+                        analysis_ids=fallback_window["analysis_ids"],
+                    )
                     self._insert_story_assignment(
                         conn=conn,
                         analysis_id=analysis_id,
@@ -668,15 +691,6 @@ class PostgresThesisBuilderRepository:
                 chosen_target = "new_story"
 
         if chosen_target == "new_story":
-            window = self._create_story_window(
-                conn=conn,
-                result=result,
-                article=article,
-                analysis_id=analysis_id,
-                required_evidence_count=required_evidence_count,
-                reprocess_run_id=reprocess_run_id,
-            )
-            chosen_target = f"window:{window['id']}"
             self._insert_story_assignment(
                 conn=conn,
                 analysis_id=analysis_id,
@@ -691,7 +705,7 @@ class PostgresThesisBuilderRepository:
                 error_code=error_code,
                 reprocess_run_id=reprocess_run_id,
             )
-            return {"target_type": "window", "target_id": window["id"], "window": window}
+            return {"target_type": "new_story", "target_id": None}
 
         target_type, _, target_id_text = chosen_target.partition(":")
         self._insert_story_assignment(
@@ -713,6 +727,10 @@ class PostgresThesisBuilderRepository:
         if target_type == "window":
             window = self._load_window_by_id(conn=conn, window_id=int(target_id_text))
             if window is not None:
+                window["analyses"] = self._load_valid_analyses(
+                    conn=conn,
+                    analysis_ids=window["analysis_ids"],
+                )
                 return {"target_type": "window", "target_id": window["id"], "window": window}
         raise ValueError("invalid_story_assignment_target")
 
@@ -886,6 +904,23 @@ class PostgresThesisBuilderRepository:
         )
         with conn.cursor() as cur:
             cur.execute(sql, (Json(article_ids), Json(analysis_ids), _to_utc(window_started_at), _to_utc(last_evidence_at), status, status_reason, window_id))
+
+    def _reject_analysis(
+        self,
+        *,
+        conn: psycopg.Connection,
+        analysis_id: int,
+        rejection_reason_code: str,
+    ) -> None:
+        sql = (
+            f"UPDATE {self._thesis_schema}.t_news_analyses "
+            f"SET validation_status = 'rejected', "
+            f"rejection_reason_code = %s, "
+            f"validation_errors = COALESCE(validation_errors, '[]'::jsonb) || %s::jsonb "
+            f"WHERE id = %s"
+        )
+        with conn.cursor() as cur:
+            cur.execute(sql, (rejection_reason_code, Json([rejection_reason_code]), analysis_id))
 
     def _load_valid_analyses(self, *, conn: psycopg.Connection, analysis_ids: list[int]) -> list[PersistedAnalysis]:
         sql = (
@@ -1352,6 +1387,21 @@ def _has_anchor_evidence(
             ),
         )
         return cur.fetchone() is not None
+
+
+def _target_has_anchor_evidence(*, target: dict[str, Any], result: LlmAnalysisResult) -> bool:
+    relation = _effective_subject_relation(result)
+    if relation is SubjectRelation.DIRECT:
+        return True
+    if relation not in {SubjectRelation.SUPPLY_CHAIN, SubjectRelation.CUSTOMER_OR_PEER}:
+        return False
+    if target["target_type"] == "card":
+        return True
+    if target["target_type"] != "window":
+        return False
+    window = target.get("window") or {}
+    analyses = window.get("analyses") or []
+    return any(_is_direct_relation(analysis.subject_relation) for analysis in analyses)
 
 
 def _already_priced_rejection(
