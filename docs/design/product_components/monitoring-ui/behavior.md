@@ -181,7 +181,7 @@ Chart bucket granularity follows the same preset rules as the NewsFetcher throug
 Bucketed ThesisBuilder throughput must render as discrete bars rather than connected lines so zero
 activity remains visually empty instead of implying continuity between buckets.
 
-Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows. Thesis-card history rows expose story narrative and corroboration count when ThesisBuilder story scoping is enabled. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
+Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows; the window detail panel also exposes the window's story narrative when ThesisBuilder story scoping is enabled. Thesis-card history rows expose story narrative and corroboration count when ThesisBuilder story scoping is enabled. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
 
 The ThesisBuilder tab also shows a recent dead-letter panel sourced from `failed_messages_dlq` entries written by ThesisBuilder when message consumption fails after validation or payload checks. These items are separate from the NewsFetcher outbox dead-letter views:
 - NewsFetcher dead letters represent publication-obligation failures from `news_fetcher.t_publication_obligations`.

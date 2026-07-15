@@ -614,6 +614,12 @@ function WindowDetail({ window: w }: { window: ThesisBuilderEvidenceWindow }) {
         <span>Direction</span>
         <strong>{w.direction ? formatToken(w.direction) : "n/a"}</strong>
       </div>
+      {w.story_narrative && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>Story</span>
+          <strong>{w.story_narrative}</strong>
+        </div>
+      )}
       <div className="pending-detail-row">
         <span>Window started</span>
         <strong>{formatDate(w.window_started_at)}</strong>

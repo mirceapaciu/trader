@@ -77,6 +77,7 @@ export type ThesisBuilderEvidenceWindow = {
   expires_in_seconds: number;
   evidence_count: number;
   required_evidence_count: number;
+  story_narrative?: string | null;
 };
 
 export type ThesisBuilderActionableCard = {

@@ -135,6 +135,7 @@ class ThesisBuilderEvidenceWindow(BaseModel):
     expires_in_seconds: float
     evidence_count: int
     required_evidence_count: int
+    story_narrative: str | None = None
 
 
 class ThesisBuilderActionableCard(BaseModel):

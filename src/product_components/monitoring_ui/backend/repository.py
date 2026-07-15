@@ -1141,7 +1141,7 @@ class PostgresRedisMonitoringDataSource:
             f"EXTRACT(EPOCH FROM (window_started_at + (%s * INTERVAL '1 minute') - NOW())) "
             f"AS expires_in_seconds, "
             f"jsonb_array_length(article_ids) AS evidence_count, "
-            f"required_evidence_count "
+            f"required_evidence_count, story_narrative "
             f"FROM {self._thesis_builder_schema}.t_evidence_windows "
             f"WHERE status = 'collecting' "
             f"AND window_started_at + (%s * INTERVAL '1 minute') > NOW() "
@@ -1163,6 +1163,7 @@ class PostgresRedisMonitoringDataSource:
                 expires_in_seconds=float(row["expires_in_seconds"] or 0),
                 evidence_count=int(row["evidence_count"] or 0),
                 required_evidence_count=int(row["required_evidence_count"]),
+                story_narrative=row["story_narrative"],
             )
             for row in rows
         ]
