@@ -86,6 +86,7 @@ class LlmAnalysisResult:
     instrument_is_subject: bool = False
     content_type: ContentType = ContentType.OPINION
     subject_relation: SubjectRelation = SubjectRelation.NONE
+    event_occurred_at: datetime | None = None
     event_type: str | None = None
     price_impact_magnitude: str | None = None
     impact_horizon: str | None = None
@@ -138,6 +139,7 @@ class PersistedAnalysis:
     validation_status: ValidationStatus
     rejection_reason_code: str | None
     subject_relation: SubjectRelation | None
+    event_occurred_at: datetime | None
     analyzed_at: datetime
 
 

@@ -323,12 +323,152 @@ def test_untradeable_context_persists_rejected_card_without_signal() -> None:
     assert redis_client.xlen(settings.signal_queue) == 0
 
 
+def test_recap_event_age_persists_event_time_and_rejects_stale_event() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    _runner(settings).bootstrap()
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+    )
+    base = datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc)
+    event_at = datetime(2026, 7, 9, tzinfo=timezone.utc)
+
+    for index in range(3):
+        published_at = base + timedelta(minutes=index)
+        outcome = repository.persist_analysis_and_update_evidence(
+            article=_news_article(f"mu-recap-{index}", published_at),
+            result=_buy_analysis(f"mu-recap-{index}", event_occurred_at=event_at),
+            market_context_snapshot=_market_context(current_price=100.0, previous_close=100.0),
+            required_evidence_count=3,
+            min_confidence=settings.min_confidence,
+            min_relevance=settings.min_relevance,
+            risk_max_loss_usd=settings.risk_max_loss_usd,
+            tradeability_max_entry_price=settings.tradeability_max_entry_price,
+            tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+            default_time_horizon=settings.default_time_horizon,
+            evidence_collection_max_minutes=10000,
+            max_evidence_age_minutes=180,
+            already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+            clock=lambda published_at=published_at: published_at + timedelta(seconds=30),
+        )
+        assert outcome.signal is None
+
+    assert _analysis_event_times(settings) == [event_at, event_at, event_at]
+    assert _thesis_card_rows(settings) == [("rejected", "stale_event")]
+    assert redis_client.xlen(settings.signal_queue) == 0
+
+
+def test_old_publication_without_event_time_still_rejects_stale_evidence() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    _runner(settings).bootstrap()
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+    )
+    base = datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc)
+    published_at = base - timedelta(hours=4)
+
+    for index in range(3):
+        outcome = repository.persist_analysis_and_update_evidence(
+            article=_news_article(f"old-news-{index}", published_at + timedelta(minutes=index)),
+            result=_buy_analysis(f"old-news-{index}"),
+            market_context_snapshot=_market_context(current_price=100.0, previous_close=100.0),
+            required_evidence_count=3,
+            min_confidence=settings.min_confidence,
+            min_relevance=settings.min_relevance,
+            risk_max_loss_usd=settings.risk_max_loss_usd,
+            tradeability_max_entry_price=settings.tradeability_max_entry_price,
+            tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+            default_time_horizon=settings.default_time_horizon,
+            evidence_collection_max_minutes=10000,
+            max_evidence_age_minutes=180,
+            already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+            already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+            already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+            already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+            clock=lambda: base,
+        )
+        assert outcome.signal is None
+
+    assert _analysis_event_times(settings) == [None, None, None]
+    assert _thesis_card_rows(settings) == [("rejected", "stale_evidence")]
+    assert redis_client.xlen(settings.signal_queue) == 0
+
+
+def test_rolling_window_uses_event_time_for_retention_but_keeps_new_arrival() -> None:
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+
+    _runner(settings).bootstrap()
+    repository = PostgresThesisBuilderRepository(
+        dsn=settings.postgres_dsn,
+        thesis_schema=settings.thesis_builder_db_schema,
+    )
+    base = datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc)
+
+    first = repository.persist_analysis_and_update_evidence(
+        article=_news_article("recap-old-event", base),
+        result=_buy_analysis("recap-old-event", event_occurred_at=base - timedelta(days=6)),
+        market_context_snapshot=_market_context(current_price=100.0, previous_close=100.0),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        clock=lambda: base + timedelta(seconds=30),
+    )
+    assert first.signal is None
+
+    second = repository.persist_analysis_and_update_evidence(
+        article=_news_article("fresh-arrival", base + timedelta(minutes=1)),
+        result=_buy_analysis("fresh-arrival"),
+        market_context_snapshot=_market_context(current_price=100.0, previous_close=100.0),
+        required_evidence_count=3,
+        min_confidence=settings.min_confidence,
+        min_relevance=settings.min_relevance,
+        risk_max_loss_usd=settings.risk_max_loss_usd,
+        tradeability_max_entry_price=settings.tradeability_max_entry_price,
+        tradeability_atr_stop_mult=settings.tradeability_atr_stop_mult,
+        default_time_horizon=settings.default_time_horizon,
+        evidence_collection_max_minutes=120,
+        max_evidence_age_minutes=180,
+        already_priced_event_driven_atr_multiple=settings.already_priced_event_driven_atr_multiple,
+        already_priced_event_driven_return_threshold=settings.already_priced_event_driven_return_threshold,
+        already_priced_sentiment_momentum_atr_multiple=settings.already_priced_sentiment_momentum_atr_multiple,
+        already_priced_sentiment_momentum_return_threshold=settings.already_priced_sentiment_momentum_return_threshold,
+        clock=lambda: base + timedelta(minutes=1, seconds=30),
+    )
+    assert second.signal is None
+    assert _evidence_window_rows(settings) == [("collecting", ["fresh-arrival"])]
+
+
 def _news_article(article_id: str, published_at: datetime) -> NewsArticle:
     return NewsArticle(
         id=article_id,
         source="integration",
-        headline=f"Apple raises guidance {article_id}",
-        summary="Apple raised revenue guidance.",
+        headline=f"Apple (AAPL) raises guidance {article_id}",
+        summary="Apple (AAPL) raised revenue guidance.",
         url=f"https://example.com/{article_id}",
         tickers=["AAPL"],
         published_at=published_at,
@@ -384,6 +524,16 @@ def _analysis_policy_rows(
                 f"FROM {settings.thesis_builder_db_schema}.t_news_analyses ORDER BY id"
             )
             return [(row[0], row[1], row[2], row[3]) for row in cur.fetchall()]
+
+
+def _analysis_event_times(settings: ThesisBuilderSettings) -> list[datetime | None]:
+    with psycopg.connect(**db_config()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT event_occurred_at "
+                f"FROM {settings.thesis_builder_db_schema}.t_news_analyses ORDER BY id"
+            )
+            return [row[0] for row in cur.fetchall()]
 
 
 def _evidence_window_rows(settings: ThesisBuilderSettings) -> list[tuple[str, list[str]]]:

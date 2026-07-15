@@ -40,4 +40,4 @@
 | 260714-03 | subject_relation=direct is self-reported by the LLM; misclassified sector stories bypass the indirect-evidence gates | resolved | docs/issues/issues-detail/260714-03.md |
 | 260715-01 | Group evidence windows by story: narrative assignment, per-story cards, post-card corroboration | resolved | docs/issues/issues-detail/260715-01.md |
 | 260715-02 | Analysis prompt presents provider feed tags as ground-truth attribution; teaser articles form fully off-instrument cards | resolved | docs/issues/issues-detail/260715-02.md |
-| 260715-03 | Article publication time is treated as event time; recap articles of old events pass every freshness and already-priced gate | new | docs/issues/issues-detail/260715-03.md |
+| 260715-03 | Article publication time is treated as event time; recap articles of old events pass every freshness and already-priced gate | resolved | docs/issues/issues-detail/260715-03.md |

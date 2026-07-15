@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS thesis_builder.t_news_analyses (
     strategy TEXT,
     direction TEXT,
     event_type TEXT,
+    event_occurred_at TIMESTAMPTZ,
     subject_relation TEXT,
     price_impact_magnitude TEXT,
     impact_horizon TEXT,
@@ -77,6 +78,9 @@ ALTER TABLE thesis_builder.t_news_analyses
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS event_type TEXT;
+
+ALTER TABLE thesis_builder.t_news_analyses
+    ADD COLUMN IF NOT EXISTS event_occurred_at TIMESTAMPTZ;
 
 ALTER TABLE thesis_builder.t_news_analyses
     ADD COLUMN IF NOT EXISTS subject_relation TEXT;

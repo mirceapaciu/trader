@@ -300,10 +300,10 @@ class PostgresThesisBuilderRepository:
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_news_analyses "
             f"(article_id, ticker, exchange_code, sentiment, relevance, urgency, suggested_action, "
-            f"strategy, direction, event_type, subject_relation, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
+            f"strategy, direction, event_type, subject_relation, event_occurred_at, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
             f"market_context_status, market_context_as_of, market_context_snapshot, fundamentals_snapshot, is_market_moving, "
             f"content_type, validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING id"
         )
         with conn.cursor() as cur:
@@ -321,6 +321,7 @@ class PostgresThesisBuilderRepository:
                     result.direction.value,
                     result.event_type,
                     result.subject_relation.value,
+                    _to_utc(result.event_occurred_at) if result.event_occurred_at else None,
                     result.price_impact_magnitude,
                     result.impact_horizon,
                     result.reasoning,
@@ -408,7 +409,7 @@ class PostgresThesisBuilderRepository:
         retained = [
             item
             for item in analyses
-            if item.id == analysis_id or _to_utc(item.article.published_at) >= cutoff
+            if item.id == analysis_id or _effective_evidence_at(item) >= cutoff
         ]
         seen_article_ids: set[str] = set()
         unique_by_article: list[PersistedAnalysis] = []
@@ -419,15 +420,15 @@ class PostgresThesisBuilderRepository:
             unique_by_article.append(item)
         article_ids = [item.article_id for item in unique_by_article]
         analysis_ids = [item.id for item in retained]
-        published_ats = [_to_utc(item.article.published_at) for item in retained]
-        window_started_at = min(published_ats)
+        evidence_ats = [_effective_evidence_at(item) for item in retained]
+        window_started_at = min(evidence_ats)
         self._update_window(
             conn=conn,
             window_id=int(window["id"]),
             article_ids=article_ids,
             analysis_ids=analysis_ids,
             window_started_at=window_started_at,
-            last_evidence_at=max(published_ats),
+            last_evidence_at=max(evidence_ats),
             status="collecting",
             status_reason=None,
         )
@@ -439,11 +440,17 @@ class PostgresThesisBuilderRepository:
             return None
         selected_article_ids = [analysis.article_id for analysis in selected]
         evidence = _evidence(selected=selected)
-        max_age_seconds = max((now - _to_utc(item.article.published_at)).total_seconds() for item in selected)
+        max_age_seconds = max((now - _effective_evidence_at(item)).total_seconds() for item in selected)
+        published_max_age_seconds = max(
+            (now - _to_utc(item.article.published_at)).total_seconds() for item in selected
+        )
         allowed_age_seconds = max_evidence_age_minutes * 60
         stale_seconds = max(0.0, max_age_seconds - allowed_age_seconds)
         validation_status = ValidationStatus.REJECTED if stale_seconds > 0 else ValidationStatus.VALID
-        rejection_reason = "stale_evidence" if stale_seconds > 0 else None
+        rejection_reason = None
+        if stale_seconds > 0:
+            published_stale_seconds = max(0.0, published_max_age_seconds - allowed_age_seconds)
+            rejection_reason = "stale_event" if published_stale_seconds == 0 else "stale_evidence"
         already_priced_rejection = _already_priced_rejection(
             result=result,
             market_context_snapshot=market_context_snapshot,
@@ -883,7 +890,7 @@ class PostgresThesisBuilderRepository:
     def _load_valid_analyses(self, *, conn: psycopg.Connection, analysis_ids: list[int]) -> list[PersistedAnalysis]:
         sql = (
             f"SELECT id, article_id, article_snapshot, ticker, exchange_code, strategy, direction, confidence, reasoning, "
-            f"validation_status, rejection_reason_code, subject_relation, analyzed_at "
+            f"validation_status, rejection_reason_code, subject_relation, event_occurred_at, analyzed_at "
             f"FROM {self._thesis_schema}.t_news_analyses "
             f"WHERE id = ANY(%s) AND validation_status = 'valid' "
             f"ORDER BY analyzed_at, id"
@@ -1452,6 +1459,12 @@ def _evidence(*, selected: list[PersistedAnalysis]) -> list[dict[str, Any]]:
                 "article_id": article.id,
                 "source": article.source,
                 "published_at": _to_utc(article.published_at).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "event_occurred_at": (
+                    _to_utc(analysis.event_occurred_at).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if analysis.event_occurred_at
+                    else None
+                ),
+                "effective_evidence_at": _effective_evidence_at(analysis).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
         )
     return evidence
@@ -1600,6 +1613,9 @@ def _analysis(row: dict[str, Any]) -> PersistedAnalysis:
             if row.get("subject_relation")
             else None
         ),
+        event_occurred_at=(
+            _to_utc(row["event_occurred_at"]) if row.get("event_occurred_at") else None
+        ),
         analyzed_at=_to_utc(row["analyzed_at"]),
     )
 
@@ -1616,6 +1632,14 @@ def _article_snapshot(article: NewsArticle) -> dict[str, Any]:
         "fetched_at": _to_utc(article.fetched_at).isoformat(),
         "sentiment_source": article.sentiment_source,
     }
+
+
+def _effective_evidence_at(analysis: PersistedAnalysis) -> datetime:
+    published_at = _to_utc(analysis.article.published_at)
+    if analysis.event_occurred_at is None:
+        return published_at
+    event_occurred_at = _to_utc(analysis.event_occurred_at)
+    return min(published_at, event_occurred_at)
 
 
 def _story_narrative(*, article: NewsArticle, result: LlmAnalysisResult) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass, field
+from datetime import date, datetime, time, timezone
 from typing import Any, Protocol
 
 from .models import (
@@ -419,6 +420,7 @@ def parse_analysis_result(
         impact_horizon=_enum_or_none(
             raw.get("impact_horizon"), allowed={"intraday", "1d", "5d"}
         ),
+        event_occurred_at=_parse_optional_datetime(raw.get("event_occurred_at")),
         evidence_bullet_candidates=[str(item).strip() for item in bullets if str(item).strip()],
     )
 
@@ -526,6 +528,13 @@ def _build_prompt(
                 "An opinion or valuation piece with no catalyst for this instrument must be opinion even if it "
                 "reads bullishly. Do NOT label it news_catalyst.",
             ],
+            "event_dating_rules": [
+                "article.published_at is the upstream feed publication time, not necessarily the time of the reported event.",
+                "Return event_occurred_at as the ISO 8601 date or datetime when the reported event actually occurred or was announced, based only on the headline and summary.",
+                "Resolve relative expressions such as 'last week' or 'earlier this month' against article.published_at.",
+                "If the text does not date the event, set event_occurred_at to null.",
+                "When event_occurred_at materially predates article.published_at, treat the article as a recap rather than breaking news.",
+            ],
             "already_priced_rules": [
                 "Use market_context when present to detect whether the thesis-direction move has already been realized.",
                 "If a buy thesis already had a sharp positive move, or a sell thesis already had a sharp negative move, lower confidence and prefer suggested_action=hold.",
@@ -592,6 +601,7 @@ def _build_prompt(
                 "content_type",
                 "event_type",
                 "subject_relation",
+                "event_occurred_at",
                 "price_impact_magnitude",
                 "impact_horizon",
                 "evidence_bullet_candidates",
@@ -818,6 +828,29 @@ def _enum_or_none(value: Any, *, allowed: set[str]) -> str | None:
     return parsed if parsed in allowed else None
 
 
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value in {None, ""}:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, time.min)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            if len(text) == 10:
+                parsed = datetime.combine(date.fromisoformat(text), time.min)
+            else:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _float_in_range(value: Any, *, minimum: float, maximum: float, field: str) -> float:
     parsed = float(value)
     if parsed < minimum or parsed > maximum:
@@ -869,6 +902,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "content_type",
             "event_type",
             "subject_relation",
+            "event_occurred_at",
             "price_impact_magnitude",
             "impact_horizon",
             "evidence_bullet_candidates",
@@ -905,6 +939,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
                 "type": "string",
                 "enum": ["direct", "supply_chain", "customer_or_peer", "macro_sector", "none"],
             },
+            "event_occurred_at": {"type": ["string", "null"]},
             "price_impact_magnitude": {"type": ["string", "null"], "enum": ["low", "medium", "high", None]},
             "impact_horizon": {"type": ["string", "null"], "enum": ["intraday", "1d", "5d", None]},
             "evidence_bullet_candidates": {"type": "array", "items": {"type": "string"}},

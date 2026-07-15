@@ -1275,6 +1275,9 @@ function formatDate(value?: string | null) {
 }
 
 function formatToken(value: string) {
+  if (value === "stale_evidence" || value === "stale_event") {
+    return "stale";
+  }
   return value.replaceAll("_", " ");
 }
 

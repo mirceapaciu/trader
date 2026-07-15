@@ -377,7 +377,7 @@ describe("ThesisBuilderTab", () => {
 
     fireEvent.click(screen.getByText("TSLA"));
     expect(screen.getByText("Rejection reason")).toBeInTheDocument();
-    expect(screen.getByText("stale evidence")).toBeInTheDocument();
+    expect(screen.getByText("stale")).toBeInTheDocument();
   });
 
   it("filters by ticker search", () => {

@@ -659,6 +659,33 @@ def test_parse_analysis_result_parses_impact_horizon() -> None:
     assert result.impact_horizon == "1d"
 
 
+def test_parse_analysis_result_parses_event_occurred_at() -> None:
+    dated = parse_analysis_result(
+        _analysis_payload(event_occurred_at="2026-07-09"),
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+    timed = parse_analysis_result(
+        _analysis_payload(event_occurred_at="2026-07-09T16:30:00-04:00"),
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+
+    assert dated.event_occurred_at == datetime(2026, 7, 9, tzinfo=timezone.utc)
+    assert timed.event_occurred_at == datetime(2026, 7, 9, 20, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("value", [None, "", "not a date"])
+def test_parse_analysis_result_degrades_invalid_event_occurred_at_to_null(value) -> None:
+    result = parse_analysis_result(
+        _analysis_payload(event_occurred_at=value),
+        expected_ticker="AAPL",
+        expected_exchange_code="XNAS",
+    )
+
+    assert result.event_occurred_at is None
+
+
 def test_parse_analysis_result_normalizes_invalid_impact_fields() -> None:
     # Cached backtester responses predate the field or may carry values outside
     # the strict schema; anything unrecognized degrades to None so the DB CHECK
@@ -678,6 +705,7 @@ def test_parse_analysis_result_normalizes_invalid_impact_fields() -> None:
     )
     assert invalid.price_impact_magnitude is None
     assert invalid.impact_horizon is None
+    assert invalid.event_occurred_at is None
 
 
 def test_analysis_response_schema_required_matches_properties() -> None:
@@ -700,8 +728,27 @@ def test_build_prompt_includes_impact_rubric() -> None:
     assert '"impact_horizon_rules"' in prompt
     assert "atr_20d" in prompt
     # The new output fields are demanded from the model explicitly.
-    for field in ("event_type", "subject_relation", "price_impact_magnitude", "impact_horizon"):
+    for field in ("event_type", "subject_relation", "event_occurred_at", "price_impact_magnitude", "impact_horizon"):
         assert f'"{field}"' in prompt
+
+
+def test_build_prompt_includes_event_dating_rules_only_in_full_analysis() -> None:
+    prompt = _build_prompt(
+        article=_article(),
+        ticker="AAPL",
+        exchange_code="XNAS",
+        market_context_snapshot=None,
+    )
+    payload = json.loads(prompt)
+
+    assert "event_occurred_at" in payload["required_json_fields"]
+    event_rules = " ".join(payload["event_dating_rules"])
+    assert "published_at is the upstream feed publication time" in event_rules
+    assert "last week" in event_rules
+
+    triage_prompt = _build_triage_prompt(article=_article(), ticker="AAPL", exchange_code="XNAS")
+    assert "event_occurred_at" not in triage_prompt
+    assert "event_dating_rules" not in triage_prompt
 
 
 def test_build_prompt_fundamentals_block_whitelists_stable_fields() -> None:

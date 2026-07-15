@@ -168,7 +168,7 @@ Event dating rules:
 - An absent or unparseable `event_occurred_at` degrades to null and never fails the whole analysis, keeping historical/cached responses that predate the field parseable.
 - Each analyzed article's **effective evidence timestamp** is `min(published_at, event_occurred_at)` when the event date is present, else `published_at`. The evidence-window retention cutoff (§4) and the card freshness gate (§5) measure age from this timestamp.
 
-**Implementation status:** specified ahead of implementation by issue 260715-03; as of 2026-07-15 not implemented — no event date is extracted and all freshness measures key off `published_at`.
+**Implementation status:** implemented by issue 260715-03. ThesisBuilder extracts and persists `event_occurred_at` from full analysis responses, degrades absent or malformed values to null, and applies effective evidence timestamps to retention and card freshness gates.
 
 Subject attribution rules:
 - The analysis and triage prompts present provider ticker tags as feed provenance (`feed_tags` — which feed returned the article), never as ground-truth attribution, and instruct the model that `subject_relation=direct` requires the company, its products, or its ticker to be explicitly named in the article headline or summary.
@@ -196,7 +196,7 @@ Window terminal states:
 - `rejected`: evidence is structurally invalid, contradictory, below confidence, or otherwise non-actionable.
 - `expired`: legacy state from the anchored-window design; no longer produced (see below), retained only for pre-existing rows.
 
-The collection span is rolling, not anchored to the first article. On each new eligible analysis, evidence whose effective evidence timestamp (§3.3; `published_at` until 260715-03 lands) is older than `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES` (default 1000) relative to the analysis time ages out of the window individually; the window itself stays `collecting` and `window_started_at` tracks the oldest retained article. This guarantees a new arrival always lands in live collecting state (it is never discarded into a window that expired underneath it) and that evidence clusters straddling an arbitrary first-article anchor still form cards. The span is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately. Card-level freshness is enforced separately by `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`.
+The collection span is rolling, not anchored to the first article. On each new eligible analysis, evidence whose effective evidence timestamp (§3.3) is older than `THESIS_BUILDER_EVIDENCE_COLLECTION_MAX_MINUTES` (default 1000) relative to the analysis time ages out of the window individually; the window itself stays `collecting` and `window_started_at` tracks the oldest retained article. This guarantees a new arrival always lands in live collecting state (it is never discarded into a window that expired underneath it) and that evidence clusters straddling an arbitrary first-article anchor still form cards. The span is a ceiling, not a delay target: if sufficient evidence arrives earlier, ThesisBuilder creates the card immediately. Card-level freshness is enforced separately by `THESIS_CARD_MAX_EVIDENCE_AGE_MINUTES`.
 
 If story assignment targets an unexpired satisfied card, the incoming article is recorded as card corroboration and the existing card remains frozen: evidence, confidence, validation status, shared review state, and signal publication are not modified.
 
