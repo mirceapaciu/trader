@@ -1,4 +1,4 @@
 {
-  "last_audited_assignment_id": 156,
-  "note": "Managed by .agents/skills/verify-story-assignment. Pass 260716-156 audited 1 assignment (correct post-card corroboration into the TSMC Q2 card). Next pass audits id > 156."
+  "last_audited_assignment_id": 211,
+  "note": "Managed by .agents/skills/verify-story-assignment. Pass 260716-185-211 (27 assignments): clean — 8 correct downgrades (4 event-check incl. counterparty-token catch #197/CS-0073, 4 zero-overlap), 18 correct passes, 1 correct new_story rejection; 0 residual, 0 published cross-story. One borderline (#194 GH Research into psychedelic-surge sector window). 260716-01 fix holding across 55 post-fix assignments. Next pass audits id > 211."
 }
