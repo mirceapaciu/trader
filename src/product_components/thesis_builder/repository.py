@@ -67,6 +67,76 @@ _STORY_GENERIC_TOKENS = {
     "technology",
     "today",
     "unveils",
+    # grammar / filler words (>=4 chars) that create spurious overlap
+    "that",
+    "this",
+    "these",
+    "those",
+    "with",
+    "will",
+    "from",
+    "into",
+    "over",
+    "than",
+    "then",
+    "amid",
+    "also",
+    "more",
+    "most",
+    "such",
+    "been",
+    "have",
+    "they",
+    "their",
+    "were",
+    "does",
+    "could",
+    "would",
+    "should",
+    "here",
+    "what",
+    "when",
+    "which",
+    "while",
+    "according",
+    # generic finance / market vocabulary (not story-identifying)
+    "price",
+    "prices",
+    "billion",
+    "million",
+    "trillion",
+    "record",
+    "launch",
+    "launches",
+    "report",
+    "reports",
+    "reported",
+    "plans",
+    "year",
+    "week",
+    "quarter",
+    "results",
+    "result",
+    "analyst",
+    "analysts",
+    "upside",
+    "target",
+    "wall",
+    "street",
+    "gains",
+    "growth",
+    "investment",
+    "investors",
+    "strong",
+    "expected",
+    "significant",
+    "buy",
+    "next",
+    "deploy",
+    "deployment",
+    "funding",
+    "raise",
+    "offering",
 }
 
 
@@ -240,6 +310,8 @@ class PostgresThesisBuilderRepository:
                     article=article,
                     result=result,
                     market_context_snapshot=market_context_snapshot,
+                    instrument_display_name=instrument_display_name,
+                    instrument_aliases=instrument_aliases,
                     required_evidence_count=required_evidence_count,
                     risk_max_loss_usd=risk_max_loss_usd,
                     tradeability_max_entry_price=tradeability_max_entry_price,
@@ -386,6 +458,8 @@ class PostgresThesisBuilderRepository:
         article: NewsArticle,
         result: LlmAnalysisResult,
         market_context_snapshot: dict[str, Any] | None,
+        instrument_display_name: str | None = None,
+        instrument_aliases: tuple[str, ...] = (),
         required_evidence_count: int,
         risk_max_loss_usd: float,
         tradeability_max_entry_price: float,
@@ -420,6 +494,8 @@ class PostgresThesisBuilderRepository:
                 story_assignment_model=story_assignment_model,
                 story_assignment_max_output_tokens=story_assignment_max_output_tokens,
                 reprocess_run_id=reprocess_run_id,
+                instrument_display_name=instrument_display_name,
+                instrument_aliases=instrument_aliases,
             )
             if target["target_type"] == "card":
                 self._insert_card_corroboration(
@@ -663,12 +739,19 @@ class PostgresThesisBuilderRepository:
         story_assignment_model: str | None,
         story_assignment_max_output_tokens: int | None,
         reprocess_run_id: str | None,
+        instrument_display_name: str | None = None,
+        instrument_aliases: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         candidates = self._load_story_candidates(
             conn=conn,
             result=result,
             now=now,
             reprocess_run_id=reprocess_run_id,
+        )
+        excluded_entity_tokens = _entity_exclusion_tokens(
+            ticker=result.ticker,
+            display_name=instrument_display_name,
+            aliases=instrument_aliases,
         )
         candidate_targets = [candidate.target for candidate in candidates]
         assignment_source = "new_story"
@@ -715,6 +798,7 @@ class PostgresThesisBuilderRepository:
                         result=result,
                         target=chosen_target,
                         narrative=str(fallback_window.get("story_narrative") or ""),
+                        excluded_entity_tokens=excluded_entity_tokens,
                     )
                     resolved_target = verification["resolved_target"]
                     verification_status = verification["verification_status"]
@@ -770,6 +854,7 @@ class PostgresThesisBuilderRepository:
             result=result,
             target=chosen_target,
             narrative=candidate_narratives.get(chosen_target, ""),
+            excluded_entity_tokens=excluded_entity_tokens,
         )
         resolved_target = verification["resolved_target"]
         verification_status = verification["verification_status"]
@@ -1491,12 +1576,33 @@ def _target_has_anchor_evidence(*, target: dict[str, Any], result: LlmAnalysisRe
     return any(_is_direct_relation(analysis.subject_relation) for analysis in analyses)
 
 
+def _entity_exclusion_tokens(
+    *,
+    ticker: str,
+    display_name: str | None,
+    aliases: tuple[str, ...],
+) -> frozenset[str]:
+    """Tokens naming the subject instrument itself.
+
+    Two articles about the same watchlist company always share the company name, so name
+    tokens carry no story-identity signal and must be excluded from the overlap check
+    (the ticker symbol alone is not enough — the press uses the company name, not "NVDA").
+    """
+    tokens = {ticker.lower()}
+    for name in (display_name or "", *aliases):
+        for token in re.findall(r"[a-z0-9]+", name.lower()):
+            if len(token) >= 2:
+                tokens.add(token)
+    return frozenset(tokens)
+
+
 def _verify_story_assignment_target(
     *,
     article: NewsArticle,
     result: LlmAnalysisResult,
     target: str,
     narrative: str,
+    excluded_entity_tokens: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     if target == "new_story":
         return _story_verification(
@@ -1507,6 +1613,7 @@ def _verify_story_assignment_target(
             target_tokens=[],
             overlap=[],
         )
+    excluded_tokens = {result.ticker.lower(), *excluded_entity_tokens}
     incoming_tokens = _story_tokens(
         " ".join(
             [
@@ -1516,9 +1623,9 @@ def _verify_story_assignment_target(
                 " ".join(result.evidence_bullet_candidates),
             ]
         ),
-        excluded_tokens={result.ticker.lower()},
+        excluded_tokens=excluded_tokens,
     )
-    target_tokens = _story_tokens(narrative, excluded_tokens={result.ticker.lower()})
+    target_tokens = _story_tokens(narrative, excluded_tokens=excluded_tokens)
     overlap = sorted(incoming_tokens & target_tokens)
     if overlap:
         return _story_verification(
@@ -1544,6 +1651,8 @@ def _story_tokens(text: str, *, excluded_tokens: set[str]) -> set[str]:
     for token in re.findall(r"[a-z0-9][a-z0-9-]{2,}", text.lower()):
         normalized = token.strip("-")
         if len(normalized) < 4:
+            continue
+        if normalized.isdigit():
             continue
         if normalized in excluded_tokens or normalized in _STORY_GENERIC_TOKENS:
             continue
