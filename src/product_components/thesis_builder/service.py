@@ -104,6 +104,7 @@ class ThesisBuilderRunner:
                 model=settings.story_assignment_model,
                 max_tokens_per_run=settings.llm_daily_token_budget,
                 max_tokens_per_item=settings.story_assignment_max_output_tokens,
+                event_check_enabled=settings.story_event_check_enabled,
             )
         self._repository = repository or PostgresThesisBuilderRepository(
             dsn=settings.postgres_dsn,

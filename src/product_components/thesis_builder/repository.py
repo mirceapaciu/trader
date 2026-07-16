@@ -753,6 +753,13 @@ class PostgresThesisBuilderRepository:
             display_name=instrument_display_name,
             aliases=instrument_aliases,
         )
+        assigner = self._story_assigner
+        event_confirmer: Callable[[str], bool | None] | None = None
+        if assigner is not None and getattr(assigner, "event_check_enabled", False):
+            def event_confirmer(target_narrative: str) -> bool | None:
+                return assigner.confirm_same_event(
+                    article=article, analysis=result, narrative=target_narrative
+                )
         candidate_targets = [candidate.target for candidate in candidates]
         assignment_source = "new_story"
         chosen_target = "new_story"
@@ -799,6 +806,7 @@ class PostgresThesisBuilderRepository:
                         target=chosen_target,
                         narrative=str(fallback_window.get("story_narrative") or ""),
                         excluded_entity_tokens=excluded_entity_tokens,
+                        event_confirmer=event_confirmer,
                     )
                     resolved_target = verification["resolved_target"]
                     verification_status = verification["verification_status"]
@@ -855,6 +863,7 @@ class PostgresThesisBuilderRepository:
             target=chosen_target,
             narrative=candidate_narratives.get(chosen_target, ""),
             excluded_entity_tokens=excluded_entity_tokens,
+            event_confirmer=event_confirmer,
         )
         resolved_target = verification["resolved_target"]
         verification_status = verification["verification_status"]
@@ -1603,6 +1612,7 @@ def _verify_story_assignment_target(
     target: str,
     narrative: str,
     excluded_entity_tokens: frozenset[str] = frozenset(),
+    event_confirmer: Callable[[str], bool | None] | None = None,
 ) -> dict[str, Any]:
     if target == "new_story":
         return _story_verification(
@@ -1627,21 +1637,65 @@ def _verify_story_assignment_target(
     )
     target_tokens = _story_tokens(narrative, excluded_tokens=excluded_tokens)
     overlap = sorted(incoming_tokens & target_tokens)
-    if overlap:
+    inc_sorted = sorted(incoming_tokens)
+    tgt_sorted = sorted(target_tokens)
+
+    # No distinctive token in common: clearly a different story.
+    if not overlap:
+        return _story_verification(
+            resolved_target="new_story",
+            verification_status="downgraded",
+            verification_reason_code="story_text_mismatch",
+            incoming_tokens=inc_sorted,
+            target_tokens=tgt_sorted,
+            overlap=overlap,
+        )
+
+    # Two or more distinctive tokens in common: strong same-story signal; accept deterministically.
+    if len(overlap) >= 2:
         return _story_verification(
             resolved_target=target,
             verification_status="passed",
             verification_reason_code=None,
-            incoming_tokens=sorted(incoming_tokens),
-            target_tokens=sorted(target_tokens),
+            incoming_tokens=inc_sorted,
+            target_tokens=tgt_sorted,
             overlap=overlap,
         )
+
+    # Single-token overlap is the ambiguous band (260716-01): one shared token is as often
+    # incidental (same company/counterparty/sector, different event) as it is genuine, and token
+    # overlap cannot tell those apart. Consult the LLM event check when available.
+    if event_confirmer is not None:
+        decision = event_confirmer(narrative)
+        if decision is False:
+            return _story_verification(
+                resolved_target="new_story",
+                verification_status="downgraded",
+                verification_reason_code="story_event_mismatch",
+                incoming_tokens=inc_sorted,
+                target_tokens=tgt_sorted,
+                overlap=overlap,
+                event_check="different",
+            )
+        if decision is True:
+            return _story_verification(
+                resolved_target=target,
+                verification_status="passed",
+                verification_reason_code=None,
+                incoming_tokens=inc_sorted,
+                target_tokens=tgt_sorted,
+                overlap=overlap,
+                event_check="same",
+            )
+
+    # No event decision (check disabled, unsupported, budget-exhausted, or transport error):
+    # fail open to the pre-260716-01 behaviour (a single-token overlap passes).
     return _story_verification(
-        resolved_target="new_story",
-        verification_status="downgraded",
-        verification_reason_code="story_text_mismatch",
-        incoming_tokens=sorted(incoming_tokens),
-        target_tokens=sorted(target_tokens),
+        resolved_target=target,
+        verification_status="passed",
+        verification_reason_code=None,
+        incoming_tokens=inc_sorted,
+        target_tokens=tgt_sorted,
         overlap=overlap,
     )
 
@@ -1668,16 +1722,20 @@ def _story_verification(
     incoming_tokens: list[str],
     target_tokens: list[str],
     overlap: list[str],
+    event_check: str | None = None,
 ) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "incoming_tokens": incoming_tokens[:20],
+        "target_tokens": target_tokens[:20],
+        "overlap": overlap[:20],
+    }
+    if event_check is not None:
+        details["event_check"] = event_check
     return {
         "resolved_target": resolved_target,
         "verification_status": verification_status,
         "verification_reason_code": verification_reason_code,
-        "verification_details": {
-            "incoming_tokens": incoming_tokens[:20],
-            "target_tokens": target_tokens[:20],
-            "overlap": overlap[:20],
-        },
+        "verification_details": details,
     }
 
 

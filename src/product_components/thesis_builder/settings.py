@@ -49,6 +49,7 @@ class ThesisBuilderSettings:
     story_scoping_enabled: bool
     story_assignment_model: str
     story_assignment_max_output_tokens: int
+    story_event_check_enabled: bool
     synthesis_enabled: bool
     synthesis_model: str
     synthesis_max_output_tokens: int
@@ -122,6 +123,7 @@ class ThesisBuilderSettings:
                 os.getenv("THESIS_BUILDER_TRIAGE_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
             ),
             story_assignment_max_output_tokens=_int_env("THESIS_BUILDER_STORY_ASSIGNMENT_MAX_OUTPUT_TOKENS", 120),
+            story_event_check_enabled=_bool_env("THESIS_BUILDER_STORY_EVENT_CHECK_ENABLED", True),
             synthesis_enabled=_bool_env("THESIS_BUILDER_SYNTHESIS_ENABLED", False),
             synthesis_model=os.getenv("THESIS_BUILDER_SYNTHESIS_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
             synthesis_max_output_tokens=_int_env("THESIS_BUILDER_SYNTHESIS_MAX_OUTPUT_TOKENS", 1200),

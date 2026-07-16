@@ -46,6 +46,7 @@ def _settings() -> ThesisBuilderSettings:
         story_scoping_enabled=False,
         story_assignment_model="gpt-4o-mini",
         story_assignment_max_output_tokens=120,
+        story_event_check_enabled=False,
         synthesis_enabled=False,
         synthesis_model="gpt-4o-mini",
         synthesis_max_output_tokens=1200,

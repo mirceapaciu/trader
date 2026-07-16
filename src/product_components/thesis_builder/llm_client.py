@@ -134,6 +134,25 @@ class OpenAIThesisClient:
                 result["estimated_tokens"] = int(actual)
         return result
 
+    def confirm_story_event(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
+        client = self._get_client()
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            instructions="Return only a JSON object that matches the requested schema.",
+            max_output_tokens=max_output_tokens,
+            text={"format": _STORY_EVENT_RESPONSE_FORMAT},
+            temperature=0,
+            store=False,
+        )
+        result = _load_json_object(getattr(response, "output_text", ""))
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            actual = getattr(usage, "total_tokens", None) or getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)
+            if actual:
+                result["estimated_tokens"] = int(actual)
+        return result
+
 
 @dataclass
 class ThesisAnalyzer:
@@ -313,10 +332,41 @@ class ThesisStoryAssigner:
     model: str
     max_tokens_per_run: int
     max_tokens_per_item: int
+    event_check_enabled: bool = False
     tokens_used: int = 0
 
     def __post_init__(self) -> None:
         self._budget_lock = threading.Lock()
+
+    def confirm_same_event(self, *, article, analysis: LlmAnalysisResult, narrative: str) -> bool | None:
+        """Ask the LLM whether the incoming article and the target story are the same event.
+
+        Used only on the ambiguous single-token-overlap band (260716-01): token overlap alone
+        cannot separate "same company, same deal" from "same company, different deal". Returns
+        True/False, or None to signal "no decision" (disabled, no client support, budget
+        exhausted, transport error, or unparseable) so the caller can fail open to the
+        deterministic result rather than crash the news loop.
+        """
+        if not self.event_check_enabled:
+            return None
+        caller = getattr(self.client, "confirm_story_event", None)
+        if caller is None:
+            return None
+        prompt = _build_story_event_prompt(article=article, analysis=analysis, narrative=narrative)
+        estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
+        try:
+            self._reserve_tokens(estimated_tokens)
+        except TokenBudgetExhausted:
+            return None
+        try:
+            raw = caller(model=self.model, prompt=prompt, max_output_tokens=self.max_tokens_per_item)
+        except Exception:
+            self._release_reserved_tokens(estimated_tokens)
+            return None
+        actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        value = raw.get("same_event")
+        return value if isinstance(value, bool) else None
 
     def assign_story(
         self,
@@ -722,6 +772,31 @@ def _build_story_assignment_prompt(
     )
 
 
+def _build_story_event_prompt(*, article, analysis: LlmAnalysisResult, narrative: str) -> str:
+    return json.dumps(
+        {
+            "task": (
+                "Do the incoming article and the existing story describe the SAME underlying "
+                "news event -- the same announcement, deal, filing, report, or occurrence? "
+                "Answer same_event=false if they are different events, even when they share the "
+                "same company, the same counterparty, the same sector/theme, or the same "
+                "sentiment or direction. Two different deals, two different analyst notes, a "
+                "preview versus the actual result, or a company's own news versus a supplier's "
+                "news are DIFFERENT events."
+            ),
+            "incoming_article": {
+                "headline": article.headline,
+                "summary": article.summary,
+                "event_type": analysis.event_type,
+                "evidence_bullet_candidates": analysis.evidence_bullet_candidates,
+            },
+            "existing_story": narrative,
+            "required_json_fields": ["same_event", "estimated_tokens"],
+        },
+        sort_keys=True,
+    )
+
+
 def _get_cached_analysis(
     client: ThesisLlmClient, *, model: str, prompt: str, max_output_tokens: int
 ) -> dict[str, Any] | None:
@@ -1021,6 +1096,22 @@ _STORY_ASSIGNMENT_RESPONSE_FORMAT: dict[str, Any] = {
         "required": ["target", "estimated_tokens"],
         "properties": {
             "target": {"type": "string"},
+            "estimated_tokens": {"type": "integer", "minimum": 0},
+        },
+    },
+}
+
+
+_STORY_EVENT_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "name": "thesis_builder_story_event",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["same_event", "estimated_tokens"],
+        "properties": {
+            "same_event": {"type": "boolean"},
             "estimated_tokens": {"type": "integer", "minimum": 0},
         },
     },
