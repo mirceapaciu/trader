@@ -43,3 +43,4 @@
 | 260715-03 | Article publication time is treated as event time; recap articles of old events pass every freshness and already-priced gate | resolved | docs/issues/issues-detail/260715-03.md |
 | 260715-04 | Anchor-evidence gate runs before story assignment and is key-scoped; a new_story indirect analysis seeds an anchor-less window | resolved | docs/issues/issues-detail/260715-04.md |
 | 260715-05 | Story assignment is taken from the LLM on trust; a misassigned article joined an unrelated story's window and its evidence published on the card | resolved | docs/issues/issues-detail/260715-05.md |
+| 260716-01 | Story-assignment verification is bag-of-words; same-company/same-domain articles about different events still pass on a single generic token | new | docs/issues/issues-detail/260716-01.md |
