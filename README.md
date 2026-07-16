@@ -30,7 +30,7 @@ Architecture boundaries and detailed ownership are maintained in
 
 ## Prerequisites
 
-- Python 3.13
+- Python 3.14
 - uv package manager
 - Docker (if you want to use the deployment scripts for PostgreSQL and Redis)
 
