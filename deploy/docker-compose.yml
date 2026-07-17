@@ -84,7 +84,7 @@ services:
       UI_PORT: 8090
       UI_API_BASE_URL: /api
     ports:
-      - "127.0.0.1:${TRADER_UI_PORT:-8090}:8090"
+      - "${TRADER_UI_BIND_IP:-127.0.0.1}:${TRADER_UI_PORT:-8090}:8090"
     depends_on:
       postgres:
         condition: service_healthy

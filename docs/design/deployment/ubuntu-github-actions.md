@@ -10,7 +10,7 @@ self-hosted runner on the server.
 - Deploy entrypoint: `scripts/deployment/prod/deploy.sh`
 - GitHub Actions workflow: `.github/workflows/deploy-haas.yml`
 - Default public service: Monitoring UI backend plus built React UI on
-  `127.0.0.1:8090`
+  `127.0.0.1:8090` unless `TRADER_UI_BIND_IP` is set
 - Default worker services: `news-fetcher`, `thesis-builder`
 - Opt-in worker service: `trade-executor`, enabled only when
   `TRADER_ENABLE_TRADE_EXECUTOR=true`
@@ -78,6 +78,10 @@ UI_HOST=0.0.0.0
 UI_PORT=8090
 UI_API_BASE_URL=/api
 ```
+
+The Haas workflow sets `TRADER_UI_BIND_IP=100.107.130.22`, the server's
+Tailscale address, so the UI is reachable from the tailnet at
+`http://haas:8090` without binding to every public interface.
 
 ## Manual Deploy
 

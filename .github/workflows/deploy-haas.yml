@@ -21,6 +21,7 @@ jobs:
     env:
       TRADER_ENV_DIR: /home/gh-runner/trader-env
       TRADER_COMPOSE_PROJECT: trader
+      TRADER_UI_BIND_IP: "100.107.130.22"
       TRADER_UI_PORT: "8090"
     steps:
       - name: Check out repository
