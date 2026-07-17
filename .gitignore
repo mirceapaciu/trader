@@ -13,3 +13,6 @@ logs/
 # Keep committed templates
 !.env.example
 !*.env.*example
+
+# Temporary files
+temp/
