@@ -58,11 +58,15 @@ POSTGRES_USER=trader
 POSTGRES_PASSWORD=<strong password>
 ```
 
-If Redis auth is desired, create `.env.redis`:
+If Redis auth is desired, set `REDIS_PASSWORD` in `.env.shared` so both the app
+containers and the Redis container receive the same value:
 
 ```bash
 REDIS_PASSWORD=<strong password>
 ```
+
+`.env.redis` is optional and should only be used when the Redis container needs
+an override that differs from the shared app configuration.
 
 The compose file overrides container network locations at deploy time:
 
