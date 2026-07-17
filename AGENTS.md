@@ -95,3 +95,6 @@ Once the issue is fixed, update the status in issues-index.md to resolved.
 - Keep edits minimal and scoped to the requested task.
 - Do not refactor unrelated modules in the same change.
 - Preserve existing public interfaces unless explicitly requested to change them.
+
+## Temporary files
+Write temporary files under the `temp` folder
