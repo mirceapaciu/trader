@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import psycopg
 import redis
 
+from src.product_components.monitoring_ui.backend import app as app_module
 from src.product_components.monitoring_ui.backend.app import _local_dev_origin_regex, create_app
 from src.product_components.monitoring_ui.backend.models import (
     FilterQualityIncorrectlyAcceptedResponse,
@@ -31,6 +32,23 @@ def test_local_dev_origin_regex_allows_localhost_with_any_port() -> None:
     assert pattern.match("http://127.0.0.1:5174")
     assert pattern.match("https://localhost:8443")
     assert not pattern.match("http://example.com:5173")
+
+
+def test_frontend_dist_is_served_when_present(monkeypatch, tmp_path) -> None:
+    dist_dir = tmp_path / "dist"
+    assets_dir = dist_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (dist_dir / "index.html").write_text("<html>trader ui</html>", encoding="utf-8")
+    (assets_dir / "app.js").write_text("console.log('ok')", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_frontend_dist_dir", lambda: dist_dir)
+    monkeypatch.setattr(app_module, "PostgresRedisMonitoringDataSource", lambda **kwargs: FakeMonitoringDataSource())
+
+    client = TestClient(create_app(settings=_settings()))
+
+    assert client.get("/").text == "<html>trader ui</html>"
+    assert client.get("/assets/app.js").text == "console.log('ok')"
+    assert client.get("/backtests").text == "<html>trader ui</html>"
+    assert client.get("/api/not-found").status_code == 404
 
 
 class FakeMonitoringDataSource:
@@ -866,6 +884,7 @@ def test_news_fetcher_reprocess_rejected_endpoint_maps_infrastructure_failure(mo
 
 def _settings() -> MonitoringUiSettings:
     return MonitoringUiSettings(
+        ui_host="127.0.0.1",
         ui_port=8080,
         ui_api_base_url="http://localhost:8080/api",
         ui_refresh_interval_seconds=15,

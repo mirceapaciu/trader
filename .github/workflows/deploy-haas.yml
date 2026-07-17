@@ -1,0 +1,30 @@
+name: Deploy Haas
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-haas
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to haas
+    runs-on:
+      - self-hosted
+      - Linux
+      - trader-prod
+    environment: production
+    env:
+      TRADER_ENV_DIR: /home/gh-runner/trader-env
+      TRADER_COMPOSE_PROJECT: trader
+      TRADER_UI_PORT: "8090"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Deploy compose stack
+        run: bash scripts/deployment/prod/deploy.sh

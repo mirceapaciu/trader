@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import psycopg
 import redis
 
+from fastapi.responses import FileResponse
+
 from .backtest_runner import BacktestRunCoordinator
 from .filter_quality_runner import FilterQualityRunCoordinator
 from .models import (
@@ -97,6 +99,31 @@ def _local_dev_origin_regex() -> str:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
+
+
+def _frontend_dist_dir() -> Path:
+    return _repo_root() / "src" / "product_components" / "monitoring_ui" / "frontend" / "dist"
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    dist_dir = _frontend_dist_dir()
+    index_path = dist_dir / "index.html"
+    if not index_path.is_file():
+        logger.info("monitoring UI frontend build not found at %s; serving API only", dist_dir)
+        return
+
+    @app.get("/", include_in_schema=False)
+    def frontend_index() -> FileResponse:
+        return FileResponse(index_path)
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def frontend_asset_or_index(path: str) -> FileResponse:
+        if path.startswith("api/"):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+        candidate = (dist_dir / path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(dist_dir):
+            return FileResponse(candidate)
+        return FileResponse(index_path)
 
 
 def _bootstrap_schemas_in_background(
@@ -624,6 +651,7 @@ def create_app(
             logger.warning("watchlist storage unavailable: %s", exc)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="watchlist storage unavailable") from exc
 
+    _mount_frontend(app)
     return app
 
 

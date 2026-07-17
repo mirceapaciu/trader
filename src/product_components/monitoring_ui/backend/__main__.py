@@ -40,7 +40,7 @@ def main() -> None:
         _root.addHandler(_handler)
     uvicorn.run(
         "src.product_components.monitoring_ui.backend.app:app",
-        host="127.0.0.1",
+        host=settings.ui_host,
         port=settings.ui_port,
         reload=False,
         log_config={

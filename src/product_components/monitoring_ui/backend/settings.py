@@ -9,6 +9,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 class MonitoringUiSettings:
     """Environment-backed Monitoring UI runtime settings."""
 
+    ui_host: str
     ui_port: int
     ui_api_base_url: str
     ui_refresh_interval_seconds: int
@@ -54,6 +55,7 @@ class MonitoringUiSettings:
     @classmethod
     def from_env(cls) -> "MonitoringUiSettings":
         return cls(
+            ui_host=os.getenv("UI_HOST", "127.0.0.1"),
             ui_port=_int_env("UI_PORT", 8080),
             ui_api_base_url=os.getenv("UI_API_BASE_URL", "http://localhost:8080/api"),
             ui_refresh_interval_seconds=_int_env("UI_REFRESH_INTERVAL_SECONDS", 15),

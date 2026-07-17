@@ -6,6 +6,7 @@ Configuration owned by the Monitoring UI process.
 
 ```bash
 # Runtime
+UI_HOST=127.0.0.1
 UI_PORT=8080
 UI_REFRESH_INTERVAL_SECONDS=15
 UI_PROVIDER_REFRESH_INTERVAL_SECONDS=10

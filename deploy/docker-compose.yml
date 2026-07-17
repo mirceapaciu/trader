@@ -1,0 +1,140 @@
+x-app-env: &app-env
+  - path: ${TRADER_ENV_DIR:-./env}/.env.postgres
+    required: true
+  - path: ${TRADER_ENV_DIR:-./env}/.env.redis
+    required: false
+  - path: ${TRADER_ENV_DIR:-./env}/.env.shared
+    required: true
+  - path: ${TRADER_ENV_DIR:-./env}/.env.prod
+    required: true
+  - path: ${TRADER_ENV_DIR:-./env}/.env.monitoring-ui
+    required: true
+  - path: ${TRADER_ENV_DIR:-./env}/.env.news-fetcher
+    required: true
+  - path: ${TRADER_ENV_DIR:-./env}/.env.thesis-builder
+    required: true
+  - path: ${TRADER_ENV_DIR:-./env}/.env.trade-executor
+    required: false
+  - path: ${TRADER_ENV_DIR:-./env}/.env.backtester
+    required: false
+  - path: ${TRADER_ENV_DIR:-./env}/.env.secrets
+    required: true
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - path: ${TRADER_ENV_DIR:-./env}/.env.postgres
+        required: true
+    ports:
+      - "127.0.0.1:${TRADER_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/deployment/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-trader} -d $${POSTGRES_DB:-trader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "if [ -n \"$$REDIS_PASSWORD\" ]; then exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$$REDIS_PASSWORD\"; else exec redis-server /usr/local/etc/redis/redis.conf; fi",
+      ]
+    env_file:
+      - path: ${TRADER_ENV_DIR:-./env}/.env.redis
+        required: false
+    ports:
+      - "127.0.0.1:${TRADER_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ../scripts/deployment/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  monitoring-ui:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VITE_UI_API_BASE_URL: /api
+    image: trader-app:${TRADER_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: *app-env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      QUEUE_URL: redis://redis:6379/0
+      UI_HOST: 0.0.0.0
+      UI_PORT: 8090
+      UI_API_BASE_URL: /api
+    ports:
+      - "127.0.0.1:${TRADER_UI_PORT:-8090}:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  news-fetcher:
+    image: trader-app:${TRADER_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: [".venv/bin/python", "-m", "src.product_components.news_fetcher"]
+    env_file: *app-env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      QUEUE_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  thesis-builder:
+    image: trader-app:${TRADER_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: [".venv/bin/python", "-m", "src.product_components.thesis_builder"]
+    env_file: *app-env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      QUEUE_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  trade-executor:
+    image: trader-app:${TRADER_IMAGE_TAG:-latest}
+    profiles: ["trade-executor"]
+    restart: unless-stopped
+    command: [".venv/bin/python", "-m", "src.product_components.trade_executor"]
+    env_file: *app-env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      QUEUE_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

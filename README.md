@@ -75,6 +75,19 @@ The news-fetcher startup path applies the shared and news-fetcher schema SQL fil
 - Full suite: uv run pytest
 - Monitoring UI frontend build: cd src/product_components/monitoring_ui/frontend; npm run build
 
+## Ubuntu Deployment
+
+Production deployment for the `haas` Ubuntu server is Docker Compose based:
+
+- Compose stack: `deploy/docker-compose.yml`
+- Deploy script: `scripts/deployment/prod/deploy.sh`
+- GitHub Actions workflow: `.github/workflows/deploy-haas.yml`
+- Server bootstrap notes: [Ubuntu GitHub Actions Deployment](docs/design/deployment/ubuntu-github-actions.md)
+
+The workflow expects a self-hosted runner registered to this repository with
+the `trader-prod` label and production env files under
+`/home/gh-runner/trader-env`.
+
 ## Environment Separation
 
 Use separate database configuration for test and production-like runs.

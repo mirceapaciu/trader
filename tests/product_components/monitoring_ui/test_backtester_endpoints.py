@@ -192,6 +192,7 @@ class FakeBacktestRunner:
 
 def _settings() -> MonitoringUiSettings:
     return MonitoringUiSettings(
+        ui_host="127.0.0.1",
         ui_port=8080,
         ui_api_base_url="http://localhost:8080/api",
         ui_refresh_interval_seconds=15,
