@@ -7,6 +7,7 @@ COMPOSE_FILE="$REPO_ROOT/deploy/docker-compose.yml"
 PROJECT_NAME="${TRADER_COMPOSE_PROJECT:-trader}"
 ENV_DIR="${TRADER_ENV_DIR:-$REPO_ROOT/deploy/env}"
 UI_PORT="${TRADER_UI_PORT:-8090}"
+UI_HEALTH_HOST="${TRADER_UI_HEALTH_HOST:-${TRADER_UI_BIND_IP:-127.0.0.1}}"
 
 required_env_files=(
   ".env.postgres"
@@ -37,8 +38,8 @@ fi
 docker compose --project-name "$PROJECT_NAME" --file "$COMPOSE_FILE" ps
 
 for _ in {1..30}; do
-  if curl --fail --silent "http://127.0.0.1:${UI_PORT}/api/health" >/dev/null; then
-    echo "Monitoring UI health check passed on http://127.0.0.1:${UI_PORT}/api/health"
+  if curl --fail --silent "http://${UI_HEALTH_HOST}:${UI_PORT}/api/health" >/dev/null; then
+    echo "Monitoring UI health check passed on http://${UI_HEALTH_HOST}:${UI_PORT}/api/health"
     exit 0
   fi
   sleep 2
