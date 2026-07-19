@@ -28,6 +28,18 @@ done
 
 cd "$REPO_ROOT"
 
+rendered_compose_config="$(docker compose --project-name "$PROJECT_NAME" --file "$COMPOSE_FILE" config)"
+if grep -Eq '^[[:space:]]+IBKR_HOST:[[:space:]]*"?127\.0\.0\.1"?[[:space:]]*$' <<<"$rendered_compose_config"; then
+  cat >&2 <<'EOF'
+Refusing deployment: rendered Docker Compose config contains IBKR_HOST=127.0.0.1.
+
+In a container, 127.0.0.1 points at the container itself, not the Haas host
+running IB Gateway. Set IBKR_HOST=host.docker.internal in the effective
+deployment env files, then rerun the deploy.
+EOF
+  exit 3
+fi
+
 docker compose --project-name "$PROJECT_NAME" --file "$COMPOSE_FILE" build --pull
 docker compose --project-name "$PROJECT_NAME" --file "$COMPOSE_FILE" up -d postgres redis monitoring-ui news-fetcher thesis-builder
 

@@ -96,6 +96,10 @@ IB Gateway should trust those addresses when app containers connect to a host
 Gateway on `IBKR_HOST=host.docker.internal`. The Gateway should also trust
 `127.0.0.1` for host-local smoke tests.
 
+The production deploy script refuses to proceed if the rendered app container
+configuration contains `IBKR_HOST=127.0.0.1`, because that would point at the
+container itself instead of the Haas host running IB Gateway.
+
 ## Manual Deploy
 
 From a checkout of this repo on `haas`:
