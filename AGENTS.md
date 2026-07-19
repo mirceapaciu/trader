@@ -107,6 +107,13 @@ curl --fail --silent http://127.0.0.1:8090/api/health
 curl --fail --silent http://100.107.130.22:8090/api/health
 ```
 
+IB Gateway connectivity from inside Docker can be checked without placing
+orders:
+
+```bash
+docker exec trader-thesis-builder-1 .venv/bin/python -m src.product_components.diagnostics.ibkr_connectivity
+```
+
 When recreating services manually, include the same environment used by the
 GitHub Actions workflow so port bindings and env-file locations do not drift:
 

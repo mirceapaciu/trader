@@ -77,6 +77,17 @@ It uses a distinct client id (default 11) so it never clashes with the live Mark
 TradeExecutor (5) connections. A `quote ... unavailable` line with everything else succeeding
 means the connection is fine but the account lacks a real-time subscription for that instrument.
 
+For a production Docker container, use the packaged diagnostic module instead
+of the repo-local script:
+
+```
+docker exec trader-thesis-builder-1 .venv/bin/python -m src.product_components.diagnostics.ibkr_connectivity
+```
+
+It first checks the configured TCP socket, then performs a read-only IB API
+handshake using a diagnostic client id. Add `--tcp-only` to skip the API
+handshake and test just the Docker-to-Gateway socket path.
+
 ## Notes
 
 - The concrete broker adapter lives in
