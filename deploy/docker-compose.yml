@@ -32,6 +32,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../scripts/deployment/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      trader_net:
+        ipv4_address: 172.30.50.2
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-trader} -d $${POSTGRES_DB:-trader}"]
       interval: 10s
@@ -57,6 +60,9 @@ services:
     volumes:
       - redis_data:/data
       - ../scripts/deployment/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      trader_net:
+        ipv4_address: 172.30.50.3
     healthcheck:
       test:
         [
@@ -85,6 +91,11 @@ services:
       UI_API_BASE_URL: /api
     ports:
       - "${TRADER_UI_BIND_IP:-127.0.0.1}:${TRADER_UI_PORT:-8090}:8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      trader_net:
+        ipv4_address: 172.30.50.10
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,6 +111,9 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       QUEUE_URL: redis://redis:6379/0
+    networks:
+      trader_net:
+        ipv4_address: 172.30.50.13
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,6 +129,11 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       QUEUE_URL: redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      trader_net:
+        ipv4_address: 172.30.50.11
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,6 +150,11 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       QUEUE_URL: redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      trader_net:
+        ipv4_address: 172.30.50.12
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,3 +164,9 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  trader_net:
+    ipam:
+      config:
+        - subnet: 172.30.50.0/24

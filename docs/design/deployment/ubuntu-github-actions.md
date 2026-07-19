@@ -83,6 +83,19 @@ The Haas workflow sets `TRADER_UI_BIND_IP=100.107.130.22`, the server's
 Tailscale address, so the UI is reachable from the tailnet at
 `http://haas:8090` without binding to every public interface.
 
+The Trader Compose network uses a fixed private subnet, `172.30.50.0/24`, so
+IB Gateway trusted IPs can be stable:
+
+```text
+172.30.50.10 = monitoring-ui
+172.30.50.11 = thesis-builder
+172.30.50.12 = trade-executor
+```
+
+IB Gateway should trust those addresses when app containers connect to a host
+Gateway on `IBKR_HOST=host.docker.internal`. The Gateway should also trust
+`127.0.0.1` for host-local smoke tests.
+
 ## Manual Deploy
 
 From a checkout of this repo on `haas`:
