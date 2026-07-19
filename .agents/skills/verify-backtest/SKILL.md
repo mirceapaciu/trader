@@ -45,6 +45,20 @@ Connect to Postgres the same way as the fix-and-verify skill (load `.env.shared`
 documented contracts; this skill reads `backtester.*` tables (dev-tool exception, read-only) and
 MarketData bars via `MarketDataService.get_historical_bars`. Never write to any component schema.
 
+### Haas production target
+
+If the user asks to verify a production backtest on `haas`, follow the
+`Production Operations: Haas` section in `AGENTS.md` before running this skill.
+Use `ssh gh-runner_haas` and the deployed checkout at
+`/home/gh-runner/actions-runner-trader/_work/trader/trader` with
+`TRADER_ENV_DIR=/home/gh-runner/trader-env`.
+
+Start with read-only integrity and attribution checks against the existing run.
+Counterfactual re-runs and filter-quality evaluations can write new
+`backtester` or evaluator rows, so treat them as production mutations: explain
+the planned writes and proceed only when the user requested that level of
+verification. Never print production secrets or full env files.
+
 ### Stage 1 — Integrity (always)
 
 1. Load the run row: population, timing scenario, model snapshots, `cards_skipped_no_price`,

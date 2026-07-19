@@ -62,6 +62,80 @@ When making changes, keep logic in the correct layer:
 - Never hardcode secrets.
 - Read secrets from environment variables.
 - Preserve existing environment variable conventions documented in README.
+- For production diagnostics, never print full environment files, secrets, API
+  keys, passwords, tokens, or DSNs. Print only specific non-secret keys or mask
+  values before showing output.
+
+## Production Operations: Haas
+
+Use these instructions when the user asks to investigate or fix the production
+system on `haas`, including production backtest verification.
+
+- SSH targets:
+  - Use `ssh haas` for general host and Docker inspection.
+  - Use `ssh gh-runner_haas` for the deployed repo checkout and
+    `/home/gh-runner/trader-env`, which are owned by `gh-runner`.
+- Deployed checkout:
+  `/home/gh-runner/actions-runner-trader/_work/trader/trader`
+- Production env directory:
+  `/home/gh-runner/trader-env`
+- Compose project:
+  `trader`
+- Compose file:
+  `deploy/docker-compose.yml`
+- Haas UI bind settings:
+  `TRADER_UI_BIND_IP=100.107.130.22`, `TRADER_UI_PORT=8090`
+
+For production diagnosis, start read-only:
+
+```bash
+cd /home/gh-runner/actions-runner-trader/_work/trader/trader
+TRADER_ENV_DIR=/home/gh-runner/trader-env \
+TRADER_UI_BIND_IP=100.107.130.22 \
+TRADER_UI_PORT=8090 \
+docker compose --project-name trader --file deploy/docker-compose.yml ps
+```
+
+Useful read-only checks:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+docker logs --tail=100 trader-monitoring-ui-1
+docker logs --tail=100 trader-news-fetcher-1
+docker logs --tail=100 trader-thesis-builder-1
+curl --fail --silent http://127.0.0.1:8090/api/health
+curl --fail --silent http://100.107.130.22:8090/api/health
+```
+
+When recreating services manually, include the same environment used by the
+GitHub Actions workflow so port bindings and env-file locations do not drift:
+
+```bash
+cd /home/gh-runner/actions-runner-trader/_work/trader/trader
+TRADER_ENV_DIR=/home/gh-runner/trader-env \
+TRADER_UI_BIND_IP=100.107.130.22 \
+TRADER_UI_PORT=8090 \
+docker compose --project-name trader --file deploy/docker-compose.yml up -d --force-recreate monitoring-ui
+```
+
+Run production Python diagnostics from the deployed checkout with `uv run` only
+when the host environment is needed, and prefer running inside an existing app
+container when the container runtime environment is what matters:
+
+```bash
+docker exec trader-monitoring-ui-1 .venv/bin/python -c '...'
+```
+
+Do not run destructive production actions unless the user explicitly asks for
+them. Destructive actions include `docker compose down`, deleting volumes,
+database writes, queue deletes/acks, schema migrations, and starting
+TradeExecutor. `trade-executor` is profile-gated and should only be started
+when explicitly requested.
+
+For database or Redis inspection, prefer bounded read-only queries and counts.
+Load env from `/home/gh-runner/trader-env` without printing secret values. If a
+temporary helper script is needed on Haas, write it under the repo `temp`
+directory and remove it when done.
 
 ## Documentation Expectations
 When behavior changes, update relevant docs in docs or README as needed.
@@ -97,4 +171,4 @@ Once the issue is fixed, update the status in issues-index.md to resolved.
 - Preserve existing public interfaces unless explicitly requested to change them.
 
 ## Temporary files
-Write temporary files under the `temp` folder
+Write local temporary files under the `temp` folder
