@@ -1082,8 +1082,8 @@ class MonitoringService:
     def start_backtest_run(self, payload: BacktestStartRunRequest) -> BacktestStartRunResponse:
         if self._backtest_runner is None:
             raise RuntimeError("backtest_runner_unavailable")
-        window_start_at = _to_utc(payload.window_start_at)
-        window_end_at = _to_utc(payload.window_end_at)
+        window_start_at = _day_start_utc(payload.window_start_at)
+        window_end_at = _day_end_utc(payload.window_end_at)
         if window_start_at >= window_end_at:
             raise InvalidBacktestWindow("Backtest window must have window_start_at earlier than window_end_at.")
         request = BacktestRunRequest(
@@ -1177,6 +1177,14 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _day_start_utc(value: datetime) -> datetime:
+    return _to_utc(value).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _day_end_utc(value: datetime) -> datetime:
+    return _to_utc(value).replace(hour=23, minute=59, second=59, microsecond=0)
 
 
 def _normalize_throughput_window(value: str) -> str:

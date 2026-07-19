@@ -483,6 +483,8 @@ def test_route_start_run_returns_202(monkeypatch) -> None:
     assert response.status_code == 202
     assert response.json() == {"run_id": "bt_new", "status": "running"}
     assert runner.last_request is not None
+    assert runner.last_request.window_start_at == datetime(2026, 6, 20, tzinfo=timezone.utc)
+    assert runner.last_request.window_end_at == datetime(2026, 6, 21, 23, 59, 59, tzinfo=timezone.utc)
 
 
 def test_route_start_run_returns_409_when_active(monkeypatch) -> None:

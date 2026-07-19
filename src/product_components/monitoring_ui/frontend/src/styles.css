@@ -1211,6 +1211,15 @@ th {
   gap: 10px;
 }
 
+.backtest-window-row {
+  grid-template-columns: repeat(2, max-content);
+}
+
+.backtest-window-row input {
+  width: 140px;
+  box-sizing: border-box;
+}
+
 .keyword-cell {
   min-width: 220px;
 }

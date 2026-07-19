@@ -220,8 +220,8 @@ function TriggerPanel({
       return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
     };
     onSubmit({
-      window_start_at: localDateTimeToIso(windowStart),
-      window_end_at: localDateTimeToIso(windowEnd),
+      window_start_at: localDateToIso(windowStart, "start"),
+      window_end_at: localDateToIso(windowEnd, "end"),
       mode,
       timing_scenario: timingScenario,
       card_population: cardPopulation,
@@ -243,11 +243,11 @@ function TriggerPanel({
         </div>
       </div>
       <div className="filter-editor">
-        <div className="filter-editor-row">
+        <div className="filter-editor-row backtest-window-row">
           <label>
             Window start (UTC)
             <input
-              type="datetime-local"
+              type="date"
               value={windowStart}
               onChange={(event) => setWindowStart(event.target.value)}
               disabled={busy}
@@ -256,7 +256,7 @@ function TriggerPanel({
           <label>
             Window end (UTC)
             <input
-              type="datetime-local"
+              type="date"
               value={windowEnd}
               onChange={(event) => setWindowEnd(event.target.value)}
               disabled={busy}
@@ -379,7 +379,7 @@ function TriggerPanel({
           )}
           {!busy && (windowStart === "" || windowEnd === "") && (
             <span className="muted">
-              Set a full UTC date <em>and</em> time for both window start and end to enable this.
+              Set a UTC date for both window start and end to enable this.
             </span>
           )}
         </div>
@@ -1353,7 +1353,7 @@ function formatToken(value: string) {
   return value.replaceAll("_", " ");
 }
 
-function localDateTimeToIso(value: string) {
-  // datetime-local has no timezone; the operator enters UTC, so append Z.
-  return `${value}:00Z`;
+function localDateToIso(value: string, boundary: "start" | "end") {
+  // date has no timezone; the operator enters UTC, so apply the requested day boundary.
+  return `${value}T${boundary === "start" ? "00:00:00" : "23:59:59"}Z`;
 }

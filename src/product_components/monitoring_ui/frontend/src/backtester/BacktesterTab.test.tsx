@@ -214,16 +214,17 @@ describe("BacktesterTab", () => {
     render(<BacktesterTab />);
 
     fireEvent.change(screen.getByLabelText("Window start (UTC)"), {
-      target: { value: "2026-06-16T09:00" }
+      target: { value: "2026-06-16" }
     });
     fireEvent.change(screen.getByLabelText("Window end (UTC)"), {
-      target: { value: "2026-06-16T10:00" }
+      target: { value: "2026-06-16" }
     });
     fireEvent.click(screen.getByRole("button", { name: "Run backtest" }));
 
     expect(mutate).toHaveBeenCalledTimes(1);
     const payload = mutate.mock.calls[0][0];
-    expect(payload.window_start_at).toBe("2026-06-16T09:00:00Z");
+    expect(payload.window_start_at).toBe("2026-06-16T00:00:00Z");
+    expect(payload.window_end_at).toBe("2026-06-16T23:59:59Z");
     expect(payload.mode).toBe("replay");
     expect(payload.timing_scenario).toBe("ideal");
   });
