@@ -48,7 +48,11 @@ Optional files:
 .env.backtester
 ```
 
-Use the repo's `*.example` files as templates for the component-specific files.
+Use `deploy/env-templates/prod/*.template` as the starting point for production
+hosts. Copy them into `/home/gh-runner/trader-env`, remove the `.template`
+suffix, and fill every `<REQUIRED_...>` placeholder. The root-level
+`.env*.example` files are local-development examples and may use host-local
+defaults that are wrong inside Docker.
 `.env.postgres` must contain the variables required by the official Postgres
 image and the app:
 
