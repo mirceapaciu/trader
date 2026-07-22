@@ -1,0 +1,8 @@
+[Unit]
+Description=Verify the IBKR Gateway API port is listening
+After=network-online.target ibc-gateway.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/ibc-gateway
+ExecStart=/usr/local/sbin/ibc-gateway-healthcheck

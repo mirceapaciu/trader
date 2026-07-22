@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the IBKR Gateway API port health check every minute
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=1min
+Persistent=true
+Unit=ibc-gateway-health.service
+
+[Install]
+WantedBy=timers.target

@@ -18,7 +18,10 @@ Then fill every `<REQUIRED_...>` placeholder before deploying.
 Notes:
 
 - `IBKR_HOST=host.docker.internal` and `IBKR_PORT=4002` match a host-running
-  paper IB Gateway from Docker containers.
+  paper IB Gateway from Docker containers. Provision and supervise that host Gateway using
+  the [IBKR Gateway deployment note](../../../docs/design/deployment/ibkr-gateway.md),
+  including the repository-owned `deploy/ibkr-gateway/install-systemd.sh` installer, before
+  starting the Compose stack.
 - The Compose file overrides container network addresses for Postgres, Redis,
   and Monitoring UI runtime binding.
 - Do not commit filled env files.

@@ -1,0 +1,23 @@
+[Unit]
+Description=IBKR Gateway controlled by IBC
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ibkr
+Group=ibkr
+WorkingDirectory=/home/ibkr
+Environment=HOME=/home/ibkr
+EnvironmentFile=-/etc/default/ibc-gateway
+ExecStart=/home/ibkr/ibc/start-ibc-gateway.sh
+Restart=always
+RestartSec=60
+StartLimitIntervalSec=0
+TimeoutStopSec=45
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

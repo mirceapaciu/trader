@@ -62,6 +62,138 @@ its "disconnected → reconnect with backoff" state until someone logs back in. 
 deployment, run Gateway under **[IBC (IBController)](https://github.com/IbcAlpha/IBC)** to
 auto-relaunch and re-login unattended.
 
+## Linux host systemd deployment
+
+For a production Docker host, run the paper Gateway on the **host** as the dedicated
+`ibkr` user. Containers reach it through `IBKR_HOST=host.docker.internal` and
+`IBKR_PORT=4002`.
+
+IBC can exit successfully when IBKR performs its daily simulated-trading session shutdown.
+The supervisor must therefore restart it on **every** exit, including exit code `0`; a
+one-shot process check or a one-time `nohup` launch is not sufficient.
+
+The host artifacts are versioned in [`deploy/ibkr-gateway/`](../../../deploy/ibkr-gateway/):
+
+- `start-ibc-gateway.sh` launches the installed Gateway through IBC and `xvfb-run`.
+- `ibc-gateway.service` restarts IBC after both failures and clean daily exits.
+- `ibc-gateway-healthcheck`, `ibc-gateway-health.service`, and
+  `ibc-gateway-health.timer` restart Gateway when its API port is absent.
+- `install-systemd.sh` installs the artifacts at their host paths and enables them.
+
+The unit contents below are a reference for the installed files; deploy them with the
+repository installer rather than creating host-local copies by hand.
+
+`/etc/systemd/system/ibc-gateway.service`:
+
+```ini
+[Unit]
+Description=IBKR paper Gateway controlled by IBC
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ibkr
+Group=ibkr
+WorkingDirectory=/home/ibkr
+Environment=HOME=/home/ibkr
+EnvironmentFile=-/etc/default/ibc-gateway
+ExecStart=/home/ibkr/ibc/start-ibc-gateway.sh
+Restart=always
+RestartSec=60
+StartLimitIntervalSec=0
+TimeoutStopSec=45
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The `start-ibc-gateway.sh` launcher must stay in the foreground and use `xvfb-run` for the
+headless Gateway session. It should invoke IBC in paper mode with the installed Gateway
+version, for example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+: "${IBKR_GATEWAY_VERSION:?IBKR_GATEWAY_VERSION must be set}"
+gateway_path="/home/ibkr/Jts/ibgateway/${IBKR_GATEWAY_VERSION}"
+
+exec /usr/bin/xvfb-run -a -s '-screen 0 1600x1000x24' \
+  bash /opt/ibc/scripts/ibcstart.sh "${IBKR_GATEWAY_VERSION}" \
+  --gateway \
+  --tws-path=/home/ibkr/Jts \
+  --ibc-path=/opt/ibc \
+  --ibc-ini=/home/ibkr/ibc/config.ini \
+  --mode=paper \
+  --java-path="${gateway_path}/jre/bin"
+```
+
+Add a port health check so a hung Gateway is restarted even if its parent IBC process has
+not yet exited.
+
+`/usr/local/sbin/ibc-gateway-healthcheck`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+api_port="${IBKR_API_PORT:-4002}"
+if ! timeout 5 bash -c "</dev/tcp/127.0.0.1/${api_port}"; then
+  systemctl restart ibc-gateway.service
+fi
+```
+
+`/etc/systemd/system/ibc-gateway-health.service`:
+
+```ini
+[Unit]
+Description=Verify the IBKR Gateway API port is listening
+After=network-online.target ibc-gateway.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/ibc-gateway
+ExecStart=/usr/local/sbin/ibc-gateway-healthcheck
+```
+
+`/etc/systemd/system/ibc-gateway-health.timer`:
+
+```ini
+[Unit]
+Description=Run the IBKR Gateway API port health check every minute
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=1min
+Persistent=true
+Unit=ibc-gateway-health.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Activate the deployment:
+
+```bash
+cd /path/to/trader
+sudo deploy/ibkr-gateway/install-systemd.sh \
+  --gateway-version 1048 \
+  --mode paper \
+  --api-port 4002
+sudo systemctl status ibc-gateway.service ibc-gateway-health.timer
+ss -ltnp | grep ':4002'
+```
+
+Use the installed Gateway's major version for `--gateway-version` (for example, the directory
+name under `/home/ibkr/Jts/ibgateway/`). The installer writes only non-secret runtime settings
+to `/etc/default/ibc-gateway`; IBC credentials remain in `/home/ibkr/ibc/config.ini`.
+
+IBC may still need a human to approve a new IBKR two-factor-authentication request. Systemd
+can restart the process, but cannot complete that approval.
+
 ## Connectivity smoke test
 
 `scripts/deployment/trade-executor/smoke_test.py` is a **read-only** check (connect →
@@ -87,6 +219,26 @@ docker exec trader-thesis-builder-1 .venv/bin/python -m src.product_components.d
 It first checks the configured TCP socket, then performs a read-only IB API
 handshake using a diagnostic client id. Add `--tcp-only` to skip the API
 handshake and test just the Docker-to-Gateway socket path.
+
+To verify the full market-data path after the Gateway starts, request one non-trading quote
+through the ThesisBuilder container's `MarketDataService`, then confirm that
+`market_data.t_market_data_fetch_runs` and `market_data.t_market_quotes` contain a recent
+`provider=ibkr` row. A `data_type=delayed` result is expected when
+`MARKET_DATA_ALLOW_DELAYED=true` and the account has no real-time entitlement.
+
+## Operational troubleshooting
+
+```bash
+sudo systemctl status ibc-gateway.service ibc-gateway-health.timer
+sudo journalctl -u ibc-gateway.service -n 100 --no-pager
+ss -ltnp | grep ':4002'
+docker exec trader-thesis-builder-1 .venv/bin/python -m src.product_components.diagnostics.ibkr_connectivity
+```
+
+If port `4002` is absent, investigate the IBC journal before restarting the Docker services.
+The failure is on the host-side Gateway path, not in ThesisBuilder. If the diagnostic connects
+but a quote is unavailable, check the account's market-data entitlement; a delayed quote can
+still be valid when delayed data is enabled.
 
 ## Notes
 

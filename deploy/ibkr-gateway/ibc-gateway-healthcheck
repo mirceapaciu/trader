@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+api_port="${IBKR_API_PORT:-4002}"
+
+if ! timeout 5 bash -c "</dev/tcp/127.0.0.1/${api_port}"; then
+  systemctl restart ibc-gateway.service
+fi
