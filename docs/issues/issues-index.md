@@ -45,3 +45,4 @@
 | 260715-05 | Story assignment is taken from the LLM on trust; a misassigned article joined an unrelated story's window and its evidence published on the card | resolved | docs/issues/issues-detail/260715-05.md |
 | 260716-01 | Story-assignment verification is bag-of-words; same-company/same-domain articles about different events still pass on a single generic token | resolved | docs/issues/issues-detail/260716-01.md |
 | 260722-01 | Zero-overlap story verification fragments paraphrased coverage of the same event | resolved | docs/issues/issues-detail/260722-01.md |
+| 260723-01 | Implement versioned event_identity schema with controlled taxonomy and user-visible gaps | new | docs/issues/issues-detail/260723-01.md |
