@@ -108,8 +108,11 @@ Logical fields:
 - `resolved_target`: final target after deterministic verification. Cross-story `window:<id>` or `card:<id>` assignments are downgraded to `new_story`.
 - `assignment_source`: `matched`, `new_story`, or `fallback`.
 - `verification_status`: `skipped`, `passed`, or `downgraded`.
-- `verification_reason_code`: deterministic verifier reason such as `story_text_mismatch`.
-- `verification_details_json`: bounded token-overlap audit details used by the verifier.
+- `verification_reason_code`: verifier reason such as `story_event_mismatch` or
+  `story_event_check_unavailable`.
+- `verification_details_json`: bounded token-overlap audit details used by the verifier,
+  including `event_check` of `same`, `different`, or `unavailable` for lexically
+  inconclusive assignments.
 - `llm_model`, `max_output_tokens`, `tokens_used`: configured assignment call metadata and token usage.
 - `response_json`: raw structured assignment response when available.
 - `error_code`: transport, parser, or schema error when fallback was used.

@@ -341,11 +341,11 @@ class ThesisStoryAssigner:
     def confirm_same_event(self, *, article, analysis: LlmAnalysisResult, narrative: str) -> bool | None:
         """Ask the LLM whether the incoming article and the target story are the same event.
 
-        Used only on the ambiguous single-token-overlap band (260716-01): token overlap alone
-        cannot separate "same company, same deal" from "same company, different deal". Returns
-        True/False, or None to signal "no decision" (disabled, no client support, budget
-        exhausted, transport error, or unparseable) so the caller can fail open to the
-        deterministic result rather than crash the news loop.
+        Used on the lexically inconclusive zero- and single-token-overlap bands (260716-01,
+        260722-01): token overlap alone cannot establish event identity. Returns True/False, or
+        None to signal "no decision" (disabled, no client support, budget exhausted, transport
+        error, or unparseable) so the caller can apply its safe fallback without crashing the
+        news loop.
         """
         if not self.event_check_enabled:
             return None

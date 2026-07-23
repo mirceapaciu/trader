@@ -1,7 +1,7 @@
-"""Unit tests for the story-assignment verification band logic (260715-05 / 260716-01).
+"""Unit tests for the story-assignment verification band logic (260715-05 / 260716-01 / 260722-01).
 
 Covers the three-band decision in `_verify_story_assignment_target`:
-  overlap == 0  -> deterministic downgrade
+  overlap == 0  -> semantic event check, safe downgrade when unavailable
   overlap >= 2  -> deterministic pass
   overlap == 1  -> ambiguous band, consult the LLM event check (fail open to pass)
 and the fail-safe behaviour of `ThesisStoryAssigner.confirm_same_event`.
@@ -32,7 +32,7 @@ def _verify(headline: str, narrative: str, confirmer):
     )
 
 
-def test_zero_overlap_downgrades_and_skips_confirmer():
+def test_zero_overlap_same_event_passes():
     calls = []
 
     def confirmer(_narrative):
@@ -40,10 +40,27 @@ def test_zero_overlap_downgrades_and_skips_confirmer():
         return True
 
     out = _verify("zeta widget alpha", "omega parcel gamma", confirmer)
+    assert out["resolved_target"] == "window:1"
+    assert out["verification_status"] == "passed"
+    assert out["verification_details"]["event_check"] == "same"
+    assert calls == ["Headline: omega parcel gamma"]
+
+
+def test_zero_overlap_different_event_downgrades():
+    out = _verify("zeta widget alpha", "omega parcel gamma", lambda _n: False)
     assert out["resolved_target"] == "new_story"
     assert out["verification_status"] == "downgraded"
-    assert out["verification_reason_code"] == "story_text_mismatch"
-    assert calls == []  # deterministic; the LLM is not consulted on zero overlap
+    assert out["verification_reason_code"] == "story_event_mismatch"
+    assert out["verification_details"]["event_check"] == "different"
+
+
+def test_zero_overlap_without_event_decision_safely_downgrades_with_audit_detail():
+    for confirmer in (None, lambda _n: None):
+        out = _verify("zeta widget alpha", "omega parcel gamma", confirmer)
+        assert out["resolved_target"] == "new_story"
+        assert out["verification_status"] == "downgraded"
+        assert out["verification_reason_code"] == "story_event_check_unavailable"
+        assert out["verification_details"]["event_check"] == "unavailable"
 
 
 def test_strong_overlap_passes_and_skips_confirmer():

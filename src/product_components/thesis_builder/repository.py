@@ -1640,17 +1640,6 @@ def _verify_story_assignment_target(
     inc_sorted = sorted(incoming_tokens)
     tgt_sorted = sorted(target_tokens)
 
-    # No distinctive token in common: clearly a different story.
-    if not overlap:
-        return _story_verification(
-            resolved_target="new_story",
-            verification_status="downgraded",
-            verification_reason_code="story_text_mismatch",
-            incoming_tokens=inc_sorted,
-            target_tokens=tgt_sorted,
-            overlap=overlap,
-        )
-
     # Two or more distinctive tokens in common: strong same-story signal; accept deterministically.
     if len(overlap) >= 2:
         return _story_verification(
@@ -1662,9 +1651,10 @@ def _verify_story_assignment_target(
             overlap=overlap,
         )
 
-    # Single-token overlap is the ambiguous band (260716-01): one shared token is as often
-    # incidental (same company/counterparty/sector, different event) as it is genuine, and token
-    # overlap cannot tell those apart. Consult the LLM event check when available.
+    # Zero or one distinctive shared token is lexically inconclusive. Zero overlap cannot prove
+    # different-event identity: paraphrased coverage of the same announcement can retain no
+    # common tokens once subject and generic-domain terms are removed (260722-01). A single
+    # token is likewise often incidental (260716-01). Consult the event check when available.
     if event_confirmer is not None:
         decision = event_confirmer(narrative)
         if decision is False:
@@ -1688,8 +1678,20 @@ def _verify_story_assignment_target(
                 event_check="same",
             )
 
-    # No event decision (check disabled, unsupported, budget-exhausted, or transport error):
-    # fail open to the pre-260716-01 behaviour (a single-token overlap passes).
+    # No event decision (check disabled, unsupported, budget-exhausted, or transport error).
+    # A one-token match retains the pre-260716-01 fail-open behavior; a zero-token match has no
+    # lexical affirmative evidence, so preserve the safe new-story fallback with auditable cause.
+    if not overlap:
+        return _story_verification(
+            resolved_target="new_story",
+            verification_status="downgraded",
+            verification_reason_code="story_event_check_unavailable",
+            incoming_tokens=inc_sorted,
+            target_tokens=tgt_sorted,
+            overlap=overlap,
+            event_check="unavailable",
+        )
+
     return _story_verification(
         resolved_target=target,
         verification_status="passed",
