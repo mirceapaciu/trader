@@ -35,7 +35,7 @@ Logical fields:
 - `allowed_max_evidence_age_seconds`: freshness limit used for validation.
 - `evidence_age_exceeded_seconds`: amount by which evidence age exceeded the freshness limit; zero or null for non-stale cards.
 - `story_narrative`: optional seed-stable story narrative copied from the evidence window that produced the card.
-- `event_identity_json`: immutable versioned identity copied from the seed analysis. It contains taxonomy/schema versions, controlled family/subtype where available, occurrence discriminators, and lossless unmapped proposals.
+- `event_identity_json`: immutable versioned identity copied from the seed analysis. It contains taxonomy/schema versions, controlled family/subtype where available, occurrence discriminators, and lossless unmapped proposals. Unsupported family, subtype, stage, coverage-role, and participant-role inputs are retained as explicit candidates so they can create taxonomy-gap review items rather than being silently replaced by `unknown`.
 - `signal_published_at`: optional timestamp when the executable signal was published.
 - `expires_at`: card expiry timestamp.
 - `created_at`: card creation timestamp.

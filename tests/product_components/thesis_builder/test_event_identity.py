@@ -37,3 +37,28 @@ def test_unknown_subtype_keeps_classified_family_and_records_gap() -> None:
     assert identity["classification_status"] == "classified"
     assert identity["event_subtype"] is None
     assert taxonomy_gap_values(identity) == [("event_subtype", "surprise_release")]
+
+
+def test_proposal_fields_and_unknown_secondary_values_are_lossless() -> None:
+    identity = normalize_event_identity(
+        {
+            "event_family_candidate": "partnership",
+            "event_stage": "announcement",
+            "coverage_role": "breaking_news",
+            "participants": [{"role": "counterparty", "name_raw": "Core Scientific"}],
+        },
+        ticker="AMD",
+        exchange_code="XNAS",
+    )
+
+    assert identity["event_family_candidate"] == "partnership"
+    assert identity["event_stage"] == "unknown"
+    assert identity["event_stage_candidate"] == "announcement"
+    assert identity["coverage_role_candidate"] == "breaking_news"
+    assert identity["participants"][0]["role_candidate"] == "counterparty"
+    assert taxonomy_gap_values(identity) == [
+        ("event_family", "partnership"),
+        ("event_stage", "announcement"),
+        ("coverage_role", "breaking_news"),
+        ("participant_role", "counterparty"),
+    ]

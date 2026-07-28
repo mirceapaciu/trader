@@ -1296,7 +1296,12 @@ function EventIdentityBadge({ identity }: { identity?: EventIdentity | null }) {
 
 function EventIdentityDetails({ identity }: { identity?: EventIdentity | null }) {
   if (!identity || Object.keys(identity).length === 0) return null;
-  const candidate = stringValue(identity.event_family_candidate) ?? stringValue(identity.event_subtype_candidate);
+  const candidates = [
+    ["event family", stringValue(identity.event_family_candidate)],
+    ["event subtype", stringValue(identity.event_subtype_candidate)],
+    ["event stage", stringValue(identity.event_stage_candidate)],
+    ["coverage role", stringValue(identity.coverage_role_candidate)],
+  ].filter((entry): entry is [string, string] => entry[1] !== null);
   const participants = participantNames(identity.participants);
   return (
     <>
@@ -1316,9 +1321,9 @@ function EventIdentityDetails({ identity }: { identity?: EventIdentity | null })
       {participants && (
         <div className="pending-detail-row"><span>Participants</span><strong>{participants}</strong></div>
       )}
-      {candidate && (
-        <div className="pending-detail-row"><span>Taxonomy gap</span><strong><span className="chip warning">Unmapped: {formatToken(candidate)}</span></strong></div>
-      )}
+      {candidates.map(([dimension, candidate]) => (
+        <div className="pending-detail-row" key={`${dimension}:${candidate}`}><span>Taxonomy gap</span><strong><span className="chip warning">{formatToken(dimension)}: {formatToken(candidate)}</span></strong></div>
+      ))}
       <details className="event-identity-details">
         <summary>Identity details</summary>
         <pre>{JSON.stringify(identity, null, 2)}</pre>

@@ -51,12 +51,14 @@ def normalize_event_identity(raw: dict[str, Any] | None, *, ticker: str, exchang
                              occurred_at: datetime | None = None, legacy_event_type: str | None = None) -> dict[str, Any]:
     """Return a safe v1 identity.  No unknown field can make analysis parsing fail."""
     source = dict(raw or {})
-    candidate = normalize_token(source.get("event_family"))
+    # Models occasionally return a proposal field instead of the requested
+    # canonical field. Treat it as input, never as a reason to lose the value.
+    candidate = normalize_token(source.get("event_family")) or normalize_token(source.get("event_family_candidate"))
     if not candidate and legacy_event_type:
         candidate = normalize_token(legacy_event_type)
     family, alias_subtype = LEGACY_ALIASES.get(candidate or "", (candidate, None))
     classified = family in EVENT_FAMILIES
-    subtype_candidate = normalize_token(source.get("event_subtype"))
+    subtype_candidate = normalize_token(source.get("event_subtype")) or normalize_token(source.get("event_subtype_candidate"))
     subtype = subtype_candidate if classified and subtype_candidate in SUBTYPES.get(family, frozenset()) else None
     subject = source.get("subject") if isinstance(source.get("subject"), dict) else {}
     period = source.get("period") if isinstance(source.get("period"), dict) else None
@@ -66,17 +68,21 @@ def normalize_event_identity(raw: dict[str, Any] | None, *, ticker: str, exchang
         if not isinstance(participant, dict):
             continue
         role = normalize_token(participant.get("role"))
-        safe_participants.append({"role": role if role in _PARTICIPANT_ROLES else "other", "instrument_id": participant.get("instrument_id"), "name_raw": str(participant.get("name_raw") or "")[:240] or None})
+        safe_participants.append({"role": role if role in _PARTICIPANT_ROLES else "other", "role_candidate": role if role and role not in _PARTICIPANT_ROLES else None, "instrument_id": participant.get("instrument_id"), "name_raw": str(participant.get("name_raw") or "")[:240] or None})
     status = "classified" if classified else "unmapped"
     occurred_value = source.get("occurred_at") or (occurred_at.isoformat() if occurred_at else None)
+    stage_candidate = normalize_token(source.get("event_stage"))
+    role_candidate = normalize_token(source.get("coverage_role"))
     identity = {
         "schema_version": SCHEMA_VERSION, "taxonomy_version": TAXONOMY_VERSION,
         "classification_status": status, "event_family": family if classified else None,
         "event_family_candidate": None if classified else candidate,
         "event_subtype": subtype or (alias_subtype if classified else None),
         "event_subtype_candidate": subtype_candidate if classified and subtype is None and subtype_candidate else None,
-        "event_stage": _controlled(source.get("event_stage"), _STAGES, "unknown"),
-        "coverage_role": _controlled(source.get("coverage_role"), _ROLES, "unknown"),
+        "event_stage": stage_candidate if stage_candidate in _STAGES else "unknown",
+        "event_stage_candidate": stage_candidate if stage_candidate and stage_candidate not in _STAGES else None,
+        "coverage_role": role_candidate if role_candidate in _ROLES else "unknown",
+        "coverage_role_candidate": role_candidate if role_candidate and role_candidate not in _ROLES else None,
         "subject": {"instrument_id": subject.get("instrument_id"), "ticker": str(subject.get("ticker") or ticker).upper(), "exchange_code": str(subject.get("exchange_code") or exchange_code).upper()},
         "participants": safe_participants, "period": _safe_period(period), "occurred_at": occurred_value,
         "occurred_at_precision": _controlled(source.get("occurred_at_precision"), _PRECISIONS, "unknown"),
@@ -110,6 +116,13 @@ def taxonomy_gap_values(identity: dict[str, Any]) -> list[tuple[str, str]]:
         gaps.append(("event_family", identity["event_family_candidate"]))
     if identity.get("event_subtype_candidate"):
         gaps.append(("event_subtype", identity["event_subtype_candidate"]))
+    if identity.get("event_stage_candidate"):
+        gaps.append(("event_stage", identity["event_stage_candidate"]))
+    if identity.get("coverage_role_candidate"):
+        gaps.append(("coverage_role", identity["coverage_role_candidate"]))
+    for participant in identity.get("participants") or []:
+        if isinstance(participant, dict) and participant.get("role_candidate"):
+            gaps.append(("participant_role", participant["role_candidate"]))
     return gaps
 
 
