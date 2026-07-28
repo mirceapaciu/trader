@@ -181,7 +181,7 @@ Chart bucket granularity follows the same preset rules as the NewsFetcher throug
 Bucketed ThesisBuilder throughput must render as discrete bars rather than connected lines so zero
 activity remains visually empty instead of implying continuity between buckets.
 
-Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows; the window detail panel also exposes the window's story narrative when ThesisBuilder story scoping is enabled. Thesis-card history rows expose story narrative and corroboration count when ThesisBuilder story scoping is enabled. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
+Pending thesis-card rows show ticker, exchange, strategy, direction, pending age, and time to expiry for collecting evidence windows; the window detail panel also exposes the window's story narrative when ThesisBuilder story scoping is enabled. Thesis-card history rows expose story narrative and corroboration count when ThesisBuilder story scoping is enabled. Card, window, and analysis detail panels show a human-readable event identity (family/subtype, stage, coverage role, occurrence, and participants) with the persisted identity JSON available in a disclosure for audit. Evidence article modals use only a compact event badge. A separate read-only taxonomy-gaps panel shows unmapped proposals and representative headlines; taxonomy decisions remain ThesisBuilder-owned. Stale audit cards are cards with `validation_status=rejected` and `rejection_reason_code=stale_evidence`; the operator-facing label is `stale`.
 
 The ThesisBuilder tab also shows a recent dead-letter panel sourced from `failed_messages_dlq` entries written by ThesisBuilder when message consumption fails after validation or payload checks. These items are separate from the NewsFetcher outbox dead-letter views:
 - NewsFetcher dead letters represent publication-obligation failures from `news_fetcher.t_publication_obligations`.
@@ -279,6 +279,7 @@ Required read endpoints:
 - `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics for either a preset `window` token or explicit `start_at` and `end_at` bounds.
 - `GET /api/thesis-builder/metrics` returns bounded-window ThesisBuilder KPIs and pending evidence windows for `15m`, `1h`, `1d`, `7d`, or `30d`.
 - `GET /api/thesis-builder/throughput` returns bounded-window ThesisBuilder article throughput buckets for `15m`, `1h`, `1d`, `7d`, or `30d`.
+- `GET /api/thesis-builder/taxonomy-gaps` returns read-only unresolved and historical taxonomy-gap proposals for operator visibility.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.

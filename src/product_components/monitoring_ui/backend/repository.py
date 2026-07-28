@@ -45,6 +45,8 @@ from .models import (
     ThesisBuilderThroughputBucket,
     ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
+    ThesisBuilderTaxonomyGap,
+    ThesisBuilderTaxonomyGapsResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderEvidenceWindow,
     ThesisCardSummary,
@@ -566,7 +568,7 @@ class PostgresRedisMonitoringDataSource:
         sql = (
             f"SELECT DISTINCT ON (article_id) "
             f"article_id, article_snapshot, confidence, is_market_moving, "
-            f"validation_status, rejection_reason_code, analyzed_at "
+            f"validation_status, rejection_reason_code, event_identity_json AS event_identity, analyzed_at "
             f"FROM {schema}.t_news_analyses "
             f"WHERE id IN ("
             f"SELECT jsonb_array_elements_text(analysis_ids)::bigint "
@@ -601,7 +603,7 @@ class PostgresRedisMonitoringDataSource:
         sql = (
             f"SELECT DISTINCT ON (article_id) "
             f"article_id, article_snapshot, confidence, is_market_moving, "
-            f"validation_status, rejection_reason_code, analyzed_at "
+            f"validation_status, rejection_reason_code, event_identity_json AS event_identity, analyzed_at "
             f"FROM {schema}.t_news_analyses "
             f"WHERE id IN ("
             f"SELECT jsonb_array_elements_text(source_analysis_ids)::bigint "
@@ -638,7 +640,7 @@ class PostgresRedisMonitoringDataSource:
         sql = (
             f"SELECT id, article_id, ticker, exchange_code, analyzed_at, "
             f"content_type, subject_relation, validation_status, rejection_reason_code, "
-            f"confidence, is_market_moving, direction, strategy, reasoning, "
+            f"confidence, is_market_moving, direction, strategy, reasoning, event_identity_json AS event_identity, "
             f"article_snapshot->>'headline' AS headline, "
             f"article_snapshot->>'summary' AS summary, "
             f"article_snapshot->>'url' AS url, "
@@ -679,6 +681,7 @@ class PostgresRedisMonitoringDataSource:
                 summary=str(row["summary"]) if row.get("summary") else None,
                 url=str(row["url"]) if row.get("url") else None,
                 source=str(row["source"]) if row.get("source") else None,
+                event_identity=_json_object(row.get("event_identity")) or None,
             )
             for row in rows[:limit]
         ]
@@ -686,6 +689,44 @@ class PostgresRedisMonitoringDataSource:
             available=True,
             items=items,
             has_more=has_more,
+            generated_at=generated_at,
+        )
+
+    def get_thesis_builder_taxonomy_gaps(self, *, limit: int = 100) -> ThesisBuilderTaxonomyGapsResponse:
+        generated_at = _utc_now()
+        sql = (
+            f"SELECT id, dimension, raw_value, normalized_proposal, occurrence_count, first_seen_at, last_seen_at, "
+            f"status, representative_analysis_ids, representative_headlines "
+            f"FROM {self._thesis_builder_schema}.t_event_taxonomy_gaps "
+            f"ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, occurrence_count DESC, last_seen_at DESC "
+            f"LIMIT %s"
+        )
+        try:
+            with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (limit,))
+                rows = cur.fetchall()
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return ThesisBuilderTaxonomyGapsResponse(
+                available=False,
+                message="ThesisBuilder taxonomy gaps are unavailable.",
+                generated_at=generated_at,
+            )
+        return ThesisBuilderTaxonomyGapsResponse(
+            gaps=[
+                ThesisBuilderTaxonomyGap(
+                    gap_id=int(row["id"]),
+                    dimension=str(row["dimension"]),
+                    raw_value=str(row["raw_value"]),
+                    normalized_proposal=str(row["normalized_proposal"]),
+                    occurrence_count=int(row["occurrence_count"]),
+                    first_seen_at=_to_utc(row["first_seen_at"]),
+                    last_seen_at=_to_utc(row["last_seen_at"]),
+                    status=str(row["status"]),
+                    representative_analysis_ids=[int(value) for value in _json_array(row.get("representative_analysis_ids"))],
+                    representative_headlines=[str(value) for value in _json_array(row.get("representative_headlines"))],
+                )
+                for row in rows
+            ],
             generated_at=generated_at,
         )
 
@@ -1141,7 +1182,7 @@ class PostgresRedisMonitoringDataSource:
             f"EXTRACT(EPOCH FROM (window_started_at + (%s * INTERVAL '1 minute') - NOW())) "
             f"AS expires_in_seconds, "
             f"jsonb_array_length(article_ids) AS evidence_count, "
-            f"required_evidence_count, story_narrative "
+            f"required_evidence_count, story_narrative, event_identity_json AS event_identity "
             f"FROM {self._thesis_builder_schema}.t_evidence_windows "
             f"WHERE status = 'collecting' "
             f"AND window_started_at + (%s * INTERVAL '1 minute') > NOW() "
@@ -1164,6 +1205,7 @@ class PostgresRedisMonitoringDataSource:
                 evidence_count=int(row["evidence_count"] or 0),
                 required_evidence_count=int(row["required_evidence_count"]),
                 story_narrative=row["story_narrative"],
+                event_identity=_json_object(row.get("event_identity")) or None,
             )
             for row in rows
         ]
@@ -1220,7 +1262,7 @@ class PostgresRedisMonitoringDataSource:
             f"EXTRACT(EPOCH FROM (expires_at - NOW())) AS expires_in_seconds, "
             f"jsonb_array_length(evidence) AS evidence_count, "
             f"(signal_published_at IS NOT NULL) AS signal_published, "
-            f"validation_status, rejection_reason_code, story_narrative, "
+            f"validation_status, rejection_reason_code, story_narrative, event_identity_json AS event_identity, "
             f"(SELECT COUNT(*) FROM {self._thesis_builder_schema}.t_card_corroborations cc WHERE cc.card_id = c.id) AS corroboration_count "
             f"FROM {self._thesis_builder_schema}.t_thesis_cards c "
             f"WHERE created_at >= %s AND created_at < %s "
@@ -1253,6 +1295,7 @@ class PostgresRedisMonitoringDataSource:
                     str(row["story_narrative"]) if row["story_narrative"] else None
                 ),
                 corroboration_count=int(row["corroboration_count"] or 0),
+                event_identity=_json_object(row.get("event_identity")) or None,
             )
             for row in rows
         ]
@@ -1481,6 +1524,18 @@ def _json_object(value: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _json_array(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str):
+        return []
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
 def _parse_optional_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return _to_utc(value)
@@ -1505,6 +1560,7 @@ def _window_article(row: dict[str, Any]) -> WindowArticle:
         is_market_moving=bool(row.get("is_market_moving")),
         validation_status=row.get("validation_status"),
         rejection_reason_code=row.get("rejection_reason_code"),
+        event_identity=_json_object(row.get("event_identity")) or None,
     )
 
 

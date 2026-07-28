@@ -136,6 +136,7 @@ class ThesisBuilderEvidenceWindow(BaseModel):
     evidence_count: int
     required_evidence_count: int
     story_narrative: str | None = None
+    event_identity: dict[str, Any] | None = None
 
 
 class ThesisBuilderActionableCard(BaseModel):
@@ -174,6 +175,7 @@ class ThesisCardSummary(BaseModel):
     rejection_reason_code: str | None = None
     story_narrative: str | None = None
     corroboration_count: int = 0
+    event_identity: dict[str, Any] | None = None
 
 
 class ThesisCardListResponse(BaseModel):
@@ -201,6 +203,7 @@ class WindowArticle(BaseModel):
     is_market_moving: bool = False
     validation_status: str | None = None
     rejection_reason_code: str | None = None
+    event_identity: dict[str, Any] | None = None
 
 
 class WindowArticlesResponse(BaseModel):
@@ -281,6 +284,7 @@ class NewsAnalysisItem(BaseModel):
     summary: str | None = None
     url: str | None = None
     source: str | None = None
+    event_identity: dict[str, Any] | None = None
 
 
 class NewsAnalysesResponse(BaseModel):
@@ -290,6 +294,32 @@ class NewsAnalysesResponse(BaseModel):
     message: str | None = None
     items: list[NewsAnalysisItem] = Field(default_factory=list)
     has_more: bool = False
+    generated_at: datetime
+
+
+class ThesisBuilderTaxonomyGap(BaseModel):
+    """Read-only, operator-visible proposal that is not in the active taxonomy."""
+
+    model_config = ConfigDict(frozen=True)
+
+    gap_id: int
+    dimension: str
+    raw_value: str
+    normalized_proposal: str
+    occurrence_count: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    status: str
+    representative_analysis_ids: list[int] = Field(default_factory=list)
+    representative_headlines: list[str] = Field(default_factory=list)
+
+
+class ThesisBuilderTaxonomyGapsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    available: bool = True
+    message: str | None = None
+    gaps: list[ThesisBuilderTaxonomyGap] = Field(default_factory=list)
     generated_at: datetime
 
 

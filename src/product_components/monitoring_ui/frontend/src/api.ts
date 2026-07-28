@@ -65,6 +65,8 @@ export type ThroughputRequest =
   | { window: ThroughputPresetWindow }
   | { window: ThroughputPresetWindow; startAt: string; endAt: string };
 
+export type EventIdentity = Record<string, unknown>;
+
 export type ThesisBuilderEvidenceWindow = {
   window_id: number;
   ticker: string;
@@ -78,6 +80,7 @@ export type ThesisBuilderEvidenceWindow = {
   evidence_count: number;
   required_evidence_count: number;
   story_narrative?: string | null;
+  event_identity?: EventIdentity | null;
 };
 
 export type ThesisBuilderActionableCard = {
@@ -112,6 +115,7 @@ export type ThesisCardSummary = {
   rejection_reason_code?: string | null;
   story_narrative?: string | null;
   corroboration_count: number;
+  event_identity?: EventIdentity | null;
 };
 
 export type ThesisCardListResponse = {
@@ -121,6 +125,26 @@ export type ThesisCardListResponse = {
   window_start_at: string;
   window_end_at: string;
   cards: ThesisCardSummary[];
+  generated_at: string;
+};
+
+export type ThesisBuilderTaxonomyGap = {
+  gap_id: number;
+  dimension: string;
+  raw_value: string;
+  normalized_proposal: string;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  status: string;
+  representative_analysis_ids: number[];
+  representative_headlines: string[];
+};
+
+export type ThesisBuilderTaxonomyGapsResponse = {
+  available: boolean;
+  message?: string | null;
+  gaps: ThesisBuilderTaxonomyGap[];
   generated_at: string;
 };
 
@@ -142,6 +166,7 @@ export type WindowArticle = {
   is_market_moving: boolean;
   validation_status?: string | null;
   rejection_reason_code?: string | null;
+  event_identity?: EventIdentity | null;
 };
 
 export type WindowArticlesResponse = {
@@ -389,6 +414,7 @@ export type NewsAnalysisItem = {
   summary?: string | null;
   url?: string | null;
   source?: string | null;
+  event_identity?: EventIdentity | null;
 };
 
 export type NewsAnalysesResponse = {
@@ -959,6 +985,10 @@ export function fetchNewsAnalyses(params: { window: ThroughputPresetWindow; limi
   const p = new URLSearchParams({ window: params.window });
   if (params.limit != null) p.set("limit", String(params.limit));
   return getJson<NewsAnalysesResponse>(`/api/thesis-builder/analyses?${p.toString()}`);
+}
+
+export function fetchThesisBuilderTaxonomyGaps(): Promise<ThesisBuilderTaxonomyGapsResponse> {
+  return getJson<ThesisBuilderTaxonomyGapsResponse>("/api/thesis-builder/taxonomy-gaps");
 }
 
 export function fetchFetchedArticles(params: { window: ThroughputPresetWindow; limit?: number }): Promise<FetchedArticlesResponse> {

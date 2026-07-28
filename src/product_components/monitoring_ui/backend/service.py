@@ -58,6 +58,7 @@ from .models import (
     ThesisBuilderConfigResponse,
     ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
+    ThesisBuilderTaxonomyGapsResponse,
     ThesisCardListResponse,
     ThesisCardSummary,
     ThesisReprocessRequest,
@@ -130,6 +131,8 @@ class MonitoringDataSource(Protocol):
     def get_thesis_card_articles(self, *, card_id: str) -> WindowArticlesResponse: ...
 
     def get_news_analyses(self, *, window_start_at: datetime, window_end_at: datetime, limit: int) -> NewsAnalysesResponse: ...
+
+    def get_thesis_builder_taxonomy_gaps(self, *, limit: int = 100) -> ThesisBuilderTaxonomyGapsResponse: ...
 
     def get_backlog(self) -> BacklogResponse: ...
 
@@ -565,6 +568,17 @@ class MonitoringService:
                 available=False,
                 message="ThesisBuilder telemetry unavailable.",
                 generated_at=now,
+            )
+
+    def get_thesis_builder_taxonomy_gaps(self) -> ThesisBuilderTaxonomyGapsResponse:
+        try:
+            return self._data_source.get_thesis_builder_taxonomy_gaps()
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("thesis builder taxonomy gaps unavailable")
+            return ThesisBuilderTaxonomyGapsResponse(
+                available=False,
+                message="ThesisBuilder taxonomy gaps are unavailable.",
+                generated_at=_utc_now(),
             )
 
     def get_backlog(self) -> BacklogResponse:

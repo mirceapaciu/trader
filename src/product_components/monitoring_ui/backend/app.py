@@ -43,6 +43,7 @@ from .models import (
     ProvidersResponse,
     ThesisBuilderConfigResponse,
     ThesisBuilderMetricsResponse,
+    ThesisBuilderTaxonomyGapsResponse,
     ThesisBuilderThroughputResponse,
     ThesisCardListResponse,
     ThesisReprocessRequest,
@@ -362,6 +363,13 @@ def create_app(
             )
         except InvalidThroughputWindow as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get("/api/thesis-builder/taxonomy-gaps", response_model=ThesisBuilderTaxonomyGapsResponse)
+    def get_thesis_builder_taxonomy_gaps() -> ThesisBuilderTaxonomyGapsResponse:
+        return _run_with_infrastructure_mapping(
+            service.get_thesis_builder_taxonomy_gaps,
+            detail="thesis-builder taxonomy gaps unavailable",
+        )
 
     @app.post(
         "/api/news-fetcher/reprocess-rejected",

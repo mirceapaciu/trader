@@ -4,6 +4,7 @@ import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Toolti
 
 import {
   fetchNewsAnalyses,
+  fetchThesisBuilderTaxonomyGaps,
   fetchThesisBuilderConfig,
   fetchReprocessStatus,
   fetchThesisBuilderMetrics,
@@ -13,12 +14,14 @@ import {
   fetchWindowArticles,
   reprocessThesisBuilder,
   type NewsAnalysisItem,
+  type EventIdentity,
   type ThesisBuilderConsumerHealth,
   type ThesisBuilderConfigResponse,
   type ThesisBuilderDeadLetterItem,
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderThroughputResponse,
   type ThesisBuilderEvidenceWindow,
+  type ThesisBuilderTaxonomyGap,
   type ThesisCardSummary,
   type ThesisReprocessStatusResponse,
   type ThroughputPresetWindow,
@@ -223,6 +226,7 @@ export function ThesisBuilderTab() {
       <ThesisCardsPanel window={window} />
       <EvidenceWindowsPanel windows={data?.pending_windows ?? []} />
       <NewsAnalysesPanel window={window} />
+      <TaxonomyGapsPanel />
       <section className="layout thesis-layout">
         <StaleEvidencePanel data={data} />
         <DeadLetterPanel data={data} />
@@ -589,6 +593,7 @@ function AnalysisDetail({ item }: { item: NewsAnalysisItem }) {
         <span>Market moving</span>
         <strong>{item.is_market_moving ? "yes" : "no"}</strong>
       </div>
+      <EventIdentityDetails identity={item.event_identity} />
       {item.reasoning && (
         <div className="pending-detail-row analysis-reasoning">
           <span>Reasoning</span>
@@ -621,6 +626,7 @@ function WindowDetail({ window: w }: { window: ThesisBuilderEvidenceWindow }) {
           <strong>{w.story_narrative}</strong>
         </div>
       )}
+      <EventIdentityDetails identity={w.event_identity} />
       <div className="pending-detail-row">
         <span>Window started</span>
         <strong>{formatDate(w.window_started_at)}</strong>
@@ -749,6 +755,7 @@ function EvidenceArticle({ article }: { article: WindowArticle }) {
               : formatToken(article.validation_status)}
           </span>
         )}
+        <EventIdentityBadge identity={article.event_identity} />
       </div>
       {article.summary && <p className="evidence-article-summary">{article.summary}</p>}
     </div>
@@ -1004,6 +1011,7 @@ function ThesisCardDetail({ card: c }: { card: ThesisCardSummary }) {
           <strong>{c.story_narrative}</strong>
         </div>
       )}
+      <EventIdentityDetails identity={c.event_identity} />
       <div className="pending-detail-row">
         <span>Confidence</span>
         <strong>{c.confidence.toFixed(2)}</strong>
@@ -1279,6 +1287,93 @@ function formatToken(value: string) {
     return "stale";
   }
   return value.replaceAll("_", " ");
+}
+
+function EventIdentityBadge({ identity }: { identity?: EventIdentity | null }) {
+  const label = eventIdentitySummary(identity);
+  return label ? <span className="chip">{label}</span> : null;
+}
+
+function EventIdentityDetails({ identity }: { identity?: EventIdentity | null }) {
+  if (!identity || Object.keys(identity).length === 0) return null;
+  const candidate = stringValue(identity.event_family_candidate) ?? stringValue(identity.event_subtype_candidate);
+  const participants = participantNames(identity.participants);
+  return (
+    <>
+      <div className="pending-detail-row">
+        <span>Event</span>
+        <strong>{eventIdentitySummary(identity) ?? "Unclassified event"}</strong>
+      </div>
+      {stringValue(identity.coverage_role) && (
+        <div className="pending-detail-row"><span>Coverage role</span><strong>{formatToken(stringValue(identity.coverage_role)!)}</strong></div>
+      )}
+      {stringValue(identity.event_stage) && (
+        <div className="pending-detail-row"><span>Event stage</span><strong>{formatToken(stringValue(identity.event_stage)!)}</strong></div>
+      )}
+      {eventOccurredAt(identity) && (
+        <div className="pending-detail-row"><span>Occurred</span><strong>{eventOccurredAt(identity)}</strong></div>
+      )}
+      {participants && (
+        <div className="pending-detail-row"><span>Participants</span><strong>{participants}</strong></div>
+      )}
+      {candidate && (
+        <div className="pending-detail-row"><span>Taxonomy gap</span><strong><span className="chip warning">Unmapped: {formatToken(candidate)}</span></strong></div>
+      )}
+      <details className="event-identity-details">
+        <summary>Identity details</summary>
+        <pre>{JSON.stringify(identity, null, 2)}</pre>
+      </details>
+    </>
+  );
+}
+
+function TaxonomyGapsPanel() {
+  const query = useQuery({
+    queryKey: ["thesis-builder", "taxonomy-gaps"],
+    queryFn: fetchThesisBuilderTaxonomyGaps,
+    refetchInterval: 60000,
+  });
+  const gaps = query.data?.gaps ?? [];
+  return (
+    <section className="panel panel-large" style={{ marginBottom: 20 }}>
+      <div className="panel-heading"><div><h2>Taxonomy gaps</h2><span>Unmapped event-identity proposals requiring ThesisBuilder review</span></div></div>
+      {query.isError || (query.data && !query.data.available) ? (
+        <div className="inline-error">Taxonomy gaps unavailable.</div>
+      ) : gaps.length === 0 ? <div className="empty">No unmapped event identities.</div> : (
+        <div className="pending-list-wrap"><table><thead><tr><th>Proposal</th><th>Dimension</th><th>Seen</th><th>Status</th><th>Representative headlines</th></tr></thead><tbody>
+          {gaps.map((gap) => <TaxonomyGapRow key={gap.gap_id} gap={gap} />)}
+        </tbody></table></div>
+      )}
+    </section>
+  );
+}
+
+function TaxonomyGapRow({ gap }: { gap: ThesisBuilderTaxonomyGap }) {
+  return <tr><td><strong>{formatToken(gap.normalized_proposal)}</strong><span className="table-subtext">raw: {gap.raw_value}</span></td><td>{formatToken(gap.dimension)}</td><td>{gap.occurrence_count}</td><td><span className={gap.status === "open" ? "chip warning" : "chip"}>{formatToken(gap.status)}</span></td><td className="analysis-headline-cell">{gap.representative_headlines[0] ?? "—"}<span className="table-subtext">last seen {formatDate(gap.last_seen_at)}</span></td></tr>;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function eventIdentitySummary(identity?: EventIdentity | null): string | null {
+  if (!identity) return null;
+  const family = stringValue(identity.event_family) ?? stringValue(identity.event_family_candidate);
+  const subtype = stringValue(identity.event_subtype) ?? stringValue(identity.event_subtype_candidate);
+  return [family, subtype].filter((value, index, values) => value && values.indexOf(value) === index).map((value) => formatToken(value!)).join(" · ") || null;
+}
+
+function participantNames(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const names = value.map((item) => typeof item === "object" && item ? stringValue((item as Record<string, unknown>).name) ?? stringValue((item as Record<string, unknown>).ticker) : null).filter(Boolean);
+  return names.length ? names.join(", ") : null;
+}
+
+function eventOccurredAt(identity: EventIdentity): string | null {
+  const occurredAt = stringValue(identity.occurred_at);
+  if (!occurredAt) return null;
+  const precision = stringValue(identity.occurred_at_precision);
+  return precision && precision !== "exact" ? `${occurredAt} (${formatToken(precision)})` : occurredAt;
 }
 
 function formatWindowSummary(data?: ThesisBuilderMetricsResponse) {

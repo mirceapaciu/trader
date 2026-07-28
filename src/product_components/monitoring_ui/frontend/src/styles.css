@@ -1439,6 +1439,28 @@ th {
   gap: 8px;
 }
 
+.event-identity-details {
+  grid-column: 1 / -1;
+  color: #3e4d46;
+}
+
+.event-identity-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.event-identity-details pre {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0.5rem 0 0;
+  padding: 0.75rem;
+  border-radius: 0.35rem;
+  background: #f3f6f4;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .evidence-article-summary {
   margin: 0;
   color: #46524c;

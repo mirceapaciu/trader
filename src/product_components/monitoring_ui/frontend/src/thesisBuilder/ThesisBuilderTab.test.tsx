@@ -53,6 +53,9 @@ describe("ThesisBuilderTab", () => {
       if (options?.queryKey?.includes("analyses")) {
         return analysesQueryResult;
       }
+      if (options?.queryKey?.includes("taxonomy-gaps")) {
+        return { data: { available: true, gaps: [], generated_at: "2026-06-16T10:00:00Z" }, isError: false, error: null };
+      }
       return metricsQueryResult;
     });
   });
@@ -118,6 +121,12 @@ describe("ThesisBuilderTab", () => {
           signal_published: false,
           validation_status: "valid",
           rejection_reason_code: null,
+          event_identity: {
+            event_family: "earnings_results",
+            event_subtype: "quarterly_results",
+            coverage_role: "results_report",
+            event_stage: "completed",
+          },
         },
         {
           card_id: "card-2",
@@ -260,6 +269,8 @@ describe("ThesisBuilderTab", () => {
 
     expect(screen.getByText("Time horizon")).toBeInTheDocument();
     expect(screen.getByText("swing 1d 5d")).toBeInTheDocument();
+    expect(screen.getByText("earnings results · quarterly results")).toBeInTheDocument();
+    expect(screen.getByText("Coverage role")).toBeInTheDocument();
   });
 
   it("sorts evidence windows by ascending age by default", () => {
