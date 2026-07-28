@@ -17,6 +17,7 @@ from .models import (
     ThesisStrategy,
     TradeDirection,
 )
+from .event_identity import normalize_event_identity
 
 
 class TokenBudgetExhausted(RuntimeError):
@@ -464,6 +465,13 @@ def parse_analysis_result(
         content_type=_parse_content_type(raw.get("content_type")),
         subject_relation=subject_relation,
         event_type=str(raw["event_type"]) if raw.get("event_type") else None,
+        event_identity=normalize_event_identity(
+            raw.get("event_identity") if isinstance(raw.get("event_identity"), dict) else None,
+            ticker=ticker,
+            exchange_code=exchange_code,
+            occurred_at=_parse_optional_datetime(raw.get("event_occurred_at")),
+            legacy_event_type=str(raw["event_type"]) if raw.get("event_type") else None,
+        ),
         price_impact_magnitude=_enum_or_none(
             raw.get("price_impact_magnitude"), allowed={"low", "medium", "high"}
         ),
@@ -585,6 +593,12 @@ def _build_prompt(
                 "If the text does not date the event, set event_occurred_at to null.",
                 "When event_occurred_at materially predates article.published_at, treat the article as a recap rather than breaking news.",
             ],
+            "event_identity_rules": [
+                "Return event_identity for the underlying occurrence, not trading interpretation.",
+                "Use a canonical event_family only when it fits; otherwise preserve the proposed value in event_family_candidate.",
+                "Keep coverage_role separate from event family: previews, announcements, reactions and recaps can reference one occurrence.",
+                "Include subject ticker/exchange, known fiscal period or identifiers, and event stage when grounded in the article. Unknown values must remain lossless rather than guessed.",
+            ],
             "already_priced_rules": [
                 "Use market_context when present to detect whether the thesis-direction move has already been realized.",
                 "If a buy thesis already had a sharp positive move, or a sell thesis already had a sharp negative move, lower confidence and prefer suggested_action=hold.",
@@ -650,6 +664,7 @@ def _build_prompt(
                 "instrument_is_subject",
                 "content_type",
                 "event_type",
+                "event_identity",
                 "subject_relation",
                 "event_occurred_at",
                 "price_impact_magnitude",
@@ -754,6 +769,7 @@ def _build_story_assignment_prompt(
                 "summary": article.summary,
                 "source": article.source,
                 "event_type": analysis.event_type,
+                "event_identity": analysis.event_identity,
                 "evidence_bullet_candidates": analysis.evidence_bullet_candidates,
             },
             "key": {
@@ -763,7 +779,7 @@ def _build_story_assignment_prompt(
                 "direction": analysis.direction.value,
             },
             "candidates": [
-                {"target": candidate.target, "story_narrative": candidate.narrative}
+                {"target": candidate.target, "story_narrative": candidate.narrative, "event_identity": candidate.event_identity}
                 for candidate in candidates
             ],
             "required_json_fields": ["target", "estimated_tokens"],
@@ -957,7 +973,7 @@ def _load_json_object(text: str) -> dict[str, Any]:
 _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
     "type": "json_schema",
     "name": "thesis_builder_analysis",
-    "strict": True,
+        "strict": False,
     "schema": {
         "type": "object",
         "additionalProperties": False,
@@ -976,6 +992,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
             "instrument_is_subject",
             "content_type",
             "event_type",
+            "event_identity",
             "subject_relation",
             "event_occurred_at",
             "price_impact_magnitude",
@@ -1010,6 +1027,7 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
                 "enum": ["news_catalyst", "opinion"],
             },
             "event_type": {"type": ["string", "null"]},
+            "event_identity": {"type": ["object", "null"], "additionalProperties": True},
             "subject_relation": {
                 "type": "string",
                 "enum": ["direct", "supply_chain", "customer_or_peer", "macro_sector", "none"],

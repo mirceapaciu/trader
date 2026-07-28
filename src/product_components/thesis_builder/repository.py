@@ -28,6 +28,7 @@ from .models import (
     TradeDirection,
     ValidationStatus,
 )
+from .event_identity import compare_event_identity, taxonomy_gap_values
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SUPPORTED_EXECUTABLE_STRATEGIES = {
@@ -407,10 +408,10 @@ class PostgresThesisBuilderRepository:
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_news_analyses "
             f"(article_id, ticker, exchange_code, sentiment, relevance, urgency, suggested_action, "
-            f"strategy, direction, event_type, subject_relation, event_occurred_at, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
+            f"strategy, direction, event_type, event_identity_json, subject_relation, event_occurred_at, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
             f"market_context_status, market_context_as_of, market_context_snapshot, fundamentals_snapshot, is_market_moving, "
             f"content_type, validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING id"
         )
         with conn.cursor() as cur:
@@ -427,6 +428,7 @@ class PostgresThesisBuilderRepository:
                     result.candidate_strategy.value,
                     result.direction.value,
                     result.event_type,
+                    Json(result.event_identity),
                     result.subject_relation.value,
                     _to_utc(result.event_occurred_at) if result.event_occurred_at else None,
                     result.price_impact_magnitude,
@@ -448,7 +450,19 @@ class PostgresThesisBuilderRepository:
                     datetime.now(timezone.utc),
                 ),
             )
-            return int(cur.fetchone()[0])
+            analysis_id = int(cur.fetchone()[0])
+        self._upsert_taxonomy_gaps(conn=conn, analysis_id=analysis_id, article=article, identity=result.event_identity)
+        return analysis_id
+
+    def _upsert_taxonomy_gaps(self, *, conn: psycopg.Connection, analysis_id: int, article: NewsArticle, identity: dict[str, Any]) -> None:
+        for dimension, proposal in taxonomy_gap_values(identity):
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO {self._thesis_schema}.t_event_taxonomy_gaps (dimension, raw_value, normalized_proposal, occurrence_count, first_seen_at, last_seen_at, representative_analysis_ids, representative_headlines) "
+                    f"VALUES (%s, %s, %s, 1, NOW(), NOW(), %s, %s) "
+                    f"ON CONFLICT (dimension, normalized_proposal) DO UPDATE SET occurrence_count = {self._thesis_schema}.t_event_taxonomy_gaps.occurrence_count + 1, last_seen_at = NOW(), representative_analysis_ids = CASE WHEN jsonb_array_length({self._thesis_schema}.t_event_taxonomy_gaps.representative_analysis_ids) < 5 THEN {self._thesis_schema}.t_event_taxonomy_gaps.representative_analysis_ids || EXCLUDED.representative_analysis_ids ELSE {self._thesis_schema}.t_event_taxonomy_gaps.representative_analysis_ids END, representative_headlines = CASE WHEN jsonb_array_length({self._thesis_schema}.t_event_taxonomy_gaps.representative_headlines) < 5 THEN {self._thesis_schema}.t_event_taxonomy_gaps.representative_headlines || EXCLUDED.representative_headlines ELSE {self._thesis_schema}.t_event_taxonomy_gaps.representative_headlines END",
+                    (dimension, proposal[:120], proposal[:120], Json([analysis_id]), Json([article.headline[:240]])),
+                )
 
     def _update_window_and_maybe_create_card(
         self,
@@ -912,7 +926,7 @@ class PostgresThesisBuilderRepository:
     ) -> list[StoryAssignmentCandidate]:
         candidates: list[StoryAssignmentCandidate] = []
         sql = (
-            f"SELECT id, story_narrative FROM {self._thesis_schema}.t_evidence_windows "
+            f"SELECT id, story_narrative, event_identity_json FROM {self._thesis_schema}.t_evidence_windows "
             f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s "
             f"AND COALESCE(direction, '') = COALESCE(%s, '') AND status = 'collecting' "
             f"AND COALESCE(reprocess_run_id, '') = COALESCE(%s, '') "
@@ -923,9 +937,11 @@ class PostgresThesisBuilderRepository:
             for row in cur.fetchall():
                 narrative = str(row["story_narrative"] or "").strip()
                 if narrative:
-                    candidates.append(StoryAssignmentCandidate(target=f"window:{row['id']}", narrative=narrative))
+                    identity = row.get("event_identity_json") or {}
+                    if compare_event_identity(result.event_identity, identity) != "different":
+                        candidates.append(StoryAssignmentCandidate(target=f"window:{row['id']}", narrative=narrative, event_identity=identity))
         card_sql = (
-            f"SELECT id, story_narrative FROM {self._thesis_schema}.t_thesis_cards "
+            f"SELECT id, story_narrative, event_identity_json FROM {self._thesis_schema}.t_thesis_cards "
             f"WHERE ticker = %s AND exchange_code = %s AND strategy = %s AND direction = %s "
             f"AND validation_status = 'valid' AND expires_at > %s "
             f"ORDER BY created_at, id"
@@ -935,7 +951,9 @@ class PostgresThesisBuilderRepository:
             for row in cur.fetchall():
                 narrative = str(row["story_narrative"] or "").strip()
                 if narrative:
-                    candidates.append(StoryAssignmentCandidate(target=f"card:{row['id']}", narrative=narrative))
+                    identity = row.get("event_identity_json") or {}
+                    if compare_event_identity(result.event_identity, identity) != "different":
+                        candidates.append(StoryAssignmentCandidate(target=f"card:{row['id']}", narrative=narrative, event_identity=identity))
         return candidates
 
     def _load_oldest_collecting_window(
@@ -981,8 +999,8 @@ class PostgresThesisBuilderRepository:
         story_narrative = _story_narrative(article=article, result=result)
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_evidence_windows "
-            f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count, story_narrative) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s, %s) "
+            f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count, story_narrative, event_identity_json) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s, %s, %s) "
             f"RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative"
         )
         with conn.cursor(row_factory=dict_row) as cur:
@@ -1000,6 +1018,7 @@ class PostgresThesisBuilderRepository:
                     reprocess_run_id,
                     required_evidence_count,
                     story_narrative,
+                    Json(result.event_identity),
                 ),
             )
             return _window(cur.fetchone())
@@ -1033,8 +1052,8 @@ class PostgresThesisBuilderRepository:
                 return _window(row)
             insert_sql = (
                 f"INSERT INTO {self._thesis_schema}.t_evidence_windows "
-                f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative"
+                f"(ticker, exchange_code, strategy, direction, article_ids, analysis_ids, window_started_at, last_evidence_at, status, reprocess_run_id, required_evidence_count, event_identity_json) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'collecting', %s, %s, %s) RETURNING id, article_ids, analysis_ids, window_started_at, last_evidence_at, required_evidence_count, story_narrative"
             )
             cur.execute(
                 insert_sql,
@@ -1049,6 +1068,7 @@ class PostgresThesisBuilderRepository:
                     _to_utc(article.published_at),
                     reprocess_run_id,
                     required_evidence_count,
+                    Json(result.event_identity),
                 ),
             )
             return _window(cur.fetchone())
@@ -1108,8 +1128,8 @@ class PostgresThesisBuilderRepository:
             f"INSERT INTO {self._thesis_schema}.t_thesis_cards "
             f"(id, idempotency_key, ticker, exchange_code, direction, time_horizon, strategy, evidence, source_analysis_ids, confidence, "
             f"risk_max_loss_usd, risk_stop_condition, risk_invalidation_condition, market_context_status, market_context_as_of, market_context_snapshot, "
-            f"validation_status, validation_errors, rejection_reason_code, max_evidence_age_seconds, allowed_max_evidence_age_seconds, evidence_age_exceeded_seconds, expires_at, created_at, story_narrative) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"validation_status, validation_errors, rejection_reason_code, max_evidence_age_seconds, allowed_max_evidence_age_seconds, evidence_age_exceeded_seconds, expires_at, created_at, story_narrative, event_identity_json) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (idempotency_key) DO NOTHING"
         )
         with conn.cursor() as cur:
@@ -1141,6 +1161,7 @@ class PostgresThesisBuilderRepository:
                     _to_utc(expires_at),
                     _to_utc(created_at),
                     story_narrative,
+                    Json(result.event_identity),
                 ),
             )
             return cur.rowcount == 1

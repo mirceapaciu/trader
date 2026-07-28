@@ -88,6 +88,7 @@ class LlmAnalysisResult:
     subject_relation: SubjectRelation = SubjectRelation.NONE
     event_occurred_at: datetime | None = None
     event_type: str | None = None
+    event_identity: dict[str, Any] = field(default_factory=dict)
     price_impact_magnitude: str | None = None
     impact_horizon: str | None = None
     evidence_bullet_candidates: list[str] = field(default_factory=list)
@@ -115,6 +116,7 @@ class LlmSynthesisResult:
 class StoryAssignmentCandidate:
     target: str
     narrative: str
+    event_identity: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

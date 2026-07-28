@@ -35,6 +35,7 @@ Logical fields:
 - `allowed_max_evidence_age_seconds`: freshness limit used for validation.
 - `evidence_age_exceeded_seconds`: amount by which evidence age exceeded the freshness limit; zero or null for non-stale cards.
 - `story_narrative`: optional seed-stable story narrative copied from the evidence window that produced the card.
+- `event_identity_json`: immutable versioned identity copied from the seed analysis. It contains taxonomy/schema versions, controlled family/subtype where available, occurrence discriminators, and lossless unmapped proposals.
 - `signal_published_at`: optional timestamp when the executable signal was published.
 - `expires_at`: card expiry timestamp.
 - `created_at`: card creation timestamp.
@@ -136,6 +137,7 @@ Logical fields:
 - `strategy`: candidate thesis strategy from the validated LLM output or deterministic policy.
 - `direction`: candidate direction (`buy`, `sell`, or `hold`).
 - `event_type`: optional event classification used by event-driven analysis.
+- `event_identity_json`: the versioned replacement for free-form `event_type` as story-identity input. Unknown families/subtypes are retained as candidates and do not invalidate an analysis.
 - `event_occurred_at`: optional timestamp of the underlying reported event, extracted by the LLM from the article text (null when the text does not date the event; unparseable values degrade to null). Existing rows are null. Feeds the effective evidence timestamp used by the retention cutoff and card freshness gate (behavior spec §3.3/§5, issue 260715-03).
 - `subject_relation`: optional relationship between the article event and the instrument (`direct`, `supply_chain`, `customer_or_peer`, `macro_sector`, or `none`). Existing rows may be null; new full-analysis rows persist the parsed relation for funnel attribution.
 - `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`), anchored to the instrument's `atr_20d` (see behavior spec §3.3). Observe-only; not yet consumed by gates.
@@ -158,6 +160,7 @@ Behavioral constraints:
 - Instrument identity is the pair (`ticker`, `exchange_code`) for all downstream joins and lookups.
 - `article_id` must reference an accepted NewsFetcher article id from the event payload or NewsFetcher API response.
 - Analysis records are append-oriented for auditability.
+- `t_event_taxonomy_values` is the versioned controlled-value registry; `t_event_taxonomy_gaps` aggregates bounded unknown proposals; and `t_event_taxonomy_decisions` is the immutable operator-decision audit trail. Monitoring UI may read these through its adapter but must not write ThesisBuilder tables directly.
 - Scores and classifications must be derived from deterministic thesis-building policy for identical inputs when deterministic mode is enabled.
 - Invalid LLM output is persisted with `validation_status=rejected` and must not contribute to executable card creation.
 - Market context audit data is copied from the MarketData component API response; ThesisBuilder must not query MarketData-owned tables directly.
