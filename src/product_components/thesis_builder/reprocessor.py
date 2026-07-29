@@ -60,6 +60,7 @@ class ThesisBuilderReprocessor:
         story_scoping_enabled: bool = False,
         story_assignment_model: str | None = None,
         story_assignment_max_output_tokens: int | None = None,
+        taxonomy_revision: int = 1,
     ) -> None:
         self._dsn = dsn
         self._news_fetcher_schema = news_fetcher_schema
@@ -86,6 +87,7 @@ class ThesisBuilderReprocessor:
         self._story_scoping_enabled = story_scoping_enabled
         self._story_assignment_model = story_assignment_model
         self._story_assignment_max_output_tokens = story_assignment_max_output_tokens
+        self._taxonomy_revision = taxonomy_revision
 
     def reprocess(self, *, days_back: int, max_articles: int = 200) -> ReprocessResult:
         run_id = str(uuid.uuid4())
@@ -112,7 +114,8 @@ class ThesisBuilderReprocessor:
                 break
 
             published_at = article.published_at
-            clock = lambda published_at=published_at: published_at + timedelta(minutes=5)
+            def clock(published_at=published_at):
+                return published_at + timedelta(minutes=5)
 
             if self._listicle_prefilter_enabled:
                 pair_resolution = _resolve_instrument_pairs(
@@ -179,6 +182,7 @@ class ThesisBuilderReprocessor:
                         ticker=instrument.ticker,
                         exchange_code=instrument.exchange_code,
                         market_context_snapshot=None,
+                        taxonomy_revision=self._taxonomy_revision,
                     )
                 except TokenBudgetExhausted:
                     LOGGER.info(

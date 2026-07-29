@@ -70,6 +70,7 @@ class RegenerationProvider(Protocol):
         llm_model: str,
         required_evidence_count: int | None = None,
         evidence_collection_max_minutes: int | None = None,
+        taxonomy_revision: int | None = None,
     ) -> dict: ...
 
     def regenerate(
@@ -84,6 +85,7 @@ class RegenerationProvider(Protocol):
         card_delay_seconds: int,
         required_evidence_count: int | None = None,
         evidence_collection_max_minutes: int | None = None,
+        taxonomy_revision: int | None = None,
         progress: RegenerationProgress | None = None,
     ) -> "RegenerationResult": ...
 

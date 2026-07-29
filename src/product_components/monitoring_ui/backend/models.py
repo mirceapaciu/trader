@@ -323,6 +323,77 @@ class ThesisBuilderTaxonomyGapsResponse(BaseModel):
     generated_at: datetime
 
 
+class ThesisBuilderTaxonomyValue(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    value_id: int
+    dimension: str
+    canonical_value: str
+    display_name: str | None = None
+    description: str | None = None
+    family_scope: str | None = None
+    status: str
+
+
+class ThesisBuilderTaxonomyValuesResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    available: bool = True
+    message: str | None = None
+    values: list[ThesisBuilderTaxonomyValue] = Field(default_factory=list)
+    taxonomy_revision: int | None = None
+    generated_at: datetime
+
+
+class TaxonomyDecisionTarget(BaseModel):
+    canonical_value: str | None = None
+    display_name: str | None = None
+    description: str | None = None
+    family_scope: str | None = None
+    identity_discriminators: list[str] = Field(default_factory=list)
+
+
+class ThesisBuilderTaxonomyDecisionRequest(BaseModel):
+    gap_id: int = Field(gt=0)
+    expected_gap_status: str
+    action: Literal["map_existing", "accept_new", "reject"]
+    target: TaxonomyDecisionTarget | None = None
+    rationale: str
+    idempotency_key: str
+
+
+class ThesisBuilderTaxonomyBackfillStatus(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    job_id: int
+    status: str
+    requested_taxonomy_revision: int
+    target_taxonomy_revision: int
+    last_analysis_id: int
+    matched_count: int
+    processed_count: int
+    changed_count: int
+    skipped_count: int
+    failed_count: int
+    retry_count: int
+    error_code: str | None = None
+    started_at: datetime | None = None
+    updated_at: datetime
+    finished_at: datetime | None = None
+
+
+class ThesisBuilderTaxonomyDecisionResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    command_id: str
+    gap_id: int
+    action: str
+    status: str
+    taxonomy_revision: int | None = None
+    error_code: str | None = None
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    backfill: ThesisBuilderTaxonomyBackfillStatus | None = None
+
+
 class ThesisBuilderDeadLetterItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 

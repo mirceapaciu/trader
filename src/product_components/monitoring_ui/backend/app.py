@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Callable, TypeVar
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg
 import redis
@@ -44,6 +44,9 @@ from .models import (
     ThesisBuilderConfigResponse,
     ThesisBuilderMetricsResponse,
     ThesisBuilderTaxonomyGapsResponse,
+    ThesisBuilderTaxonomyValuesResponse,
+    ThesisBuilderTaxonomyDecisionRequest,
+    ThesisBuilderTaxonomyDecisionResponse,
     ThesisBuilderThroughputResponse,
     ThesisCardListResponse,
     ThesisReprocessRequest,
@@ -79,6 +82,10 @@ from src.product_components.thesis_builder.reprocess_gateway import (
     ReprocessRunAlreadyActive,
     ThesisReprocessGateway,
 )
+from src.product_components.thesis_builder.taxonomy_gateway import (
+    RedisTaxonomyCommandPublisher,
+    ThesisTaxonomyDecisionGateway,
+)
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
 from src.product_components.shared.instrument_lookup import (
     AlphaVantageInstrumentLookupProvider,
@@ -104,6 +111,29 @@ def _repo_root() -> Path:
 
 def _frontend_dist_dir() -> Path:
     return _repo_root() / "src" / "product_components" / "monitoring_ui" / "frontend" / "dist"
+
+
+def _trusted_taxonomy_actor(
+    *, request: Request, settings: MonitoringUiSettings
+) -> str:
+    if not settings.taxonomy_decisions_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="taxonomy_decisions_disabled",
+        )
+    header = settings.taxonomy_trusted_actor_header
+    if not header or not re.fullmatch(r"[A-Za-z0-9-]{1,80}", header):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="trusted_taxonomy_actor_unavailable",
+        )
+    actor = (request.headers.get(header) or "").strip()
+    if not actor:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="trusted_taxonomy_actor_required",
+        )
+    return actor
 
 
 def _mount_frontend(app: FastAPI) -> None:
@@ -212,6 +242,16 @@ def create_app(
             command_stream=resolved_settings.reprocess_command_queue,
         ),
     )
+    taxonomy_decision_gateway = ThesisTaxonomyDecisionGateway(
+        repository=PostgresThesisBuilderRepository(
+            dsn=resolved_settings.postgres_dsn,
+            thesis_schema=thesis_builder_settings.thesis_builder_db_schema,
+        ),
+        command_publisher=RedisTaxonomyCommandPublisher(
+            queue_url=resolved_settings.queue_url,
+            command_stream=resolved_settings.taxonomy_command_queue,
+        ),
+    )
     news_fetcher_reprocessor = NewsFetcherRejectedArticleReprocessor(
         settings=news_fetcher_settings,
         storage=PostgresNewsStorageAdapter(
@@ -227,6 +267,7 @@ def create_app(
         filter_quality_runner=FilterQualityRunCoordinator(),
         watchlist_admin=watchlist_admin,
         reprocess_gateway=reprocess_gateway,
+        taxonomy_decision_gateway=taxonomy_decision_gateway,
         news_fetcher_reprocessor=news_fetcher_reprocessor,
         backtest_runner=BacktestRunCoordinator(),
     )
@@ -370,6 +411,63 @@ def create_app(
             service.get_thesis_builder_taxonomy_gaps,
             detail="thesis-builder taxonomy gaps unavailable",
         )
+
+    @app.get(
+        "/api/thesis-builder/taxonomy-values",
+        response_model=ThesisBuilderTaxonomyValuesResponse,
+    )
+    def get_thesis_builder_taxonomy_values(
+        dimension: str = Query(min_length=1, max_length=80),
+        family_scope: str | None = Query(default=None, max_length=80),
+    ) -> ThesisBuilderTaxonomyValuesResponse:
+        return _run_with_infrastructure_mapping(
+            lambda: service.get_thesis_builder_taxonomy_values(
+                dimension=dimension,
+                family_scope=family_scope,
+            ),
+            detail="thesis-builder taxonomy values unavailable",
+        )
+
+    @app.post(
+        "/api/thesis-builder/taxonomy-decisions",
+        response_model=ThesisBuilderTaxonomyDecisionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def decide_thesis_builder_taxonomy_gap(
+        payload: ThesisBuilderTaxonomyDecisionRequest,
+        request: Request,
+    ) -> ThesisBuilderTaxonomyDecisionResponse:
+        actor = _trusted_taxonomy_actor(
+            request=request,
+            settings=resolved_settings,
+        )
+        try:
+            return _run_with_infrastructure_mapping(
+                lambda: service.decide_taxonomy_gap(payload, actor=actor),
+                detail="thesis-builder taxonomy decision unavailable",
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/thesis-builder/taxonomy-decisions/{command_id}",
+        response_model=ThesisBuilderTaxonomyDecisionResponse,
+    )
+    def get_thesis_builder_taxonomy_decision(
+        command_id: str,
+    ) -> ThesisBuilderTaxonomyDecisionResponse:
+        result = _run_with_infrastructure_mapping(
+            lambda: service.get_taxonomy_decision_status(command_id=command_id),
+            detail="thesis-builder taxonomy decision unavailable",
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="taxonomy_command_not_found",
+            )
+        return result
 
     @app.post(
         "/api/news-fetcher/reprocess-rejected",

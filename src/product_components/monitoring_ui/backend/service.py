@@ -59,6 +59,10 @@ from .models import (
     ThesisBuilderThroughputResponse,
     ThesisBuilderMetricsResponse,
     ThesisBuilderTaxonomyGapsResponse,
+    ThesisBuilderTaxonomyValuesResponse,
+    ThesisBuilderTaxonomyDecisionRequest,
+    ThesisBuilderTaxonomyDecisionResponse,
+    ThesisBuilderTaxonomyBackfillStatus,
     ThesisCardListResponse,
     ThesisCardSummary,
     ThesisReprocessRequest,
@@ -82,10 +86,32 @@ from .repository import (
 )
 from .settings import MonitoringUiSettings
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
+from src.product_components.thesis_builder.taxonomy_decisions import TaxonomyDecisionRequest
+from src.product_components.thesis_builder.taxonomy_gateway import TaxonomyCommand
 
 logger = logging.getLogger(__name__)
 
 _INFRASTRUCTURE_ERRORS = (psycopg.Error, redis.RedisError, TimeoutError)
+
+
+def _taxonomy_command_response(
+    command: TaxonomyCommand,
+) -> ThesisBuilderTaxonomyDecisionResponse:
+    backfill = None
+    if command.backfill is not None:
+        backfill = ThesisBuilderTaxonomyBackfillStatus(**command.backfill.__dict__)
+    return ThesisBuilderTaxonomyDecisionResponse(
+        command_id=command.command_id,
+        gap_id=command.gap_id,
+        action=command.action,
+        status=command.status,
+        taxonomy_revision=command.taxonomy_revision,
+        error_code=command.error_code,
+        requested_at=command.requested_at,
+        started_at=command.started_at,
+        finished_at=command.finished_at,
+        backfill=backfill,
+    )
 
 
 class MonitoringDataSource(Protocol):
@@ -133,6 +159,9 @@ class MonitoringDataSource(Protocol):
     def get_news_analyses(self, *, window_start_at: datetime, window_end_at: datetime, limit: int) -> NewsAnalysesResponse: ...
 
     def get_thesis_builder_taxonomy_gaps(self, *, limit: int = 100) -> ThesisBuilderTaxonomyGapsResponse: ...
+    def get_thesis_builder_taxonomy_values(
+        self, *, dimension: str, family_scope: str | None
+    ) -> ThesisBuilderTaxonomyValuesResponse: ...
 
     def get_backlog(self) -> BacklogResponse: ...
 
@@ -259,6 +288,11 @@ class ThesisReprocessGateway(Protocol):
     def get_run(self, *, run_id: str) -> ReprocessRunStatusLike | None: ...
 
 
+class ThesisTaxonomyDecisionGateway(Protocol):
+    def submit(self, *, request: TaxonomyDecisionRequest, actor: str) -> TaxonomyCommand: ...
+    def get(self, *, command_id: str) -> TaxonomyCommand | None: ...
+
+
 class NewsFetcherReprocessResultLike(Protocol):
     scanned_rejected_count: int
     newly_accepted_count: int
@@ -300,6 +334,7 @@ class MonitoringService:
         filter_quality_runner: FilterQualityRunner | None = None,
         watchlist_admin: SharedInstrumentLookupAdminService | None = None,
         reprocess_gateway: ThesisReprocessGateway | None = None,
+        taxonomy_decision_gateway: ThesisTaxonomyDecisionGateway | None = None,
         news_fetcher_reprocessor: NewsFetcherRejectedReprocessor | None = None,
         backtest_runner: BacktestRunner | None = None,
     ) -> None:
@@ -309,6 +344,7 @@ class MonitoringService:
         self._filter_quality_runner = filter_quality_runner
         self._watchlist_admin = watchlist_admin
         self._reprocess_gateway = reprocess_gateway
+        self._taxonomy_decision_gateway = taxonomy_decision_gateway
         self._news_fetcher_reprocessor = news_fetcher_reprocessor
         self._backtest_runner = backtest_runner
 
@@ -580,6 +616,14 @@ class MonitoringService:
                 message="ThesisBuilder taxonomy gaps are unavailable.",
                 generated_at=_utc_now(),
             )
+
+    def get_thesis_builder_taxonomy_values(
+        self, *, dimension: str, family_scope: str | None
+    ) -> ThesisBuilderTaxonomyValuesResponse:
+        return self._data_source.get_thesis_builder_taxonomy_values(
+            dimension=dimension,
+            family_scope=family_scope,
+        )
 
     def get_backlog(self) -> BacklogResponse:
         try:
@@ -870,6 +914,39 @@ class MonitoringService:
             started_at=run.started_at,
             finished_at=run.finished_at,
         )
+
+    def decide_taxonomy_gap(
+        self, payload: ThesisBuilderTaxonomyDecisionRequest, *, actor: str
+    ) -> ThesisBuilderTaxonomyDecisionResponse:
+        if self._taxonomy_decision_gateway is None:
+            raise RuntimeError("taxonomy_decision_gateway_unavailable")
+        target = payload.target
+        command = self._taxonomy_decision_gateway.submit(
+            request=TaxonomyDecisionRequest(
+                gap_id=payload.gap_id,
+                expected_gap_status=payload.expected_gap_status,
+                action=payload.action,
+                canonical_value=target.canonical_value if target else None,
+                display_name=target.display_name if target else None,
+                description=target.description if target else None,
+                family_scope=target.family_scope if target else None,
+                identity_discriminators=(
+                    tuple(target.identity_discriminators) if target else ()
+                ),
+                rationale=payload.rationale,
+                idempotency_key=payload.idempotency_key,
+            ),
+            actor=actor,
+        )
+        return _taxonomy_command_response(command)
+
+    def get_taxonomy_decision_status(
+        self, *, command_id: str
+    ) -> ThesisBuilderTaxonomyDecisionResponse | None:
+        if self._taxonomy_decision_gateway is None:
+            raise RuntimeError("taxonomy_decision_gateway_unavailable")
+        command = self._taxonomy_decision_gateway.get(command_id=command_id)
+        return _taxonomy_command_response(command) if command else None
 
     def get_backtests(self, *, window: str | None) -> BacktestRunsResponse:
         selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)

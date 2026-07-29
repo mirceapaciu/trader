@@ -38,6 +38,9 @@ class MonitoringUiSettings:
     instrument_lookup_cache_ttl_seconds: int
     instrument_alias_cache_ttl_seconds: int
     instrument_lookup_provider_debounce_ms: int
+    taxonomy_command_queue: str = "taxonomy_command_queue"
+    taxonomy_decisions_enabled: bool = False
+    taxonomy_trusted_actor_header: str = ""
 
     @property
     def postgres_dsn(self) -> str:
@@ -87,6 +90,16 @@ class MonitoringUiSettings:
             instrument_lookup_cache_ttl_seconds=_int_env("INSTRUMENT_LOOKUP_CACHE_TTL_SECONDS", 604800),
             instrument_alias_cache_ttl_seconds=_int_env("INSTRUMENT_ALIAS_CACHE_TTL_SECONDS", 86400),
             instrument_lookup_provider_debounce_ms=_int_env("INSTRUMENT_LOOKUP_PROVIDER_DEBOUNCE_MS", 300),
+            taxonomy_command_queue=os.getenv(
+                "THESIS_BUILDER_TAXONOMY_COMMAND_QUEUE",
+                "taxonomy_command_queue",
+            ),
+            taxonomy_decisions_enabled=_bool_env(
+                "UI_TAXONOMY_DECISIONS_ENABLED", False
+            ),
+            taxonomy_trusted_actor_header=os.getenv(
+                "UI_TAXONOMY_TRUSTED_ACTOR_HEADER", ""
+            ).strip(),
         )
 
 
@@ -95,6 +108,13 @@ def _int_env(key: str, default: int) -> int:
     if value is None or not value.strip():
         return default
     return int(value)
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _queue_url_from_env() -> str:

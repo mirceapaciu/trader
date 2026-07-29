@@ -4,7 +4,6 @@ import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Scatter, Toolti
 
 import {
   fetchNewsAnalyses,
-  fetchThesisBuilderTaxonomyGaps,
   fetchThesisBuilderConfig,
   fetchReprocessStatus,
   fetchThesisBuilderMetrics,
@@ -21,13 +20,13 @@ import {
   type ThesisBuilderMetricsResponse,
   type ThesisBuilderThroughputResponse,
   type ThesisBuilderEvidenceWindow,
-  type ThesisBuilderTaxonomyGap,
   type ThesisCardSummary,
   type ThesisReprocessStatusResponse,
   type ThroughputPresetWindow,
   type WindowArticle,
   type WindowArticlesResponse
 } from "../api";
+import { TaxonomyGapsPanel } from "./TaxonomyGapsPanel";
 
 const REPROCESS_TERMINAL_STATES = new Set(["completed", "failed"]);
 
@@ -377,6 +376,16 @@ function NewsAnalysesPanel({ window }: { window: ThroughputPresetWindow }) {
   });
   const selectedItem = allItems.find((item) => item.id === selectedId) ?? null;
 
+  useEffect(() => {
+    const selectLinkedAnalysis = () => {
+      const match = globalThis.location.hash.match(/^#thesis-analysis-(\d+)$/);
+      if (match) setSelectedId(Number(match[1]));
+    };
+    selectLinkedAnalysis();
+    globalThis.addEventListener("hashchange", selectLinkedAnalysis);
+    return () => globalThis.removeEventListener("hashchange", selectLinkedAnalysis);
+  }, []);
+
   return (
     <section className="panel panel-large" style={{ marginBottom: 20 }}>
       <div className="panel-heading">
@@ -446,6 +455,7 @@ function NewsAnalysesPanel({ window }: { window: ThroughputPresetWindow }) {
                 {visible.map((item) => (
                   <tr
                     key={item.id}
+                    id={`thesis-analysis-${item.id}`}
                     data-selectable
                     className={item.id === selectedId ? "selected" : undefined}
                     onClick={() => setSelectedId(item.id === selectedId ? null : item.id)}
@@ -1330,31 +1340,6 @@ function EventIdentityDetails({ identity }: { identity?: EventIdentity | null })
       </details>
     </>
   );
-}
-
-function TaxonomyGapsPanel() {
-  const query = useQuery({
-    queryKey: ["thesis-builder", "taxonomy-gaps"],
-    queryFn: fetchThesisBuilderTaxonomyGaps,
-    refetchInterval: 60000,
-  });
-  const gaps = query.data?.gaps ?? [];
-  return (
-    <section className="panel panel-large" style={{ marginBottom: 20 }}>
-      <div className="panel-heading"><div><h2>Taxonomy gaps</h2><span>Unmapped event-identity proposals requiring ThesisBuilder review</span></div></div>
-      {query.isError || (query.data && !query.data.available) ? (
-        <div className="inline-error">Taxonomy gaps unavailable.</div>
-      ) : gaps.length === 0 ? <div className="empty">No unmapped event identities.</div> : (
-        <div className="pending-list-wrap"><table><thead><tr><th>Proposal</th><th>Dimension</th><th>Seen</th><th>Status</th><th>Representative headlines</th></tr></thead><tbody>
-          {gaps.map((gap) => <TaxonomyGapRow key={gap.gap_id} gap={gap} />)}
-        </tbody></table></div>
-      )}
-    </section>
-  );
-}
-
-function TaxonomyGapRow({ gap }: { gap: ThesisBuilderTaxonomyGap }) {
-  return <tr><td><strong>{formatToken(gap.normalized_proposal)}</strong><span className="table-subtext">raw: {gap.raw_value}</span></td><td>{formatToken(gap.dimension)}</td><td>{gap.occurrence_count}</td><td><span className={gap.status === "open" ? "chip warning" : "chip"}>{formatToken(gap.status)}</span></td><td className="analysis-headline-cell">{gap.representative_headlines[0] ?? "—"}<span className="table-subtext">last seen {formatDate(gap.last_seen_at)}</span></td></tr>;
 }
 
 function stringValue(value: unknown): string | null {

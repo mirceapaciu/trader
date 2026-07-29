@@ -137,7 +137,8 @@ Logical fields:
 - `strategy`: candidate thesis strategy from the validated LLM output or deterministic policy.
 - `direction`: candidate direction (`buy`, `sell`, or `hold`).
 - `event_type`: optional event classification used by event-driven analysis.
-- `event_identity_json`: the versioned replacement for free-form `event_type` as story-identity input. Unknown families/subtypes are retained as candidates and do not invalidate an analysis.
+- `event_identity_json`: the versioned replacement for free-form `event_type` as story-identity input. Unknown families/subtypes are retained as candidates and do not invalidate an analysis. The identity and its provenance contain the integer taxonomy revision used to normalize it.
+- `taxonomy_revision`: exact positive integer revision of the event taxonomy snapshot used for this analysis. This is stored as a column as well as in `event_identity_json` so audit and replay queries do not need to infer runtime state.
 - `event_occurred_at`: optional timestamp of the underlying reported event, extracted by the LLM from the article text (null when the text does not date the event; unparseable values degrade to null). Existing rows are null. Feeds the effective evidence timestamp used by the retention cutoff and card freshness gate (behavior spec §3.3/§5, issue 260715-03).
 - `subject_relation`: optional relationship between the article event and the instrument (`direct`, `supply_chain`, `customer_or_peer`, `macro_sector`, or `none`). Existing rows may be null; new full-analysis rows persist the parsed relation for funnel attribution.
 - `price_impact_magnitude`: optional expected impact magnitude (`low`, `medium`, or `high`), anchored to the instrument's `atr_20d` (see behavior spec §3.3). Observe-only; not yet consumed by gates.
@@ -160,7 +161,11 @@ Behavioral constraints:
 - Instrument identity is the pair (`ticker`, `exchange_code`) for all downstream joins and lookups.
 - `article_id` must reference an accepted NewsFetcher article id from the event payload or NewsFetcher API response.
 - Analysis records are append-oriented for auditability.
-- `t_event_taxonomy_values` is the versioned controlled-value registry; `t_event_taxonomy_gaps` aggregates bounded unknown proposals; and `t_event_taxonomy_decisions` is the immutable operator-decision audit trail. Monitoring UI may read these through its adapter but must not write ThesisBuilder tables directly.
+- `t_event_taxonomy_values` is the revisioned controlled-value and alias registry. `effective_from_revision` is inclusive and `effective_to_revision` is exclusive; subtype rows may carry a family scope in `family_rules`.
+- `t_event_taxonomy_state` contains the one current, monotonically increasing integer `taxonomy_revision`. A revision is metadata over effective value rows, not a copied taxonomy release.
+- `t_event_taxonomy_gaps` aggregates bounded unknown proposals, and `t_event_taxonomy_decisions` is the immutable operator-decision audit trail. Monitoring UI may read these through its adapter but must not write ThesisBuilder tables directly.
+- `t_event_taxonomy_commands` durably records each authenticated operator command and its `accepted -> running -> completed|failed` lifecycle. The idempotency key is unique, the browser cannot supply the audit actor, and the completed row links the immutable decision and backfill job.
+- `t_event_taxonomy_backfill_jobs` records bounded, resumable reclassification progress with a stable analysis-ID cursor and matched/processed/changed/skipped/failed counters. Backfill updates only matching analysis identity and revision fields; it never rewrites evidence windows, published cards, review state, or signal queues.
 - Scores and classifications must be derived from deterministic thesis-building policy for identical inputs when deterministic mode is enabled.
 - Invalid LLM output is persisted with `validation_status=rejected` and must not contribute to executable card creation.
 - Market context audit data is copied from the MarketData component API response; ThesisBuilder must not query MarketData-owned tables directly.

@@ -66,6 +66,8 @@ class ThesisBuilderSettings:
 
     log_level: str = "INFO"
     log_file: str = "logs/thesis-builder.log"
+    taxonomy_command_queue: str = "taxonomy_command_queue"
+    taxonomy_backfill_batch_size: int = 100
 
     @property
     def postgres_dsn(self) -> str:
@@ -149,6 +151,13 @@ class ThesisBuilderSettings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             log_level=os.getenv("THESIS_BUILDER_LOG_LEVEL") or os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("THESIS_BUILDER_LOG_FILE", "logs/thesis-builder.log"),
+            taxonomy_command_queue=os.getenv(
+                "THESIS_BUILDER_TAXONOMY_COMMAND_QUEUE",
+                "taxonomy_command_queue",
+            ),
+            taxonomy_backfill_batch_size=_int_env(
+                "THESIS_BUILDER_TAXONOMY_BACKFILL_BATCH_SIZE", 100
+            ),
         )
 
     def log_file_path(self, repo_root: Path) -> Path | None:

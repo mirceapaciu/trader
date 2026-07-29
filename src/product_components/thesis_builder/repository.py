@@ -29,6 +29,14 @@ from .models import (
     ValidationStatus,
 )
 from .event_identity import compare_event_identity, taxonomy_gap_values
+from .taxonomy_decisions import TaxonomyDecisionRequest, TaxonomyDecisionValidationError
+from .taxonomy_gateway import TaxonomyBackfillStatus, TaxonomyCommand
+from .taxonomy_runtime import TaxonomyValue, family_rules_scope
+from .taxonomy_worker import (
+    TaxonomyBackfillAnalysis,
+    TaxonomyBackfillJob,
+    TaxonomyCommandRetryableError,
+)
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SUPPORTED_EXECUTABLE_STRATEGIES = {
@@ -160,6 +168,16 @@ class ReprocessRunRecord:
     requested_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+
+@dataclass(frozen=True)
+class TaxonomyDecisionRecord:
+    command_id: str
+    gap_id: int
+    action: str
+    status: str
+    taxonomy_revision: int | None
+    error_code: str | None = None
 
 
 class ReprocessRunAlreadyActive(RuntimeError):
@@ -408,10 +426,10 @@ class PostgresThesisBuilderRepository:
         sql = (
             f"INSERT INTO {self._thesis_schema}.t_news_analyses "
             f"(article_id, ticker, exchange_code, sentiment, relevance, urgency, suggested_action, "
-            f"strategy, direction, event_type, event_identity_json, subject_relation, event_occurred_at, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
+            f"strategy, direction, event_type, event_identity_json, taxonomy_revision, subject_relation, event_occurred_at, price_impact_magnitude, impact_horizon, reasoning, confidence, article_snapshot, "
             f"market_context_status, market_context_as_of, market_context_snapshot, fundamentals_snapshot, is_market_moving, "
             f"content_type, validation_status, validation_errors, rejection_reason_code, llm_model, tokens_used, analyzed_at) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING id"
         )
         with conn.cursor() as cur:
@@ -429,6 +447,7 @@ class PostgresThesisBuilderRepository:
                     result.direction.value,
                     result.event_type,
                     Json(result.event_identity),
+                    int(result.event_identity.get("taxonomy_revision") or 1),
                     result.subject_relation.value,
                     _to_utc(result.event_occurred_at) if result.event_occurred_at else None,
                     result.price_impact_magnitude,
@@ -1406,6 +1425,483 @@ class PostgresThesisBuilderRepository:
                 row = cur.fetchone()
         return _reprocess_run(row) if row else None
 
+    def get_taxonomy_revision(self) -> int:
+        sql = (
+            f"SELECT taxonomy_revision FROM {self._thesis_schema}."
+            "t_event_taxonomy_state WHERE singleton = TRUE"
+        )
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql)
+                row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("taxonomy_state_missing")
+        return int(row["taxonomy_revision"])
+
+    def load_taxonomy_values(
+        self, *, taxonomy_revision: int
+    ) -> tuple[TaxonomyValue, ...]:
+        if taxonomy_revision <= 0:
+            raise ValueError("invalid_taxonomy_revision")
+        sql = (
+            f"SELECT dimension, canonical_value, status, family_rules, alias_for_value "
+            f"FROM {self._thesis_schema}.t_event_taxonomy_values "
+            "WHERE effective_from_revision <= %s "
+            "AND (effective_to_revision IS NULL OR effective_to_revision > %s) "
+            "AND status IN ('active', 'mapped_alias') "
+            "ORDER BY dimension, canonical_value"
+        )
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"SELECT taxonomy_revision FROM {self._thesis_schema}."
+                    "t_event_taxonomy_state WHERE singleton = TRUE"
+                )
+                state = cur.fetchone()
+                if (
+                    state is None
+                    or taxonomy_revision > int(state["taxonomy_revision"])
+                ):
+                    raise ValueError("taxonomy_revision_unavailable")
+                cur.execute(sql, (taxonomy_revision, taxonomy_revision))
+                rows = cur.fetchall()
+        return tuple(
+            TaxonomyValue(
+                dimension=str(row["dimension"]),
+                canonical_value=str(row["canonical_value"]),
+                status=str(row["status"]),
+                family_scope=family_rules_scope(row.get("family_rules")),
+                alias_for_value=(
+                    str(row["alias_for_value"])
+                    if row.get("alias_for_value")
+                    else None
+                ),
+            )
+            for row in rows
+        )
+
+    def decide_taxonomy_gap(self, *, request: TaxonomyDecisionRequest, actor: str) -> TaxonomyDecisionRecord:
+        """Atomically resolve one open proposal and advance the integer revision once.
+
+        This is deliberately a ThesisBuilder repository operation: callers never
+        receive SQL-level access to the taxonomy tables.
+        """
+        with self._connect() as conn:
+            try:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        f"SELECT id, gap_id, action, taxonomy_revision FROM {self._thesis_schema}.t_event_taxonomy_decisions WHERE idempotency_key = %s",
+                        (request.idempotency_key,),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        return TaxonomyDecisionRecord(command_id=str(existing["id"]), gap_id=int(existing["gap_id"]), action=str(existing["action"]), status="completed", taxonomy_revision=int(existing["taxonomy_revision"]))
+                    cur.execute(
+                        f"SELECT id, dimension, normalized_proposal, status FROM {self._thesis_schema}.t_event_taxonomy_gaps WHERE id = %s FOR UPDATE",
+                        (request.gap_id,),
+                    )
+                    gap = cur.fetchone()
+                    if gap is None or gap["status"] != request.expected_gap_status:
+                        raise TaxonomyDecisionValidationError("taxonomy_gap_conflict")
+                    dimension = str(gap["dimension"])
+                    request.validate(dimension=dimension)
+                    if request.action == "map_existing":
+                        cur.execute(
+                            f"SELECT canonical_value FROM {self._thesis_schema}.t_event_taxonomy_values WHERE dimension = %s AND canonical_value = %s AND status = 'active' AND effective_to_revision IS NULL AND (%s <> 'event_subtype' OR family_rules->>'family' = %s)",
+                            (dimension, request.canonical_value, dimension, request.family_scope),
+                        )
+                        if cur.fetchone() is None:
+                            raise TaxonomyDecisionValidationError("invalid_mapping_target")
+                    elif request.action == "accept_new":
+                        cur.execute(
+                            f"SELECT 1 FROM {self._thesis_schema}.t_event_taxonomy_values WHERE dimension = %s AND canonical_value = %s AND effective_to_revision IS NULL",
+                            (dimension, request.canonical_value),
+                        )
+                        if cur.fetchone():
+                            raise TaxonomyDecisionValidationError("canonical_value_collision")
+                    cur.execute(f"SELECT taxonomy_revision FROM {self._thesis_schema}.t_event_taxonomy_state WHERE singleton = TRUE FOR UPDATE")
+                    revision = int(cur.fetchone()["taxonomy_revision"]) + 1
+                    cur.execute(f"UPDATE {self._thesis_schema}.t_event_taxonomy_state SET taxonomy_revision = %s WHERE singleton = TRUE", (revision,))
+                    new_value = {"canonical_value": request.canonical_value, "display_name": request.display_name, "description": request.description, "family_scope": request.family_scope, "identity_discriminators": list(request.identity_discriminators)}
+                    cur.execute(
+                        f"INSERT INTO {self._thesis_schema}.t_event_taxonomy_decisions (gap_id, action, actor, old_value, new_value, rationale, idempotency_key, taxonomy_revision) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                        (request.gap_id, request.action, actor[:120], Json({"proposal": gap["normalized_proposal"]}), Json(new_value), request.rationale.strip(), request.idempotency_key, revision),
+                    )
+                    decision_id = int(cur.fetchone()["id"])
+                    if request.action == "map_existing":
+                        cur.execute(
+                            f"INSERT INTO {self._thesis_schema}.t_event_taxonomy_values (dimension, canonical_value, display_name, description, status, taxonomy_version, family_rules, alias_for_value, effective_from_revision) VALUES (%s, %s, %s, %s, 'mapped_alias', 'event-taxonomy-v1', %s, %s, %s)",
+                            (dimension, str(gap["normalized_proposal"]), str(gap["normalized_proposal"]), "Operator-approved alias", Json({"family": request.family_scope} if request.family_scope else {}), request.canonical_value, revision),
+                        )
+                    elif request.action == "accept_new":
+                        cur.execute(
+                            f"INSERT INTO {self._thesis_schema}.t_event_taxonomy_values (dimension, canonical_value, display_name, description, status, taxonomy_version, family_rules, effective_from_revision) VALUES (%s, %s, %s, %s, 'active', 'event-taxonomy-v1', %s, %s)",
+                            (dimension, request.canonical_value, request.display_name, request.description, Json({"family": request.family_scope, "identity_discriminators": list(request.identity_discriminators)}), revision),
+                        )
+                    status = {"map_existing": "mapped", "accept_new": "accepted", "reject": "rejected"}[request.action]
+                    cur.execute(f"UPDATE {self._thesis_schema}.t_event_taxonomy_gaps SET status = %s, resolution = %s WHERE id = %s", (status, Json({"decision_id": decision_id, "taxonomy_revision": revision, "canonical_value": request.canonical_value}), request.gap_id))
+                    cur.execute(
+                        f"INSERT INTO {self._thesis_schema}.t_event_taxonomy_backfill_jobs "
+                        "(decision_id, requested_taxonomy_revision, taxonomy_revision) "
+                        "VALUES (%s, %s, %s)",
+                        (decision_id, revision - 1, revision),
+                    )
+                conn.commit()
+                return TaxonomyDecisionRecord(command_id=str(decision_id), gap_id=request.gap_id, action=request.action, status="completed", taxonomy_revision=revision)
+            except Exception:
+                conn.rollback()
+                raise
+
+    def submit_taxonomy_command(
+        self,
+        *,
+        command_id: str,
+        request: TaxonomyDecisionRequest,
+        actor: str,
+    ) -> tuple[TaxonomyCommand, bool]:
+        request_json = {
+            "gap_id": request.gap_id,
+            "expected_gap_status": request.expected_gap_status,
+            "action": request.action,
+            "canonical_value": request.canonical_value,
+            "display_name": request.display_name,
+            "description": request.description,
+            "family_scope": request.family_scope,
+            "identity_discriminators": list(request.identity_discriminators),
+            "rationale": request.rationale,
+            "idempotency_key": request.idempotency_key,
+        }
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"SELECT request_json FROM {self._thesis_schema}.t_event_taxonomy_commands "
+                    "WHERE idempotency_key = %s",
+                    (request.idempotency_key,),
+                )
+                existing = cur.fetchone()
+                if existing is not None:
+                    if dict(existing["request_json"]) != request_json:
+                        raise TaxonomyDecisionValidationError("idempotency_key_conflict")
+                    conn.commit()
+                    command = self.get_taxonomy_command_by_idempotency_key(
+                        idempotency_key=request.idempotency_key
+                    )
+                    assert command is not None
+                    return command, False
+                cur.execute(
+                    f"INSERT INTO {self._thesis_schema}.t_event_taxonomy_commands "
+                    "(command_id, gap_id, action, request_json, idempotency_key, actor) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (
+                        command_id,
+                        request.gap_id,
+                        request.action,
+                        Json(request_json),
+                        request.idempotency_key,
+                        actor,
+                    ),
+                )
+            conn.commit()
+        command = self.get_taxonomy_command(command_id=command_id)
+        assert command is not None
+        return command, True
+
+    def mark_taxonomy_command_publish_failed(self, *, command_id: str) -> None:
+        # Keep the command accepted. Runtime DB recovery is the durable fallback
+        # when Redis is temporarily unavailable.
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_commands "
+                    "SET error_code = 'command_publish_failed', updated_at = NOW() "
+                    "WHERE command_id = %s AND status = 'accepted'",
+                    (command_id,),
+                )
+            conn.commit()
+
+    def get_taxonomy_command_by_idempotency_key(
+        self, *, idempotency_key: str
+    ) -> TaxonomyCommand | None:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    self._taxonomy_command_status_sql()
+                    + " WHERE c.idempotency_key = %s",
+                    (idempotency_key,),
+                )
+                row = cur.fetchone()
+        return _taxonomy_command(row) if row else None
+
+    def get_taxonomy_command(self, *, command_id: str) -> TaxonomyCommand | None:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    self._taxonomy_command_status_sql()
+                    + " WHERE c.command_id = %s",
+                    (command_id,),
+                )
+                row = cur.fetchone()
+        return _taxonomy_command(row) if row else None
+
+    def claim_taxonomy_command(self, *, command_id: str) -> TaxonomyCommand | None:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_commands "
+                    "SET status = 'running', started_at = COALESCE(started_at, NOW()), "
+                    "updated_at = NOW(), error_code = NULL "
+                    "WHERE command_id = %s AND status = 'accepted' RETURNING command_id",
+                    (command_id,),
+                )
+                claimed = cur.fetchone()
+            conn.commit()
+        if claimed is None:
+            return None
+        return self.get_taxonomy_command(command_id=command_id)
+
+    def execute_taxonomy_command(self, *, command_id: str) -> TaxonomyCommand:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"SELECT request_json, actor, status FROM {self._thesis_schema}.t_event_taxonomy_commands "
+                    "WHERE command_id = %s",
+                    (command_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            raise TaxonomyDecisionValidationError("taxonomy_command_not_found")
+        if row["status"] == "completed":
+            command = self.get_taxonomy_command(command_id=command_id)
+            assert command is not None
+            return command
+        if row["status"] != "running":
+            raise TaxonomyDecisionValidationError("taxonomy_command_not_running")
+        request = _taxonomy_request(dict(row["request_json"]))
+        decision = self.decide_taxonomy_gap(request=request, actor=str(row["actor"]))
+        try:
+            with self._connect() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        f"SELECT id FROM {self._thesis_schema}.t_event_taxonomy_backfill_jobs "
+                        "WHERE decision_id = %s",
+                        (int(decision.command_id),),
+                    )
+                    backfill_row = cur.fetchone()
+                    backfill_id = int(backfill_row["id"]) if backfill_row else None
+                    cur.execute(
+                        f"UPDATE {self._thesis_schema}.t_event_taxonomy_commands "
+                        "SET status = 'completed', result_taxonomy_revision = %s, decision_id = %s, "
+                        "backfill_job_id = %s, error_code = NULL, updated_at = NOW(), finished_at = NOW() "
+                        "WHERE command_id = %s",
+                        (
+                            decision.taxonomy_revision,
+                            int(decision.command_id),
+                            backfill_id,
+                            command_id,
+                        ),
+                    )
+                conn.commit()
+        except Exception as exc:
+            raise TaxonomyCommandRetryableError(
+                "taxonomy_command_reconciliation_pending"
+            ) from exc
+        command = self.get_taxonomy_command(command_id=command_id)
+        assert command is not None
+        return command
+
+    def fail_taxonomy_command(self, *, command_id: str, error_code: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_commands "
+                    "SET status = 'failed', error_code = %s, updated_at = NOW(), finished_at = NOW() "
+                    "WHERE command_id = %s AND status = 'running'",
+                    (error_code[:80], command_id),
+                )
+            conn.commit()
+
+    def recoverable_taxonomy_command_ids(self, *, limit: int) -> list[str]:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_commands "
+                    "SET status = 'accepted', error_code = 'recovered_after_restart', updated_at = NOW() "
+                    "WHERE status = 'running' AND updated_at < NOW() - INTERVAL '5 minutes'"
+                )
+                cur.execute(
+                    f"SELECT command_id FROM {self._thesis_schema}.t_event_taxonomy_commands "
+                    "WHERE status = 'accepted' ORDER BY requested_at LIMIT %s",
+                    (max(1, min(limit, 100)),),
+                )
+                rows = cur.fetchall()
+            conn.commit()
+        return [str(row["command_id"]) for row in rows]
+
+    def claim_taxonomy_backfill_job(self) -> TaxonomyBackfillJob | None:
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_backfill_jobs "
+                    "SET status = 'accepted', retry_count = retry_count + 1, "
+                    "error_code = 'recovered_after_restart', updated_at = NOW() "
+                    "WHERE status = 'running' AND updated_at < NOW() - INTERVAL '5 minutes'"
+                )
+                cur.execute(
+                    f"WITH candidate AS ("
+                    f"SELECT j.id FROM {self._thesis_schema}.t_event_taxonomy_backfill_jobs j "
+                    "WHERE j.status = 'accepted' ORDER BY j.created_at FOR UPDATE SKIP LOCKED LIMIT 1"
+                    ") "
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_backfill_jobs j "
+                    "SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW(), error_code = NULL "
+                    "FROM candidate WHERE j.id = candidate.id RETURNING j.id, j.decision_id, "
+                    "j.requested_taxonomy_revision, j.taxonomy_revision, j.last_analysis_id"
+                )
+                job_row = cur.fetchone()
+                if job_row is None:
+                    conn.commit()
+                    return None
+                cur.execute(
+                    f"SELECT g.dimension, g.normalized_proposal "
+                    f"FROM {self._thesis_schema}.t_event_taxonomy_decisions d "
+                    f"JOIN {self._thesis_schema}.t_event_taxonomy_gaps g ON g.id = d.gap_id "
+                    "WHERE d.id = %s",
+                    (job_row["decision_id"],),
+                )
+                gap = cur.fetchone()
+            conn.commit()
+        assert gap is not None
+        return TaxonomyBackfillJob(
+            job_id=int(job_row["id"]),
+            decision_id=int(job_row["decision_id"]),
+            dimension=str(gap["dimension"]),
+            proposal=str(gap["normalized_proposal"]),
+            requested_taxonomy_revision=int(job_row["requested_taxonomy_revision"]),
+            target_taxonomy_revision=int(job_row["taxonomy_revision"]),
+            last_analysis_id=int(job_row["last_analysis_id"]),
+        )
+
+    def get_taxonomy_backfill_batch(
+        self, *, job: TaxonomyBackfillJob, batch_size: int
+    ) -> list[TaxonomyBackfillAnalysis]:
+        candidate_key = f"{job.dimension}_candidate"
+        if job.dimension == "participant_role":
+            # Participant-role candidates are arrays and need a containment query.
+            match_sql = (
+                "EXISTS (SELECT 1 FROM jsonb_array_elements("
+                "COALESCE(event_identity_json->'participants', '[]'::jsonb)"
+                ") participant WHERE participant->>'role_candidate' = %s)"
+            )
+        else:
+            match_sql = "event_identity_json->>%s = %s"
+        params: tuple[Any, ...]
+        if job.dimension == "participant_role":
+            params = (job.last_analysis_id, job.proposal, max(1, min(batch_size, 1000)))
+        else:
+            params = (
+                job.last_analysis_id,
+                candidate_key,
+                job.proposal,
+                max(1, min(batch_size, 1000)),
+            )
+        with self._connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"SELECT id, event_identity_json FROM {self._thesis_schema}.t_news_analyses "
+                    f"WHERE id > %s AND {match_sql} ORDER BY id LIMIT %s",
+                    params,
+                )
+                rows = cur.fetchall()
+        return [
+            TaxonomyBackfillAnalysis(
+                analysis_id=int(row["id"]),
+                event_identity=dict(row["event_identity_json"] or {}),
+            )
+            for row in rows
+        ]
+
+    def persist_taxonomy_backfill_batch(
+        self,
+        *,
+        job: TaxonomyBackfillJob,
+        rows: list[tuple[int, dict[str, Any], bool]],
+        failed_count: int,
+        complete: bool,
+    ) -> None:
+        last_analysis_id = max((row[0] for row in rows), default=job.last_analysis_id)
+        changed_count = sum(1 for _, _, changed in rows if changed)
+        skipped_count = len(rows) - changed_count
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for analysis_id, identity, changed in rows:
+                    if changed:
+                        cur.execute(
+                            f"UPDATE {self._thesis_schema}.t_news_analyses "
+                            "SET event_identity_json = %s, taxonomy_revision = %s "
+                            "WHERE id = %s",
+                            (Json(identity), job.target_taxonomy_revision, analysis_id),
+                        )
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_backfill_jobs "
+                    "SET status = %s, last_analysis_id = %s, "
+                    "matched_count = matched_count + %s, processed_count = processed_count + %s, "
+                    "changed_count = changed_count + %s, skipped_count = skipped_count + %s, "
+                    "failed_count = failed_count + %s, affected_rows = affected_rows + %s, "
+                    "updated_at = NOW(), finished_at = CASE WHEN %s THEN NOW() ELSE finished_at END "
+                    "WHERE id = %s AND status = 'running'",
+                    (
+                        "completed" if complete else "accepted",
+                        last_analysis_id,
+                        len(rows) + failed_count,
+                        len(rows) - failed_count,
+                        changed_count,
+                        skipped_count,
+                        failed_count,
+                        changed_count,
+                        complete,
+                        job.job_id,
+                    ),
+                )
+            conn.commit()
+
+    def fail_taxonomy_backfill_job(self, *, job_id: int, error_code: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_backfill_jobs "
+                    "SET status = 'failed', retry_count = retry_count + 1, error_code = %s, "
+                    "updated_at = NOW(), finished_at = NOW() WHERE id = %s",
+                    (error_code[:80], job_id),
+                )
+            conn.commit()
+
+    def retry_taxonomy_backfill_job(self, *, job_id: int) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self._thesis_schema}.t_event_taxonomy_backfill_jobs "
+                    "SET status = 'accepted', error_code = NULL, finished_at = NULL, updated_at = NOW() "
+                    "WHERE id = %s AND status = 'failed'",
+                    (job_id,),
+                )
+                changed = cur.rowcount == 1
+            conn.commit()
+        return changed
+
+    def _taxonomy_command_status_sql(self) -> str:
+        return (
+            "SELECT c.command_id, c.gap_id, c.action, c.status, "
+            "c.result_taxonomy_revision, c.error_code, c.requested_at, c.started_at, c.finished_at, "
+            "j.id AS job_id, j.status AS job_status, j.requested_taxonomy_revision, "
+            "j.taxonomy_revision AS target_taxonomy_revision, j.last_analysis_id, "
+            "j.matched_count, j.processed_count, j.changed_count, j.skipped_count, "
+            "j.failed_count, j.retry_count, j.error_code AS job_error_code, "
+            "j.started_at AS job_started_at, j.updated_at AS job_updated_at, "
+            "j.finished_at AS job_finished_at "
+            f"FROM {self._thesis_schema}.t_event_taxonomy_commands c "
+            f"LEFT JOIN {self._thesis_schema}.t_event_taxonomy_backfill_jobs j "
+            "ON j.id = c.backfill_job_id"
+        )
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._dsn, autocommit=False)
 
@@ -1423,6 +1919,59 @@ def _reprocess_run(row: dict[str, Any]) -> ReprocessRunRecord:
         requested_at=row["requested_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+    )
+
+
+def _taxonomy_request(payload: dict[str, Any]) -> TaxonomyDecisionRequest:
+    return TaxonomyDecisionRequest(
+        gap_id=int(payload["gap_id"]),
+        expected_gap_status=str(payload["expected_gap_status"]),
+        action=str(payload["action"]),
+        canonical_value=payload.get("canonical_value"),
+        display_name=payload.get("display_name"),
+        description=payload.get("description"),
+        family_scope=payload.get("family_scope"),
+        identity_discriminators=tuple(payload.get("identity_discriminators") or ()),
+        rationale=str(payload["rationale"]),
+        idempotency_key=str(payload["idempotency_key"]),
+    )
+
+
+def _taxonomy_command(row: dict[str, Any]) -> TaxonomyCommand:
+    backfill = None
+    if row["job_id"] is not None:
+        backfill = TaxonomyBackfillStatus(
+            job_id=int(row["job_id"]),
+            status=str(row["job_status"]),
+            requested_taxonomy_revision=int(row["requested_taxonomy_revision"]),
+            target_taxonomy_revision=int(row["target_taxonomy_revision"]),
+            last_analysis_id=int(row["last_analysis_id"]),
+            matched_count=int(row["matched_count"]),
+            processed_count=int(row["processed_count"]),
+            changed_count=int(row["changed_count"]),
+            skipped_count=int(row["skipped_count"]),
+            failed_count=int(row["failed_count"]),
+            retry_count=int(row["retry_count"]),
+            error_code=row["job_error_code"],
+            started_at=row["job_started_at"],
+            updated_at=row["job_updated_at"],
+            finished_at=row["job_finished_at"],
+        )
+    return TaxonomyCommand(
+        command_id=str(row["command_id"]),
+        gap_id=int(row["gap_id"]),
+        action=str(row["action"]),
+        status=str(row["status"]),
+        taxonomy_revision=(
+            int(row["result_taxonomy_revision"])
+            if row["result_taxonomy_revision"] is not None
+            else None
+        ),
+        error_code=row["error_code"],
+        requested_at=row["requested_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        backfill=backfill,
     )
 
 

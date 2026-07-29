@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import inspect
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -89,10 +90,17 @@ class BacktesterService:
             raise RuntimeError("regeneration_provider_unavailable")
 
         sim_schema = sim_schema_name(params.run_id)
-        thesis_config = self._regeneration.thesis_config_snapshot(
-            llm_model=params.llm_model,
-            required_evidence_count=params.required_evidence_count,
-            evidence_collection_max_minutes=params.evidence_collection_max_minutes,
+        config_kwargs = {
+            "llm_model": params.llm_model,
+            "required_evidence_count": params.required_evidence_count,
+            "evidence_collection_max_minutes": params.evidence_collection_max_minutes,
+        }
+        config_method = self._regeneration.thesis_config_snapshot
+        if "taxonomy_revision" in inspect.signature(config_method).parameters:
+            config_kwargs["taxonomy_revision"] = params.taxonomy_revision
+        thesis_config = config_method(**config_kwargs)
+        thesis_config.setdefault(
+            "taxonomy_revision", params.taxonomy_revision or 1
         )
         token_budget = params.llm_max_tokens_per_run
         snapshot_hash = _regeneration_dataset_hash(params=params, thesis_config=thesis_config)
@@ -128,7 +136,7 @@ class BacktesterService:
                 params.ideal_fetch_delay_seconds + params.ideal_thesis_delay_seconds
             )
             LOGGER.info("regeneration analysis starting run_id=%s sim_schema=%s", params.run_id, sim_schema)
-            regen = self._regeneration.regenerate(
+            regenerate_kwargs = dict(
                 run_id=params.run_id,
                 sim_schema=sim_schema,
                 window_start_at=params.window_start_at,
@@ -142,6 +150,12 @@ class BacktesterService:
                     "regenerating", done, total, ticker
                 ),
             )
+            regenerate_method = self._regeneration.regenerate
+            if "taxonomy_revision" in inspect.signature(regenerate_method).parameters:
+                regenerate_kwargs["taxonomy_revision"] = int(
+                    thesis_config["taxonomy_revision"]
+                )
+            regen = regenerate_method(**regenerate_kwargs)
             LOGGER.info(
                 "regeneration analysis done run_id=%s articles=%d analyses=%d cards=%d budget_exhausted=%s",
                 params.run_id,

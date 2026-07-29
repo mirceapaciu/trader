@@ -41,6 +41,9 @@ vi.mock("../api", async () => {
 describe("ThesisBuilderTab", () => {
   beforeEach(() => {
     useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
+      if (options?.queryKey?.includes("taxonomy-gaps")) {
+        return { data: { available: true, gaps: [], generated_at: "2026-06-16T10:00:00Z" }, isError: false, error: null };
+      }
       if (options?.queryKey?.includes("reprocess")) {
         return { data: undefined, error: null };
       }
@@ -52,9 +55,6 @@ describe("ThesisBuilderTab", () => {
       }
       if (options?.queryKey?.includes("analyses")) {
         return analysesQueryResult;
-      }
-      if (options?.queryKey?.includes("taxonomy-gaps")) {
-        return { data: { available: true, gaps: [], generated_at: "2026-06-16T10:00:00Z" }, isError: false, error: null };
       }
       return metricsQueryResult;
     });
@@ -325,6 +325,9 @@ describe("ThesisBuilderTab", () => {
       },
     };
     useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
+      if (options?.queryKey?.includes("taxonomy-gaps")) {
+        return { data: { available: true, gaps: [], generated_at: "2026-06-16T10:00:00Z" }, isError: false, error: null };
+      }
       if (options?.queryKey?.includes("reprocess")) {
         return { data: undefined, error: null };
       }
@@ -451,6 +454,9 @@ describe("ThesisBuilderTab", () => {
           isError: false,
           error: null,
         };
+      }
+      if (options?.queryKey?.includes("taxonomy-gaps")) {
+        return { data: { available: true, gaps: [], generated_at: "2026-06-16T10:00:00Z" }, isError: false, error: null };
       }
       if (options?.queryKey?.includes("analyses")) {
         return analysesQueryResult;

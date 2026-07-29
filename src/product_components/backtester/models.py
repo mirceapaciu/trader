@@ -137,6 +137,9 @@ class BacktestRunParams:
     # analysis. Ignored in replay mode. Defaults to the production model.
     llm_model: str = "gpt-4o-mini"
     llm_max_tokens_per_run: int = 500000
+    # Regeneration mode only. None selects and records the latest committed
+    # event taxonomy revision; an integer enables exact historical replay.
+    taxonomy_revision: int | None = None
     # Regeneration mode only: ThesisBuilder evidence thresholds. None means use the
     # production ThesisBuilder default. Overriding lets an operator explore how many
     # cards a wider/looser evidence policy would have produced over the window.

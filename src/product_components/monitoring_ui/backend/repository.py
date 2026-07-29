@@ -47,6 +47,8 @@ from .models import (
     ThesisBuilderMetricsResponse,
     ThesisBuilderTaxonomyGap,
     ThesisBuilderTaxonomyGapsResponse,
+    ThesisBuilderTaxonomyValue,
+    ThesisBuilderTaxonomyValuesResponse,
     ThesisBuilderDeadLetterItem,
     ThesisBuilderEvidenceWindow,
     ThesisCardSummary,
@@ -727,6 +729,50 @@ class PostgresRedisMonitoringDataSource:
                 )
                 for row in rows
             ],
+            generated_at=generated_at,
+        )
+
+    def get_thesis_builder_taxonomy_values(
+        self, *, dimension: str, family_scope: str | None
+    ) -> ThesisBuilderTaxonomyValuesResponse:
+        generated_at = _utc_now()
+        sql = (
+            f"SELECT v.id, v.dimension, v.canonical_value, v.display_name, v.description, "
+            f"v.family_rules->>'family' AS family_scope, v.status, s.taxonomy_revision "
+            f"FROM {self._thesis_builder_schema}.t_event_taxonomy_values v "
+            f"CROSS JOIN {self._thesis_builder_schema}.t_event_taxonomy_state s "
+            "WHERE s.singleton = TRUE AND v.dimension = %s AND v.status = 'active' "
+            "AND v.effective_from_revision <= s.taxonomy_revision "
+            "AND (v.effective_to_revision IS NULL OR v.effective_to_revision > s.taxonomy_revision) "
+            "AND (%s::text IS NULL OR v.family_rules->>'family' = %s::text) "
+            "ORDER BY v.display_name, v.canonical_value"
+        )
+        try:
+            with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (dimension, family_scope, family_scope))
+                rows = cur.fetchall()
+        except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
+            return ThesisBuilderTaxonomyValuesResponse(
+                available=False,
+                message="ThesisBuilder taxonomy values are unavailable.",
+                generated_at=generated_at,
+            )
+        return ThesisBuilderTaxonomyValuesResponse(
+            values=[
+                ThesisBuilderTaxonomyValue(
+                    value_id=int(row["id"]),
+                    dimension=str(row["dimension"]),
+                    canonical_value=str(row["canonical_value"]),
+                    display_name=row["display_name"],
+                    description=row["description"],
+                    family_scope=row["family_scope"],
+                    status=str(row["status"]),
+                )
+                for row in rows
+            ],
+            taxonomy_revision=(
+                int(rows[0]["taxonomy_revision"]) if rows else None
+            ),
             generated_at=generated_at,
         )
 

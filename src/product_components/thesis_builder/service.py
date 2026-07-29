@@ -8,7 +8,6 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Protocol
 
-from src.core_components.event_ingestion_engine.errors import TransientPublishError
 from src.product_components.shared.adapters import (
     PostgresSharedInstrumentRegistry,
     PostgresSharedThesisCardReviewWriter,
@@ -21,6 +20,9 @@ from .models import ContentType, InstrumentIdentity, LlmTriageResult, NewsArticl
 from .redis_io import NewsStreamMessage, RedisThesisBuilderIo, ReprocessCommandMessage
 from .repository import PostgresThesisBuilderRepository
 from .settings import ThesisBuilderSettings
+from .taxonomy_worker import TaxonomyBackfillWorker, TaxonomyCommandWorker
+from .event_identity import DEFAULT_TAXONOMY_SNAPSHOT, renormalize_event_identity
+from .taxonomy_runtime import EventTaxonomySnapshotProvider
 
 LOGGER = logging.getLogger("thesis_builder.service")
 
@@ -79,6 +81,8 @@ class ThesisBuilderRunner:
         instrument_registry: InstrumentRegistry | None = None,
         review_writer: ThesisCardReviewWriter | None = None,
         reprocessor_factory: Callable[[], "ReprocessorProtocol"] | None = None,
+        taxonomy_command_worker: TaxonomyCommandWorker | None = None,
+        taxonomy_backfill_worker: TaxonomyBackfillWorker | None = None,
     ) -> None:
         self._settings = settings
         synthesis_client = None
@@ -112,6 +116,15 @@ class ThesisBuilderRunner:
             card_synthesizer=synthesis_client,
             story_assigner=story_assigner,
         )
+        self._taxonomy_provider = (
+            EventTaxonomySnapshotProvider(
+                source=self._repository,
+                baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+            )
+            if hasattr(self._repository, "get_taxonomy_revision")
+            and hasattr(self._repository, "load_taxonomy_values")
+            else None
+        )
         self._redis = redis_io or RedisThesisBuilderIo(
             queue_url=settings.queue_url,
             news_raw_queue=settings.news_raw_queue,
@@ -120,12 +133,27 @@ class ThesisBuilderRunner:
             consumer_group=settings.consumer_group,
             consumer_name=settings.consumer_name,
             reprocess_command_queue=settings.reprocess_command_queue,
+            taxonomy_command_queue=settings.taxonomy_command_queue,
             claim_min_idle_ms=max(0, settings.claim_min_idle_seconds) * 1000,
         )
         self._reprocessor_factory = reprocessor_factory
         self._reprocess_lock = threading.Lock()
         self._reprocess_active = False
         self._reprocess_thread: threading.Thread | None = None
+        self._taxonomy_command_worker = taxonomy_command_worker or TaxonomyCommandWorker(
+            repository=self._repository
+        )
+        self._taxonomy_backfill_worker = taxonomy_backfill_worker
+        if self._taxonomy_backfill_worker is None and self._taxonomy_provider is not None:
+            provider = self._taxonomy_provider
+            self._taxonomy_backfill_worker = TaxonomyBackfillWorker(
+                repository=self._repository,
+                normalize=lambda identity, revision: renormalize_event_identity(
+                    identity,
+                    taxonomy=provider.get(revision),
+                ),
+                batch_size=settings.taxonomy_backfill_batch_size,
+            )
         self._analyzer = analyzer or ThesisAnalyzer(
             client=OpenAIThesisClient(
                 api_key=settings.openai_api_key,
@@ -137,6 +165,7 @@ class ThesisBuilderRunner:
             max_tokens_per_item=settings.llm_max_output_tokens,
             triage_model=settings.triage_model,
             triage_max_output_tokens=settings.triage_max_output_tokens,
+            taxonomy_snapshot_provider=self._taxonomy_provider,
         )
         self._market_context_client = market_context_client
         self._instrument_registry = instrument_registry or PostgresSharedInstrumentRegistry(
@@ -157,6 +186,10 @@ class ThesisBuilderRunner:
             try:
                 processed = self.run_once()
                 self.poll_reprocess_commands()
+                self.poll_taxonomy_commands()
+                self._taxonomy_command_worker.recover(limit=1)
+                if self._taxonomy_backfill_worker is not None:
+                    self._taxonomy_backfill_worker.run_batch()
                 now = time.monotonic()
                 if processed == 0 and now - last_heartbeat >= self._settings.heartbeat_interval_seconds:
                     self._log_heartbeat()
@@ -187,6 +220,14 @@ class ThesisBuilderRunner:
         commands = self._redis.read_reprocess_commands(count=1, block_ms=0)
         for command in commands:
             self._handle_reprocess_command(command)
+        return len(commands)
+
+    def poll_taxonomy_commands(self) -> int:
+        """Execute durable taxonomy commands and acknowledge only afterward."""
+        commands = self._redis.read_taxonomy_commands(count=1, block_ms=0)
+        for command in commands:
+            self._taxonomy_command_worker.process(command_id=command.command_id)
+            self._redis.ack_taxonomy(command.message_id)
         return len(commands)
 
     def _handle_reprocess_command(self, command: ReprocessCommandMessage) -> None:
@@ -268,6 +309,11 @@ class ThesisBuilderRunner:
             story_scoping_enabled=self._settings.story_scoping_enabled,
             story_assignment_model=self._settings.story_assignment_model,
             story_assignment_max_output_tokens=self._settings.story_assignment_max_output_tokens,
+            taxonomy_revision=(
+                self._taxonomy_provider.get().revision
+                if self._taxonomy_provider is not None
+                else 1
+            ),
         )
 
     def status(self) -> ThesisBuilderRuntimeStatus:

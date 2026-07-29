@@ -19,6 +19,12 @@ class ReprocessCommandMessage:
 
 
 @dataclass(frozen=True)
+class TaxonomyCommandMessage:
+    message_id: str
+    command_id: str
+
+
+@dataclass(frozen=True)
 class NewsStreamMessage:
     message_id: str
     event_id: str
@@ -91,6 +97,7 @@ class RedisThesisBuilderIo:
         consumer_group: str,
         consumer_name: str,
         reprocess_command_queue: str | None = None,
+        taxonomy_command_queue: str | None = None,
         claim_min_idle_ms: int = 300_000,
     ) -> None:
         self._client = redis.from_url(queue_url, decode_responses=True)
@@ -101,6 +108,8 @@ class RedisThesisBuilderIo:
         self._consumer_name = consumer_name
         self._reprocess_command_queue = reprocess_command_queue
         self._reprocess_group = f"{consumer_group}_reprocess"
+        self._taxonomy_command_queue = taxonomy_command_queue
+        self._taxonomy_group = f"{consumer_group}_taxonomy"
         self._claim_min_idle_ms = claim_min_idle_ms
         self._claim_cursor = "0-0"
 
@@ -114,6 +123,9 @@ class RedisThesisBuilderIo:
         if self._reprocess_command_queue:
             self._ensure_stream(self._reprocess_command_queue)
             self._ensure_group(self._reprocess_command_queue, self._reprocess_group)
+        if self._taxonomy_command_queue:
+            self._ensure_stream(self._taxonomy_command_queue)
+            self._ensure_group(self._taxonomy_command_queue, self._taxonomy_group)
 
     def _ensure_group(self, stream_name: str, group_name: str) -> None:
         try:
@@ -153,6 +165,36 @@ class RedisThesisBuilderIo:
         if not self._reprocess_command_queue:
             return
         self._client.xack(self._reprocess_command_queue, self._reprocess_group, message_id)
+
+    def read_taxonomy_commands(
+        self, *, count: int, block_ms: int
+    ) -> list[TaxonomyCommandMessage]:
+        if not self._taxonomy_command_queue:
+            return []
+        pending = self._client.xreadgroup(
+            groupname=self._taxonomy_group,
+            consumername=self._consumer_name,
+            streams={self._taxonomy_command_queue: "0"},
+            count=count,
+            block=0,
+        )
+        commands = _taxonomy_commands(pending)
+        if commands:
+            return commands
+        response = self._client.xreadgroup(
+            groupname=self._taxonomy_group,
+            consumername=self._consumer_name,
+            streams={self._taxonomy_command_queue: ">"},
+            count=count,
+            block=_block_arg(block_ms),
+        )
+        return _taxonomy_commands(response)
+
+    def ack_taxonomy(self, message_id: str) -> None:
+        if self._taxonomy_command_queue:
+            self._client.xack(
+                self._taxonomy_command_queue, self._taxonomy_group, message_id
+            )
 
     def read(self, *, count: int, block_ms: int) -> list[NewsStreamMessage]:
         pending_response = self._client.xreadgroup(
@@ -350,6 +392,21 @@ def _reprocess_commands(response) -> list[ReprocessCommandMessage]:
                     message_id=message_id,
                     run_id=run_id,
                     days_back=days_back,
+                )
+            )
+    return commands
+
+
+def _taxonomy_commands(response) -> list[TaxonomyCommandMessage]:
+    commands: list[TaxonomyCommandMessage] = []
+    for _stream_name, entries in response:
+        for message_id, fields in entries:
+            if not fields or not fields.get("command_id"):
+                continue
+            commands.append(
+                TaxonomyCommandMessage(
+                    message_id=str(message_id),
+                    command_id=str(fields["command_id"]),
                 )
             )
     return commands

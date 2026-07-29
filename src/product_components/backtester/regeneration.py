@@ -22,6 +22,12 @@ from src.product_components.thesis_builder.regeneration import (
 )
 from src.product_components.thesis_builder.service import InstrumentRegistry
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
+from src.product_components.thesis_builder.event_identity import (
+    DEFAULT_TAXONOMY_SNAPSHOT,
+)
+from src.product_components.thesis_builder.taxonomy_runtime import (
+    EventTaxonomySnapshotProvider,
+)
 
 from .clients import CardsProvider, RegenerationProgress
 from .llm_analysis_cache import CachedThesisLlmClient, PostgresLlmAnalysisCache
@@ -31,6 +37,16 @@ LOGGER = logging.getLogger("backtester.regeneration")
 # Calendar days of daily bars pulled to reconstruct point-in-time market context.
 # Enough to cover the longest lookback feature (50d SMA) with weekend/holiday slack.
 _CONTEXT_LOOKBACK_DAYS = 90
+
+
+class _RevisionOneTaxonomySource:
+    def get_taxonomy_revision(self) -> int:
+        return 1
+
+    def load_taxonomy_values(self, *, taxonomy_revision: int) -> tuple:
+        if taxonomy_revision != 1:
+            raise ValueError("taxonomy_revision_unavailable")
+        return ()
 
 
 class ThesisRegenerationProvider:
@@ -62,6 +78,7 @@ class ThesisRegenerationProvider:
         # Overridable so tests can inject a deterministic client; production builds
         # the real OpenAI client from ThesisBuilder settings.
         self._llm_client_factory = llm_client_factory
+        self._taxonomy_snapshot_provider: EventTaxonomySnapshotProvider | None = None
 
     def thesis_config_snapshot(
         self,
@@ -69,6 +86,7 @@ class ThesisRegenerationProvider:
         llm_model: str,
         required_evidence_count: int | None = None,
         evidence_collection_max_minutes: int | None = None,
+        taxonomy_revision: int | None = None,
     ) -> dict:
         s = self._thesis_settings
         thresholds = self._resolve_thresholds(
@@ -77,9 +95,11 @@ class ThesisRegenerationProvider:
         )
         # Records the EFFECTIVE thresholds (after applying any per-run overrides) so
         # the run is reproducible and auditable.
+        snapshot = self._taxonomy_provider().get(taxonomy_revision)
         return {
             "llm_model": llm_model,
             "llm_max_output_tokens": s.llm_max_output_tokens,
+            "taxonomy_revision": snapshot.revision,
             "required_evidence_count": thresholds.required_evidence_count,
             "min_confidence": s.min_confidence,
             "min_relevance": s.min_relevance,
@@ -160,6 +180,7 @@ class ThesisRegenerationProvider:
         card_delay_seconds: int,
         required_evidence_count: int | None = None,
         evidence_collection_max_minutes: int | None = None,
+        taxonomy_revision: int | None = None,
         progress: RegenerationProgress | None = None,
     ) -> RegenerationResult:
         # Late import to avoid a module import cycle (repository -> nothing heavy,
@@ -214,6 +235,8 @@ class ThesisRegenerationProvider:
             max_tokens_per_item=s.llm_max_output_tokens,
             triage_model=s.triage_model,
             triage_max_output_tokens=s.triage_max_output_tokens,
+            taxonomy_snapshot_provider=self._taxonomy_provider(),
+            taxonomy_revision=taxonomy_revision,
         )
         thresholds = self._resolve_thresholds(
             required_evidence_count=required_evidence_count,
@@ -245,6 +268,29 @@ class ThesisRegenerationProvider:
             llm_cache_hits=client.cache_hits,
             llm_calls=client.llm_calls,
         )
+
+    def _taxonomy_provider(self) -> EventTaxonomySnapshotProvider:
+        if self._taxonomy_snapshot_provider is None:
+            from src.product_components.thesis_builder.repository import (
+                PostgresThesisBuilderRepository,
+            )
+
+            schema = getattr(
+                self._thesis_settings, "thesis_builder_db_schema", None
+            )
+            source = (
+                PostgresThesisBuilderRepository(
+                    dsn=self._dsn,
+                    thesis_schema=schema,
+                )
+                if schema
+                else _RevisionOneTaxonomySource()
+            )
+            self._taxonomy_snapshot_provider = EventTaxonomySnapshotProvider(
+                source=source,
+                baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+            )
+        return self._taxonomy_snapshot_provider
 
     def cards_provider(self, *, sim_schema: str) -> CardsProvider:
         return ThesisCardHistoryExporter(dsn=self._dsn, thesis_schema=sim_schema)

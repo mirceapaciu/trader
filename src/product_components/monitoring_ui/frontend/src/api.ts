@@ -137,6 +137,10 @@ export type ThesisBuilderTaxonomyGap = {
   first_seen_at: string;
   last_seen_at: string;
   status: string;
+  family_scope?: string | null;
+  command_id?: string | null;
+  decision_action?: string | null;
+  decided_at?: string | null;
   representative_analysis_ids: number[];
   representative_headlines: string[];
 };
@@ -145,6 +149,62 @@ export type ThesisBuilderTaxonomyGapsResponse = {
   available: boolean;
   message?: string | null;
   gaps: ThesisBuilderTaxonomyGap[];
+  generated_at: string;
+};
+
+export type ThesisBuilderTaxonomyDecisionRequest = {
+  gap_id: number;
+  expected_gap_status: string;
+  action: "map_existing" | "accept_new" | "reject";
+  target?: {
+    canonical_value?: string;
+    display_name?: string;
+    description?: string;
+    family_scope?: string | null;
+    identity_discriminators?: string[];
+    rejection_reason?: string;
+  };
+  rationale: string;
+  idempotency_key: string;
+};
+
+export type ThesisBuilderTaxonomyBackfillStatus = {
+  job_id?: number | string | null;
+  status: "accepted" | "running" | "completed" | "failed" | string;
+  matched_count?: number | null;
+  processed_count?: number | null;
+  changed_count?: number | null;
+  skipped_count?: number | null;
+  failed_count?: number | null;
+  error_code?: string | null;
+};
+
+export type ThesisBuilderTaxonomyDecisionResponse = {
+  command_id: string;
+  gap_id: number;
+  action: string;
+  status: string;
+  taxonomy_revision?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  backfill?: ThesisBuilderTaxonomyBackfillStatus | null;
+};
+
+export type ThesisBuilderTaxonomyValue = {
+  value_id?: number;
+  dimension: string;
+  canonical_value: string;
+  display_name?: string | null;
+  description?: string | null;
+  family_scope?: string | null;
+  status?: string;
+};
+
+export type ThesisBuilderTaxonomyValuesResponse = {
+  available: boolean;
+  message?: string | null;
+  values: ThesisBuilderTaxonomyValue[];
+  taxonomy_revision?: number | null;
   generated_at: string;
 };
 
@@ -989,6 +1049,31 @@ export function fetchNewsAnalyses(params: { window: ThroughputPresetWindow; limi
 
 export function fetchThesisBuilderTaxonomyGaps(): Promise<ThesisBuilderTaxonomyGapsResponse> {
   return getJson<ThesisBuilderTaxonomyGapsResponse>("/api/thesis-builder/taxonomy-gaps");
+}
+
+export function fetchThesisBuilderTaxonomyValues(params: {
+  dimension: string;
+  familyScope?: string | null;
+}): Promise<ThesisBuilderTaxonomyValuesResponse> {
+  const query = new URLSearchParams({ dimension: params.dimension });
+  if (params.familyScope) query.set("family_scope", params.familyScope);
+  return getJson<ThesisBuilderTaxonomyValuesResponse>(
+    `/api/thesis-builder/taxonomy-values?${query.toString()}`
+  );
+}
+
+export function decideThesisBuilderTaxonomyGap(
+  payload: ThesisBuilderTaxonomyDecisionRequest
+): Promise<ThesisBuilderTaxonomyDecisionResponse> {
+  return postJson<ThesisBuilderTaxonomyDecisionResponse>("/api/thesis-builder/taxonomy-decisions", payload);
+}
+
+export function fetchThesisBuilderTaxonomyDecision(
+  commandId: string
+): Promise<ThesisBuilderTaxonomyDecisionResponse> {
+  return getJson<ThesisBuilderTaxonomyDecisionResponse>(
+    `/api/thesis-builder/taxonomy-decisions/${encodeURIComponent(commandId)}`
+  );
 }
 
 export function fetchFetchedArticles(params: { window: ThroughputPresetWindow; limit?: number }): Promise<FetchedArticlesResponse> {

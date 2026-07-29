@@ -327,7 +327,19 @@ Signal payload requirements:
 
 Hold or rejected outcomes may be persisted for audit, but they are not executable trading signals.
 
-## 9. Failure Handling
+## 9. Runtime event-taxonomy snapshots
+
+ThesisBuilder owns loading the event taxonomy used by analysis:
+
+- Normalization receives one immutable snapshot explicitly and performs no database I/O.
+- Live analysis checks the latest committed integer revision between articles. Each article keeps the snapshot with which it started.
+- Reprocess and regeneration select one revision explicitly. Regeneration records it in the ThesisBuilder configuration snapshot, and the revision is part of the analysis prompt and therefore the LLM cache key.
+- A requested historical revision is reconstructed from values and aliases effective at that revision; full taxonomy copies are not stored.
+- Accepted canonical values and mapped aliases become effective for the next live analysis without a process deployment.
+- Snapshot replacement is atomic. A transient database failure retains the last valid loaded snapshot rather than substituting an empty taxonomy.
+- Family-scoped subtypes resolve only under their configured event family.
+
+## 10. Failure Handling
 
 ThesisBuilder must fail closed:
 - Missing or invalid evidence creates no executable card.
@@ -339,7 +351,7 @@ ThesisBuilder must fail closed:
 
 Failures should include concise machine-readable error codes and enough context to inspect the affected article, instrument, and evidence window.
 
-## 10. Source Organization
+## 11. Source Organization
 
 Default implementation placement:
 - Process entry point: `src/product_components/thesis_builder`.
@@ -350,7 +362,7 @@ Default implementation placement:
 
 ThesisBuilder is a product component. It may depend on reusable core components, but core components must not depend on ThesisBuilder.
 
-## 11. Acceptance Criteria
+## 12. Acceptance Criteria
 
 Implementation is acceptable when all are true:
 - Accepted news can produce durable analysis records without producing trades prematurely.
@@ -362,7 +374,7 @@ Implementation is acceptable when all are true:
 - Duplicate message delivery does not create duplicate executable cards.
 - Required unit and integration tests pass.
 
-## 12. Minimum Test Plan
+## 13. Minimum Test Plan
 
 Unit tests:
 - Component-boundary checks that ThesisBuilder repositories do not reference foreign component schemas.

@@ -17,7 +17,8 @@ from .models import (
     ThesisStrategy,
     TradeDirection,
 )
-from .event_identity import normalize_event_identity
+from .event_identity import DEFAULT_TAXONOMY_SNAPSHOT, normalize_event_identity
+from .taxonomy_runtime import EventTaxonomySnapshot, EventTaxonomySnapshotProvider
 
 
 class TokenBudgetExhausted(RuntimeError):
@@ -163,6 +164,8 @@ class ThesisAnalyzer:
     max_tokens_per_item: int
     triage_model: str | None = None
     triage_max_output_tokens: int = 200
+    taxonomy_snapshot_provider: EventTaxonomySnapshotProvider | None = None
+    taxonomy_revision: int | None = None
     tokens_used: int = 0
 
     def __post_init__(self) -> None:
@@ -176,13 +179,16 @@ class ThesisAnalyzer:
         exchange_code: str,
         market_context_snapshot: dict[str, Any] | None = None,
         fundamentals_snapshot: dict[str, Any] | None = None,
+        taxonomy_revision: int | None = None,
     ) -> LlmAnalysisResult:
+        taxonomy = self._taxonomy_snapshot(taxonomy_revision)
         prompt = _build_prompt(
             article=article,
             ticker=ticker,
             exchange_code=exchange_code,
             market_context_snapshot=market_context_snapshot,
             fundamentals_snapshot=fundamentals_snapshot,
+            taxonomy_revision=taxonomy.revision,
         )
         cached = _get_cached_analysis(
             self.client,
@@ -192,7 +198,10 @@ class ThesisAnalyzer:
         )
         if cached is not None:
             result = parse_analysis_result(
-                cached, expected_ticker=ticker, expected_exchange_code=exchange_code
+                cached,
+                expected_ticker=ticker,
+                expected_exchange_code=exchange_code,
+                taxonomy=taxonomy,
             )
             actual_tokens = _actual_tokens(cached, fallback_tokens=0)
             return LlmAnalysisResult(
@@ -210,12 +219,29 @@ class ThesisAnalyzer:
         except Exception:
             self._release_reserved_tokens(estimated_tokens)
             raise
-        result = parse_analysis_result(raw, expected_ticker=ticker, expected_exchange_code=exchange_code)
+        result = parse_analysis_result(
+            raw,
+            expected_ticker=ticker,
+            expected_exchange_code=exchange_code,
+            taxonomy=taxonomy,
+        )
         actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
         self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
         return LlmAnalysisResult(
             **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": self.model}
         )
+
+    def _taxonomy_snapshot(
+        self, taxonomy_revision: int | None = None
+    ) -> EventTaxonomySnapshot:
+        if self.taxonomy_snapshot_provider is None:
+            return DEFAULT_TAXONOMY_SNAPSHOT
+        requested_revision = (
+            taxonomy_revision
+            if taxonomy_revision is not None
+            else self.taxonomy_revision
+        )
+        return self.taxonomy_snapshot_provider.get(requested_revision)
 
     def triage_article(
         self,
@@ -432,6 +458,7 @@ def parse_analysis_result(
     *,
     expected_ticker: str,
     expected_exchange_code: str,
+    taxonomy: EventTaxonomySnapshot | None = None,
 ) -> LlmAnalysisResult:
     ticker = str(raw.get("ticker") or "").strip().upper()
     exchange_code = str(raw.get("exchange_code") or "").strip().upper()
@@ -471,6 +498,7 @@ def parse_analysis_result(
             exchange_code=exchange_code,
             occurred_at=_parse_optional_datetime(raw.get("event_occurred_at")),
             legacy_event_type=str(raw["event_type"]) if raw.get("event_type") else None,
+            taxonomy=taxonomy,
         ),
         price_impact_magnitude=_enum_or_none(
             raw.get("price_impact_magnitude"), allowed={"low", "medium", "high"}
@@ -552,6 +580,7 @@ def _build_prompt(
     exchange_code: str,
     market_context_snapshot: dict[str, Any] | None,
     fundamentals_snapshot: dict[str, Any] | None = None,
+    taxonomy_revision: int = 1,
 ) -> str:
     return json.dumps(
         {
@@ -637,6 +666,7 @@ def _build_prompt(
                 "trend_follow",
             ],
             "instrument": {"ticker": ticker, "exchange_code": exchange_code},
+            "taxonomy_revision": taxonomy_revision,
             "article": {
                 "id": article.id,
                 "source": article.source,

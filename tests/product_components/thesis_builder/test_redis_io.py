@@ -1,6 +1,7 @@
 from src.product_components.thesis_builder.redis_io import (
     RedisThesisBuilderIo,
     _block_arg,
+    _taxonomy_commands,
 )
 
 
@@ -60,6 +61,24 @@ def test_read_reprocess_commands_does_not_block_forever() -> None:
     io.read_reprocess_commands(count=1, block_ms=0)
 
     assert client.block_args == [None]
+
+
+def test_taxonomy_command_parser_ignores_bootstrap_and_keeps_command_id() -> None:
+    messages = _taxonomy_commands(
+        [
+            (
+                "taxonomy_command_queue",
+                [
+                    ("1-0", {"bootstrap": "thesis_builder"}),
+                    ("2-0", {"command_id": "command-42"}),
+                ],
+            )
+        ]
+    )
+
+    assert [(message.message_id, message.command_id) for message in messages] == [
+        ("2-0", "command-42")
+    ]
 
 
 def test_read_passes_through_positive_block_interval() -> None:

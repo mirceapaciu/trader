@@ -72,3 +72,16 @@ The browser UI must use `UI_API_BASE_URL` to reach the Monitoring UI API. It mus
 - NewsFetcher variables remain owned by `docs/design/product_components/news-fetcher/configuration.md`.
 - ThesisBuilder variables remain owned by `docs/design/product_components/thesis-builder/configuration.md`.
 - Shared cross-process variables belong in `docs/design/shared/configuration.md`.
+## Taxonomy decision authorization
+
+```env
+UI_TAXONOMY_DECISIONS_ENABLED=false
+UI_TAXONOMY_TRUSTED_ACTOR_HEADER=
+THESIS_BUILDER_TAXONOMY_COMMAND_QUEUE=taxonomy_command_queue
+```
+
+Taxonomy mutation is unavailable unless it is explicitly enabled and a trusted
+principal header is configured. The named header must be supplied by an
+authenticated reverse proxy that removes client-provided copies. The actor is
+never accepted in the request body. Leave the feature disabled on Haas until
+that proxy contract exists.

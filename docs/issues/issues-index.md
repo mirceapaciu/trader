@@ -46,3 +46,8 @@
 | 260716-01 | Story-assignment verification is bag-of-words; same-company/same-domain articles about different events still pass on a single generic token | resolved | docs/issues/issues-detail/260716-01.md |
 | 260722-01 | Zero-overlap story verification fragments paraphrased coverage of the same event | resolved | docs/issues/issues-detail/260722-01.md |
 | 260723-01 | Implement versioned event_identity schema with controlled taxonomy and user-visible gaps | new | docs/issues/issues-detail/260723-01.md |
+| 260728-01 | Add operator workflow for accepting controlled event-identity values | new | docs/issues/issues-detail/260728-01.md |
+| 260729-01 | Load revisioned event taxonomy dynamically at runtime | resolved | docs/issues/issues-detail/260729-01.md |
+| 260729-02 | Add asynchronous taxonomy-decision commands and trusted actor identity | resolved | docs/issues/issues-detail/260729-02.md |
+| 260729-03 | Execute bounded and resumable event-taxonomy backfill jobs | resolved | docs/issues/issues-detail/260729-03.md |
+| 260729-04 | Complete the Monitoring UI taxonomy decision workflow | resolved | docs/issues/issues-detail/260729-04.md |

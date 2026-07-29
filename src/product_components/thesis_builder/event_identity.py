@@ -5,12 +5,14 @@ lossless, are marked unmapped, and can be reviewed by an operator.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
 import re
+from types import MappingProxyType
 from typing import Any, Literal
+
+from .taxonomy_runtime import EventTaxonomySnapshot
 
 
 SCHEMA_VERSION = 1
@@ -41,6 +43,45 @@ LEGACY_ALIASES = {
     "retail event": ("retail_sales_promotion_event", "other_sales_event"),
 }
 
+DEFAULT_TAXONOMY_SNAPSHOT = EventTaxonomySnapshot(
+    revision=1,
+    canonical_values=MappingProxyType(
+        {
+            "event_family": EVENT_FAMILIES,
+            "event_subtype": frozenset(
+                subtype for subtypes in SUBTYPES.values() for subtype in subtypes
+            ),
+            "event_stage": _STAGES,
+            "coverage_role": _ROLES,
+            "participant_role": _PARTICIPANT_ROLES,
+        }
+    ),
+    aliases=MappingProxyType(
+        {
+            "event_family": MappingProxyType(
+                {
+                    alias: canonical
+                    for alias, (canonical, _) in LEGACY_ALIASES.items()
+                }
+            )
+        }
+    ),
+    subtype_families=MappingProxyType(
+        {
+            subtype: family
+            for family, subtypes in SUBTYPES.items()
+            for subtype in subtypes
+        }
+    ),
+    family_alias_subtypes=MappingProxyType(
+        {
+            alias: subtype
+            for alias, (_, subtype) in LEGACY_ALIASES.items()
+            if subtype is not None
+        }
+    ),
+)
+
 
 def normalize_token(value: Any, *, limit: int = 120) -> str | None:
     text = re.sub(r"\s+", " ", str(value or "").strip().lower())[:limit]
@@ -48,18 +89,25 @@ def normalize_token(value: Any, *, limit: int = 120) -> str | None:
 
 
 def normalize_event_identity(raw: dict[str, Any] | None, *, ticker: str, exchange_code: str,
-                             occurred_at: datetime | None = None, legacy_event_type: str | None = None) -> dict[str, Any]:
+                             occurred_at: datetime | None = None, legacy_event_type: str | None = None,
+                             taxonomy: EventTaxonomySnapshot | None = None) -> dict[str, Any]:
     """Return a safe v1 identity.  No unknown field can make analysis parsing fail."""
+    snapshot = taxonomy or DEFAULT_TAXONOMY_SNAPSHOT
     source = dict(raw or {})
     # Models occasionally return a proposal field instead of the requested
     # canonical field. Treat it as input, never as a reason to lose the value.
     candidate = normalize_token(source.get("event_family")) or normalize_token(source.get("event_family_candidate"))
     if not candidate and legacy_event_type:
         candidate = normalize_token(legacy_event_type)
-    family, alias_subtype = LEGACY_ALIASES.get(candidate or "", (candidate, None))
-    classified = family in EVENT_FAMILIES
+    family = snapshot.resolve("event_family", candidate)
+    alias_subtype = snapshot.family_alias_subtypes.get(candidate or "")
+    classified = family is not None
     subtype_candidate = normalize_token(source.get("event_subtype")) or normalize_token(source.get("event_subtype_candidate"))
-    subtype = subtype_candidate if classified and subtype_candidate in SUBTYPES.get(family, frozenset()) else None
+    subtype = (
+        snapshot.resolve("event_subtype", subtype_candidate, family_scope=family)
+        if classified
+        else None
+    )
     subject = source.get("subject") if isinstance(source.get("subject"), dict) else {}
     period = source.get("period") if isinstance(source.get("period"), dict) else None
     participants = source.get("participants") if isinstance(source.get("participants"), list) else []
@@ -68,31 +116,65 @@ def normalize_event_identity(raw: dict[str, Any] | None, *, ticker: str, exchang
         if not isinstance(participant, dict):
             continue
         role = normalize_token(participant.get("role"))
-        safe_participants.append({"role": role if role in _PARTICIPANT_ROLES else "other", "role_candidate": role if role and role not in _PARTICIPANT_ROLES else None, "instrument_id": participant.get("instrument_id"), "name_raw": str(participant.get("name_raw") or "")[:240] or None})
+        resolved_role = snapshot.resolve("participant_role", role)
+        safe_participants.append({"role": resolved_role or "other", "role_candidate": role if role and resolved_role is None else None, "instrument_id": participant.get("instrument_id"), "name_raw": str(participant.get("name_raw") or "")[:240] or None})
     status = "classified" if classified else "unmapped"
     occurred_value = source.get("occurred_at") or (occurred_at.isoformat() if occurred_at else None)
     stage_candidate = normalize_token(source.get("event_stage"))
     role_candidate = normalize_token(source.get("coverage_role"))
+    stage = snapshot.resolve("event_stage", stage_candidate)
+    coverage_role = snapshot.resolve("coverage_role", role_candidate)
     identity = {
         "schema_version": SCHEMA_VERSION, "taxonomy_version": TAXONOMY_VERSION,
+        "taxonomy_revision": snapshot.revision,
         "classification_status": status, "event_family": family if classified else None,
         "event_family_candidate": None if classified else candidate,
         "event_subtype": subtype or (alias_subtype if classified else None),
         "event_subtype_candidate": subtype_candidate if classified and subtype is None and subtype_candidate else None,
-        "event_stage": stage_candidate if stage_candidate in _STAGES else "unknown",
-        "event_stage_candidate": stage_candidate if stage_candidate and stage_candidate not in _STAGES else None,
-        "coverage_role": role_candidate if role_candidate in _ROLES else "unknown",
-        "coverage_role_candidate": role_candidate if role_candidate and role_candidate not in _ROLES else None,
+        "event_stage": stage or "unknown",
+        "event_stage_candidate": stage_candidate if stage_candidate and stage is None else None,
+        "coverage_role": coverage_role or "unknown",
+        "coverage_role_candidate": role_candidate if role_candidate and coverage_role is None else None,
         "subject": {"instrument_id": subject.get("instrument_id"), "ticker": str(subject.get("ticker") or ticker).upper(), "exchange_code": str(subject.get("exchange_code") or exchange_code).upper()},
         "participants": safe_participants, "period": _safe_period(period), "occurred_at": occurred_value,
         "occurred_at_precision": _controlled(source.get("occurred_at_precision"), _PRECISIONS, "unknown"),
         "identifiers": [str(value)[:240] for value in source.get("identifiers", [])[:20] if str(value).strip()],
         "attributes": source.get("attributes") if isinstance(source.get("attributes"), dict) else {},
         "confidence": _confidence(source.get("confidence")),
-        "provenance": {"source": "full_analysis_llm", "prompt_version": "event-identity-v1", "raw_response": source},
+        "provenance": {"source": "full_analysis_llm", "prompt_version": "event-identity-v1", "taxonomy_revision": snapshot.revision, "raw_response": source},
     }
     identity["event_instance_key"] = _instance_key(identity)
     return identity
+
+
+def renormalize_event_identity(
+    identity: dict[str, Any],
+    *,
+    taxonomy: EventTaxonomySnapshot,
+) -> dict[str, Any]:
+    """Re-normalize a persisted identity from its lossless raw provenance."""
+    provenance = (
+        identity.get("provenance")
+        if isinstance(identity.get("provenance"), dict)
+        else {}
+    )
+    raw = (
+        provenance.get("raw_response")
+        if isinstance(provenance.get("raw_response"), dict)
+        else {}
+    )
+    subject = (
+        identity.get("subject")
+        if isinstance(identity.get("subject"), dict)
+        else {}
+    )
+    return normalize_event_identity(
+        raw,
+        ticker=str(subject.get("ticker") or ""),
+        exchange_code=str(subject.get("exchange_code") or ""),
+        legacy_event_type=None,
+        taxonomy=taxonomy,
+    )
 
 
 def compare_event_identity(left: dict[str, Any] | None, right: dict[str, Any] | None) -> Literal["same", "different", "inconclusive"]:
@@ -127,23 +209,55 @@ def taxonomy_gap_values(identity: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def _instance_key(identity: dict[str, Any]) -> str | None:
-    if identity["classification_status"] != "classified": return None
+    if identity["classification_status"] != "classified":
+        return None
     subject, family = identity["subject"], identity["event_family"]
-    discriminator = identity.get("identifiers") or [identity.get("period"), identity.get("occurred_at")]
-    if not subject.get("ticker") or not family or not any(discriminator): return None
-    payload = json.dumps([subject.get("instrument_id") or subject["ticker"], family, identity.get("event_subtype"), discriminator], sort_keys=True, default=str)
+    discriminator = identity.get("identifiers") or [
+        identity.get("period"),
+        identity.get("occurred_at"),
+    ]
+    if not subject.get("ticker") or not family or not any(discriminator):
+        return None
+    payload = json.dumps(
+        [
+            subject.get("instrument_id") or subject["ticker"],
+            family,
+            identity.get("event_subtype"),
+            discriminator,
+        ],
+        sort_keys=True,
+        default=str,
+    )
     return "v1:" + hashlib.sha256(payload.encode()).hexdigest()[:32]
 
-def _controlled(value: Any, allowed: frozenset[str], default: str) -> str: return normalize_token(value) if normalize_token(value) in allowed else default
+
+def _controlled(value: Any, allowed: frozenset[str], default: str) -> str:
+    normalized = normalize_token(value)
+    return normalized if normalized in allowed else default
+
+
 def _safe_period(value: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not value: return None
-    return {"kind": _controlled(value.get("kind"), _PERIOD_KINDS, "unknown"), "fiscal_year": value.get("fiscal_year"), "fiscal_quarter": value.get("fiscal_quarter"), "label_raw": str(value.get("label_raw") or "")[:120] or None}
+    if not value:
+        return None
+    return {
+        "kind": _controlled(value.get("kind"), _PERIOD_KINDS, "unknown"),
+        "fiscal_year": value.get("fiscal_year"),
+        "fiscal_quarter": value.get("fiscal_quarter"),
+        "label_raw": str(value.get("label_raw") or "")[:120] or None,
+    }
+
+
 def _confidence(value: Any) -> float:
-    try: return min(1.0, max(0.0, float(value)))
-    except (TypeError, ValueError): return 0.0
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _path(value: dict[str, Any], path: tuple[str, ...]) -> Any:
     current: Any = value
     for key in path:
-        if not isinstance(current, dict): return None
+        if not isinstance(current, dict):
+            return None
         current = current.get(key)
     return current
