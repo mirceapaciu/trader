@@ -34,7 +34,7 @@ class BarsProvider(Protocol):
         start: datetime,
         end: datetime,
         progress: WarmProgress | None = None,
-    ) -> None: ...
+    ) -> dict[tuple[str, str], str] | None: ...
 
 
 @runtime_checkable
@@ -134,8 +134,8 @@ class MarketDataBarsProvider:
         start: datetime,
         end: datetime,
         progress: WarmProgress | None = None,
-    ) -> None:
-        self._market_data_service.prefetch_historical_bars(
+    ) -> dict[tuple[str, str], str]:
+        return self._market_data_service.prefetch_historical_bars(
             instruments,
             interval=interval,
             start=start,

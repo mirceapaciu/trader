@@ -568,6 +568,11 @@ function SummaryTilesPanel({
           </span>
         </div>
       </div>
+      {run.status === "failed" ? (
+        <div className="inline-error" role="alert">
+          {backtestFailureMessage(run)}
+        </div>
+      ) : null}
       <div className="thesis-kpi-grid">
         <MetricTile label="Total return" value={formatPercent(metrics.total_return)} />
         <MetricTile label="Net P&L" value={formatCurrency(metrics.net_pnl)} />
@@ -582,6 +587,15 @@ function SummaryTilesPanel({
       </div>
     </section>
   );
+}
+
+function backtestFailureMessage(run: BacktestRunSummary): string {
+  const message = run.error_details?.message;
+  if (typeof message === "string" && message.trim()) return message;
+  if (run.error_code === "MarketDataUnavailableError") {
+    return "Historical market data could not be received for the backtest.";
+  }
+  return `Backtest failed${run.error_code ? `: ${run.error_code}` : "."}`;
 }
 
 function RegenerationPanel({ stats }: { stats: BacktestRegenerationStats }) {

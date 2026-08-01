@@ -36,6 +36,8 @@ def _run_row(
     llm_tokens_used: int | None = None,
     budget_exhausted: bool | None = None,
     analysis_coverage_until_at: datetime | None = None,
+    error_code: str | None = None,
+    error_details: dict | None = None,
 ) -> BacktestRunRow:
     return BacktestRunRow(
         run_id=run_id,
@@ -55,7 +57,7 @@ def _run_row(
         created_at=datetime(2026, 6, 27, 11, 0, tzinfo=timezone.utc),
         started_at=datetime(2026, 6, 27, 11, 0, tzinfo=timezone.utc),
         finished_at=datetime(2026, 6, 27, 11, 30, tzinfo=timezone.utc) if status != "running" else None,
-        error_code=None,
+        error_code=error_code,
         gross_profit=200.0,
         gross_loss=-76.55,
         total_commission=4.0,
@@ -92,6 +94,7 @@ def _run_row(
         budget_exhausted=budget_exhausted,
         analysis_coverage_until_at=analysis_coverage_until_at,
         summary_json=summary_json or {},
+        error_details=error_details,
     )
 
 
@@ -317,6 +320,23 @@ def test_detail_projects_summary_json_into_per_strategy_and_card_status() -> Non
     buckets = [m.bucket for m in detail.card_status_breakdown]
     assert buckets == ["approved", "rejected", "card_was_live_expired", "card_unexpired_at_entry"]
     assert detail.metrics.cards_considered == 10
+
+
+def test_detail_projects_run_failure_details() -> None:
+    ds = FakeBacktestDataSource()
+    ds.run_by_id["bt_1"] = _run_row(
+        status="failed",
+        error_code="MarketDataUnavailableError",
+        error_details={"message": "Historical market data could not be received for the backtest."},
+    )
+
+    detail = _service(ds).get_backtest_detail(run_id="bt_1")
+
+    assert detail is not None
+    assert detail.run.error_code == "MarketDataUnavailableError"
+    assert detail.run.error_details == {
+        "message": "Historical market data could not be received for the backtest."
+    }
 
 
 def test_list_flags_budget_exhausted_run_from_row_columns() -> None:

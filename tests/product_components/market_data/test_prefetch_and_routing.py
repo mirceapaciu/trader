@@ -318,6 +318,23 @@ def test_prefetch_reports_progress_and_dedupes() -> None:
     assert len(polygon.calls) == 2
 
 
+def test_prefetch_reports_unavailable_when_provider_fetch_fails() -> None:
+    class _FailingClient(_CountingClient):
+        def fetch_historical_bars(self, symbol, *, interval, start, end):
+            raise TimeoutError("gateway timed out")
+
+    storage = _FakeStorage()
+    polygon = _FailingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+
+    outcomes = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )
+
+    assert outcomes == {("AAPL", "XNAS"): "unavailable"}
+    assert storage.fetch_runs[-1].status == "failed"
+
+
 def test_rate_limiter_spaces_provider_calls() -> None:
     storage = _FakeStorage()
     polygon = _CountingClient(MarketDataProvider.POLYGON)

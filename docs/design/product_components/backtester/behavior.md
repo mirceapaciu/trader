@@ -357,9 +357,12 @@ Run policy:
 - The selected card set and bar set form an immutable snapshot; `dataset_snapshot_hash` is the
   deterministic hash of that membership.
 - Retries create a new `run_id`; completed results are never mutated.
-- Partial per-instrument simulation failures are recorded per trade and do not invalidate completed
-  trades; hard failures (e.g. unreadable inputs, exhausted LLM budget in regeneration mode) finalize
-  the run as `failed` with a machine-readable `error_code`.
+- A run fails closed before simulation when required historical bars cannot be received for any
+  instrument in its selected card population. It finalizes as `failed` with
+  `MarketDataUnavailableError` and persists the interval plus affected instruments for operators.
+- Partial per-instrument simulation failures after a successful prewarm are recorded per trade and
+  do not invalidate completed trades; other hard failures (e.g. unreadable inputs or exhausted LLM
+  budget in regeneration mode) also finalize the run as `failed` with a machine-readable `error_code`.
 
 ## 9. Integration Boundaries
 

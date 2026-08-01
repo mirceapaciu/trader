@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
 
 from src.product_components.backtester.models import BacktestRunParams
-from src.product_components.backtester.service import BacktesterService
+from src.product_components.backtester.service import BacktesterService, MarketDataUnavailableError
 
 _START = datetime(2026, 6, 1, tzinfo=timezone.utc)
 _END = datetime(2026, 6, 30, tzinfo=timezone.utc)
@@ -61,3 +64,72 @@ def test_prefetch_without_sink_is_noop() -> None:
     service = _service(None)
     # No progress sink and no instruments: must not raise.
     service._prefetch_market_data([], _params())
+
+
+def test_prefetch_fails_when_market_data_provider_reports_unavailable() -> None:
+    class _UnavailableBars(_FakeBars):
+        def warm(self, instruments, *, interval, start, end, progress=None):
+            return {("AAPL", "XNAS"): "unavailable"}
+
+    service = BacktesterService(
+        settings=None,  # type: ignore[arg-type]
+        repository=None,  # type: ignore[arg-type]
+        cards_provider=None,  # type: ignore[arg-type]
+        bars_provider=_UnavailableBars(),
+    )
+
+    with pytest.raises(MarketDataUnavailableError, match="market_data_unavailable") as error:
+        service._prefetch_market_data([_Card("AAPL", "XNAS")], _params())
+
+    assert error.value.details["unavailable_instruments"] == [
+        {"ticker": "AAPL", "exchange_code": "XNAS", "status": "unavailable"}
+    ]
+
+
+def test_replay_persists_market_data_failure_before_simulation() -> None:
+    class _UnavailableBars(_FakeBars):
+        def warm(self, instruments, *, interval, start, end, progress=None):
+            return {("AAPL", "XNAS"): "unavailable"}
+
+    class _Cards:
+        def export_cards(self, **_kwargs):
+            return [
+                SimpleNamespace(
+                    id="card-1",
+                    ticker="AAPL",
+                    exchange_code="XNAS",
+                    created_at=_START,
+                )
+            ]
+
+    class _Repository:
+        failure: dict | None = None
+
+        def create_run(self, **_kwargs):
+            return None
+
+        def finalize_run_failure(self, **kwargs):
+            self.failure = kwargs
+
+    repository = _Repository()
+    service = BacktesterService(
+        settings=None,  # type: ignore[arg-type]
+        repository=repository,  # type: ignore[arg-type]
+        cards_provider=_Cards(),
+        bars_provider=_UnavailableBars(),
+    )
+
+    with pytest.raises(MarketDataUnavailableError):
+        service.run(_params())
+
+    assert repository.failure == {
+        "run_id": "bt_1",
+        "error_code": "MarketDataUnavailableError",
+        "details": {
+            "message": "Historical market data could not be received for the backtest.",
+            "interval": "1m",
+            "unavailable_instruments": [
+                {"ticker": "AAPL", "exchange_code": "XNAS", "status": "unavailable"}
+            ],
+        },
+    }

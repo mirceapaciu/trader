@@ -217,10 +217,14 @@ Trigger behavior mirrors the Filter Quality control:
 A list of recent runs shows, per run: `run_id`, status (`running`, `completed`, `failed`), window,
 `mode`, `timing_scenario`, `card_population`, and headline metrics (net P&L, total return, win rate,
 profit factor, max drawdown), with created and finished timestamps. Selecting a run opens its detail.
+Failed runs retain their machine-readable error code and structured error details.
 
 #### Run detail
 
 The detail view keeps the run list visible and shows:
+- A visible failure alert when the run failed, using its persisted error details. In particular,
+  unavailable historical market data is shown as an operator-actionable backtest failure rather
+  than as a completed zero-trade result.
 - Summary tiles: total return, net P&L, win rate, profit factor, expectancy, max drawdown, Sharpe
   ratio, number of trades, exposure fraction, and signal accuracy.
 - Equity curve chart. For a `both` run, the ideal and actual equity curves are overlaid.

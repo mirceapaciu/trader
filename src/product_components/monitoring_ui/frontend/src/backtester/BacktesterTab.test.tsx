@@ -195,6 +195,23 @@ describe("BacktesterTab", () => {
     expect(screen.queryByText("Trades flipped by delay")).not.toBeInTheDocument();
   });
 
+  it("shows the persisted market-data failure in the run detail", () => {
+    const run = makeRun({
+      status: "failed",
+      error_code: "MarketDataUnavailableError",
+      error_details: { message: "Historical market data could not be received for the backtest." }
+    });
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) }
+    });
+    render(<BacktesterTab />);
+
+    expect(
+      screen.getByText("Historical market data could not be received for the backtest.")
+    ).toBeInTheDocument();
+  });
+
   it("shows the gap tiles for a both run", () => {
     const run = makeRun({ timing_scenario: "both" });
     installQueryRouter({

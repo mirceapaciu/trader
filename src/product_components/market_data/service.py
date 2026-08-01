@@ -230,7 +230,7 @@ class MarketDataService:
         start: datetime,
         end: datetime,
         progress: PrefetchProgress | None = None,
-    ) -> None:
+    ) -> dict[tuple[str, str], str]:
         """Warm the DB with bars for many instruments, rate-limited for the free tier.
 
         Instruments already covered by the coverage ledger are skipped without consuming the
@@ -238,6 +238,7 @@ class MarketDataService:
         provider request is throttled to ``max_requests_per_minute``.
         """
         unique = _unique_instruments(instruments)
+        outcomes: dict[tuple[str, str], str] = {}
         total = len(unique)
         limiter = _RateLimiter(
             self._max_requests_per_minute, clock=self._clock, sleep=self._sleep
@@ -246,6 +247,7 @@ class MarketDataService:
             mapping = self._resolve_bars_mapping(ticker=ticker, exchange_code=exchange_code)
             if mapping is None or self._provider_clients.get(mapping.provider) is None:
                 self._emit_progress(progress, index, total, ticker, "skipped")
+                outcomes[(ticker, exchange_code)] = "unavailable"
                 continue
             stored = self._storage.load_bars_in_range(
                 ticker=ticker,
@@ -257,16 +259,20 @@ class MarketDataService:
             )
             if self._is_covered(stored, mapping=mapping, interval=interval, start=start, end=end):
                 self._emit_progress(progress, index, total, ticker, "cached")
+                outcomes[(ticker, exchange_code)] = "cached" if stored else "empty"
                 continue
             limiter.acquire()
-            self._fetch_historical_bars(
+            fetched_count = self._fetch_historical_bars(
                 mapping,
                 self._provider_clients[mapping.provider],
                 interval=interval,
                 start=start,
                 end=end,
             )
-            self._emit_progress(progress, index, total, ticker, "fetched")
+            status = "fetched" if fetched_count is not None and fetched_count > 0 else "unavailable"
+            outcomes[(ticker, exchange_code)] = status
+            self._emit_progress(progress, index, total, ticker, status)
+        return outcomes
 
     @staticmethod
     def _emit_progress(
@@ -391,7 +397,7 @@ class MarketDataService:
         interval: str,
         start: datetime,
         end: datetime,
-    ) -> None:
+    ) -> int | None:
         started_at = datetime.now(timezone.utc)
         fetched_count = 0
         status = "success"
@@ -436,6 +442,7 @@ class MarketDataService:
                 fetched_count=fetched_count,
             )
         )
+        return fetched_count if status == "success" else None
 
     def refresh_watchlist_once(self) -> None:
         for instrument in self._storage.load_active_instruments():

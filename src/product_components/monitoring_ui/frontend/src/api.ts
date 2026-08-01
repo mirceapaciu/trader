@@ -666,6 +666,7 @@ export type BacktestRunSummary = {
   started_at?: string | null;
   finished_at?: string | null;
   error_code?: string | null;
+  error_details?: Record<string, unknown> | null;
   budget_exhausted?: boolean | null;
   analysis_coverage_until_at?: string | null;
   progress?: BacktestRunProgress | null;

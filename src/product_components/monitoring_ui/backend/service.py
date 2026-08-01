@@ -1382,6 +1382,7 @@ def _backtest_run_summary(
         started_at=row.started_at,
         finished_at=row.finished_at,
         error_code=row.error_code,
+        error_details=row.error_details,
         budget_exhausted=row.budget_exhausted,
         analysis_coverage_until_at=row.analysis_coverage_until_at,
     )

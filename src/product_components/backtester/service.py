@@ -23,6 +23,25 @@ LOGGER = logging.getLogger("backtester")
 ProgressSink = Callable[[str, int, int, "str | None"], None]
 
 
+class MarketDataUnavailableError(RuntimeError):
+    """Raised when a backtest cannot obtain bars for its card population."""
+
+    def __init__(self, *, interval: str, unavailable: list[tuple[str, str, str]]) -> None:
+        self.details = {
+            "message": "Historical market data could not be received for the backtest.",
+            "interval": interval,
+            "unavailable_instruments": [
+                {"ticker": ticker, "exchange_code": exchange_code, "status": status}
+                for ticker, exchange_code, status in unavailable
+            ],
+        }
+        instruments = ", ".join(
+            f"{ticker}/{exchange_code} ({status})"
+            for ticker, exchange_code, status in unavailable
+        )
+        super().__init__(f"market_data_unavailable: {instruments}")
+
+
 def new_run_id() -> str:
     return f"bt_{uuid.uuid4().hex}"
 
@@ -68,16 +87,15 @@ class BacktesterService:
         snapshot_hash = dataset_snapshot_hash(cards)
         self._repository.create_run(params=params, dataset_snapshot_hash=snapshot_hash)
 
-        self._prefetch_market_data(cards, params)
-
-        self._report_progress("simulating", 0, 0, None)
         try:
+            self._prefetch_market_data(cards, params)
+            self._report_progress("simulating", 0, 0, None)
             self._run_engine_and_persist(params, self._cards)
         except Exception as error:
             self._repository.finalize_run_failure(
                 run_id=params.run_id,
                 error_code=error.__class__.__name__,
-                details={"message": str(error)[:1000]},
+                details=_failure_details(error),
             )
             raise
 
@@ -224,7 +242,7 @@ class BacktesterService:
             self._repository.finalize_run_failure(
                 run_id=params.run_id,
                 error_code=error.__class__.__name__,
-                details={"message": str(error)[:1000]},
+                details=_failure_details(error),
             )
             raise
 
@@ -303,13 +321,24 @@ class BacktesterService:
             LOGGER.info("market data %s %d/%d %s", status, done, total, ticker)
             self._report_progress("prewarming", done, total, ticker)
 
-        warm(
+        outcomes = warm(
             instruments,
             interval=interval,
             start=params.window_start_at,
             end=params.window_end_at,
             progress=_progress,
         )
+        if outcomes is not None:
+            unavailable = [
+                (ticker, exchange_code, status)
+                for (ticker, exchange_code), status in outcomes.items()
+                if status in {"unavailable", "empty"}
+            ]
+            if unavailable:
+                raise MarketDataUnavailableError(
+                    interval=interval,
+                    unavailable=unavailable,
+                )
         LOGGER.info("prefetch complete run_id=%s", params.run_id)
 
     def _report_progress(self, phase: str, done: int, total: int, ticker: str | None) -> None:
@@ -326,6 +355,12 @@ class BacktesterService:
                 raise ValueError("invalid_llm_model")
             if params.llm_max_tokens_per_run <= 0:
                 raise ValueError("invalid_token_budget")
+
+
+def _failure_details(error: Exception) -> dict:
+    if isinstance(error, MarketDataUnavailableError):
+        return error.details
+    return {"message": str(error)[:1000]}
 
 
 def _window_coverage_fraction(

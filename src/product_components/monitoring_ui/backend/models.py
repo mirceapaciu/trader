@@ -776,6 +776,7 @@ class BacktestRunSummary(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     error_code: str | None = None
+    error_details: dict[str, object] | None = None
     # Token-budget coverage flags so the runs list can mark a partial-window run
     # without fetching each detail. Null for replay runs and legacy rows.
     budget_exhausted: bool | None = None
