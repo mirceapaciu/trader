@@ -24,7 +24,7 @@ ProgressSink = Callable[[str, int, int, "str | None"], None]
 
 
 class MarketDataUnavailableError(RuntimeError):
-    """Raised when a backtest cannot obtain bars for its card population."""
+    """Raised when a backtest cannot obtain bars for any selected instrument."""
 
     def __init__(self, *, interval: str, unavailable: list[tuple[str, str, str]]) -> None:
         self.details = {
@@ -334,10 +334,22 @@ class BacktesterService:
                 for (ticker, exchange_code), status in outcomes.items()
                 if status in {"unavailable", "empty"}
             ]
-            if unavailable:
+            # A missing provider or bar history for one instrument must not discard a
+            # usable backtest population. The engine records those cards as
+            # ``cards_skipped_no_price``; fail only when prewarming found no usable
+            # instrument at all, which indicates a broad market-data outage.
+            if unavailable and len(unavailable) == len(instruments):
                 raise MarketDataUnavailableError(
                     interval=interval,
                     unavailable=unavailable,
+                )
+            if unavailable:
+                LOGGER.warning(
+                    "prefetch incomplete run_id=%s unavailable=%d/%d instruments=%s",
+                    params.run_id,
+                    len(unavailable),
+                    len(instruments),
+                    ", ".join(f"{ticker}/{exchange_code}" for ticker, exchange_code, _ in unavailable),
                 )
         LOGGER.info("prefetch complete run_id=%s", params.run_id)
 

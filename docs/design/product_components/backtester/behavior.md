@@ -357,9 +357,11 @@ Run policy:
 - The selected card set and bar set form an immutable snapshot; `dataset_snapshot_hash` is the
   deterministic hash of that membership.
 - Retries create a new `run_id`; completed results are never mutated.
-- A run fails closed before simulation when required historical bars cannot be received for any
-  instrument in its selected card population. It finalizes as `failed` with
-  `MarketDataUnavailableError` and persists the interval plus affected instruments for operators.
+- A run fails closed before simulation only when required historical bars cannot be received for
+  every instrument in its selected card population, indicating a broad market-data outage. It
+  finalizes as `failed` with `MarketDataUnavailableError` and persists the interval plus affected
+  instruments for operators. Isolated unavailable instruments or exchanges are logged and their
+  cards are skipped as `cards_skipped_no_price`; the remaining population continues to simulate.
 - Partial per-instrument simulation failures after a successful prewarm are recorded per trade and
   do not invalidate completed trades; other hard failures (e.g. unreadable inputs or exhausted LLM
   budget in regeneration mode) also finalize the run as `failed` with a machine-readable `error_code`.

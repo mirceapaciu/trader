@@ -86,6 +86,26 @@ def test_prefetch_fails_when_market_data_provider_reports_unavailable() -> None:
     ]
 
 
+def test_prefetch_allows_an_isolated_unavailable_instrument() -> None:
+    class _PartiallyUnavailableBars(_FakeBars):
+        def warm(self, instruments, *, interval, start, end, progress=None):
+            return {
+                ("AAPL", "XNAS"): "fetched",
+                ("005930", "KRX"): "unavailable",
+            }
+
+    service = BacktesterService(
+        settings=None,  # type: ignore[arg-type]
+        repository=None,  # type: ignore[arg-type]
+        cards_provider=None,  # type: ignore[arg-type]
+        bars_provider=_PartiallyUnavailableBars(),
+    )
+
+    service._prefetch_market_data(
+        [_Card("AAPL", "XNAS"), _Card("005930", "KRX")], _params()
+    )
+
+
 def test_replay_persists_market_data_failure_before_simulation() -> None:
     class _UnavailableBars(_FakeBars):
         def warm(self, instruments, *, interval, start, end, progress=None):
