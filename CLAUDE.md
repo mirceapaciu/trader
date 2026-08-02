@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Discover the claude skills under .agents/skills
+
 Read and follow all instructions in AGENTS.md. The sections below supplement those instructions with additional context useful for navigating the codebase.
 
 ## Commands
