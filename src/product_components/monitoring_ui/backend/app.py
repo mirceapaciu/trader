@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
 from pathlib import Path
 
 from datetime import datetime
 from typing import Callable, TypeVar
 
-from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg
 import redis
@@ -72,6 +71,7 @@ from .service import (
     MonitoringService,
 )
 from .settings import MonitoringUiSettings
+from .admin_auth import AdminSessionStore, require_admin_session, require_csrf, session_cookie_name
 from src.product_components.shared.adapters import (
     PostgresSharedInstrumentAdmin,
     PostgresSharedInstrumentRegistry,
@@ -113,27 +113,23 @@ def _frontend_dist_dir() -> Path:
     return _repo_root() / "src" / "product_components" / "monitoring_ui" / "frontend" / "dist"
 
 
-def _trusted_taxonomy_actor(
-    *, request: Request, settings: MonitoringUiSettings
-) -> str:
+def _admin_auth_available(*, settings: MonitoringUiSettings) -> None:
     if not settings.taxonomy_decisions_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="taxonomy_decisions_disabled",
         )
-    header = settings.taxonomy_trusted_actor_header
-    if not header or not re.fullmatch(r"[A-Za-z0-9-]{1,80}", header):
+    if not settings.admin_password:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="trusted_taxonomy_actor_unavailable",
+            detail="admin_auth_unavailable",
         )
-    actor = (request.headers.get(header) or "").strip()
-    if not actor:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="trusted_taxonomy_actor_required",
-        )
-    return actor
+
+
+def _request_origin(settings: MonitoringUiSettings) -> str:
+    if settings.admin_allowed_origin:
+        return settings.admin_allowed_origin
+    return settings.ui_api_base_url.removesuffix("/api").rstrip("/")
 
 
 def _mount_frontend(app: FastAPI) -> None:
@@ -191,6 +187,13 @@ def create_app(
     bootstrap_schemas: bool | None = None,
 ) -> FastAPI:
     resolved_settings = settings or MonitoringUiSettings.from_env()
+    resolved_settings.validate_admin_auth()
+    admin_sessions = AdminSessionStore(
+        password=resolved_settings.admin_password,
+        session_ttl_seconds=resolved_settings.admin_session_ttl_seconds,
+        login_window_seconds=resolved_settings.admin_login_window_seconds,
+        login_max_attempts=resolved_settings.admin_login_max_attempts,
+    )
     should_bootstrap_schemas = bootstrap_schemas if bootstrap_schemas is not None else settings is None
     thesis_builder_settings = ThesisBuilderSettings.from_env()
     data_source = PostgresRedisMonitoringDataSource(
@@ -282,6 +285,32 @@ def create_app(
     )
     if should_bootstrap_schemas:
         _bootstrap_schemas_in_background(data_source=data_source, resolved_settings=resolved_settings)
+
+    @app.post("/api/admin/login")
+    def admin_login(payload: dict[str, str], request: Request, response: Response) -> dict[str, str | bool]:
+        _admin_auth_available(settings=resolved_settings)
+        session = admin_sessions.login(
+            username=payload.get("username", ""), password=payload.get("password", ""),
+            source=request.client.host if request.client else "unknown",
+        )
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
+        secure = _request_origin(resolved_settings).startswith("https://")
+        response.set_cookie(session_cookie_name(), session.session_id, httponly=True, samesite="strict", secure=secure, max_age=resolved_settings.admin_session_ttl_seconds, path="/")
+        return {"authenticated": True, "actor": "admin", "csrf_token": session.csrf_token}
+
+    @app.get("/api/admin/session")
+    def admin_session(request: Request) -> dict[str, str | bool | None]:
+        session = admin_sessions.get(request.cookies.get(session_cookie_name()))
+        return {"authenticated": session is not None, "actor": "admin" if session else None, "csrf_token": session.csrf_token if session else None}
+
+    @app.post("/api/admin/logout", status_code=status.HTTP_204_NO_CONTENT)
+    def admin_logout(request: Request, response: Response) -> Response:
+        session = require_admin_session(request=request, store=admin_sessions)
+        require_csrf(request=request, session=session, allowed_origin=_request_origin(resolved_settings))
+        admin_sessions.logout(session.session_id)
+        response.delete_cookie(session_cookie_name(), path="/")
+        return response
 
     @app.get("/api/health", response_model=HealthResponse)
     def get_health() -> HealthResponse:
@@ -437,13 +466,12 @@ def create_app(
         payload: ThesisBuilderTaxonomyDecisionRequest,
         request: Request,
     ) -> ThesisBuilderTaxonomyDecisionResponse:
-        actor = _trusted_taxonomy_actor(
-            request=request,
-            settings=resolved_settings,
-        )
+        _admin_auth_available(settings=resolved_settings)
+        admin_session = require_admin_session(request=request, store=admin_sessions)
+        require_csrf(request=request, session=admin_session, allowed_origin=_request_origin(resolved_settings))
         try:
             return _run_with_infrastructure_mapping(
-                lambda: service.decide_taxonomy_gap(payload, actor=actor),
+                lambda: service.decide_taxonomy_gap(payload, actor="admin"),
                 detail="thesis-builder taxonomy decision unavailable",
             )
         except PermissionError as exc:
@@ -457,7 +485,10 @@ def create_app(
     )
     def get_thesis_builder_taxonomy_decision(
         command_id: str,
+        request: Request,
     ) -> ThesisBuilderTaxonomyDecisionResponse:
+        _admin_auth_available(settings=resolved_settings)
+        require_admin_session(request=request, store=admin_sessions)
         result = _run_with_infrastructure_mapping(
             lambda: service.get_taxonomy_decision_status(command_id=command_id),
             detail="thesis-builder taxonomy decision unavailable",

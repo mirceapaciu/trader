@@ -898,6 +898,9 @@ export type StartBacktestResponse = {
 };
 
 const apiBaseUrl = import.meta.env.VITE_UI_API_BASE_URL ?? "";
+let adminCsrfToken: string | null = null;
+
+export type AdminSession = { authenticated: boolean; actor: "admin" | null; csrf_token: string | null };
 
 function apiUrl(path: string): string {
   const normalizedBase = apiBaseUrl.replace(/\/$/, "");
@@ -911,7 +914,7 @@ function apiUrl(path: string): string {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(apiUrl(path));
+  const response = await fetch(apiUrl(path), { credentials: "include" });
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -925,13 +928,18 @@ async function getJson<T>(path: string): Promise<T> {
     }
     throw new ApiError(message, response.status);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(apiUrl(path), {
     method: "POST",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(adminCsrfToken ? { "X-CSRF-Token": adminCsrfToken } : {}),
+    },
+    credentials: "include",
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   if (!response.ok) {
@@ -950,6 +958,7 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
     }
     throw new ApiError(message, response.status);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -1046,6 +1055,23 @@ export function fetchNewsAnalyses(params: { window: ThroughputPresetWindow; limi
   const p = new URLSearchParams({ window: params.window });
   if (params.limit != null) p.set("limit", String(params.limit));
   return getJson<NewsAnalysesResponse>(`/api/thesis-builder/analyses?${p.toString()}`);
+}
+
+export async function fetchAdminSession(): Promise<AdminSession> {
+  const session = await getJson<AdminSession>("/api/admin/session");
+  adminCsrfToken = session.csrf_token;
+  return session;
+}
+
+export async function loginAdmin(username: string, password: string): Promise<AdminSession> {
+  const session = await postJson<AdminSession>("/api/admin/login", { username, password });
+  adminCsrfToken = session.csrf_token;
+  return session;
+}
+
+export async function logoutAdmin(): Promise<void> {
+  await postJson<void>("/api/admin/logout");
+  adminCsrfToken = null;
 }
 
 export function fetchThesisBuilderTaxonomyGaps(): Promise<ThesisBuilderTaxonomyGapsResponse> {

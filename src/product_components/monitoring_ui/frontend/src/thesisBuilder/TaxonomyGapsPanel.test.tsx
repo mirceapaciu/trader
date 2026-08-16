@@ -9,6 +9,7 @@ const fetchGaps = vi.fn();
 const fetchValues = vi.fn();
 const decideGap = vi.fn();
 const fetchDecision = vi.fn();
+const fetchAdminSession = vi.fn();
 
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof import("../api")>("../api");
@@ -18,6 +19,7 @@ vi.mock("../api", async () => {
     fetchThesisBuilderTaxonomyValues: (params: unknown) => fetchValues(params),
     decideThesisBuilderTaxonomyGap: (payload: unknown) => decideGap(payload),
     fetchThesisBuilderTaxonomyDecision: (commandId: string) => fetchDecision(commandId),
+    fetchAdminSession: () => fetchAdminSession(),
   };
 });
 
@@ -86,6 +88,7 @@ describe("TaxonomyGapsPanel", () => {
       ],
       generated_at: "2026-07-29T10:00:00Z",
     });
+    fetchAdminSession.mockResolvedValue({ authenticated: true, actor: "admin", csrf_token: "test" });
     decideGap.mockResolvedValue({ command_id: "cmd-1", gap_id: 12, action: "map_existing", status: "accepted" });
     fetchDecision.mockResolvedValue({
       command_id: "cmd-1",

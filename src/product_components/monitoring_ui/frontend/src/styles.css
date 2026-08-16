@@ -1603,6 +1603,16 @@ th {
   margin-top: 14px;
 }
 
+.taxonomy-admin-bar, .taxonomy-login {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.taxonomy-login { align-items: stretch; flex-direction: column; }
+.taxonomy-login label { display: grid; gap: 4px; }
+
 .taxonomy-command-status {
   padding: 14px;
   border: 1px solid #cfe0d7;

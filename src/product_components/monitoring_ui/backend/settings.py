@@ -41,6 +41,11 @@ class MonitoringUiSettings:
     taxonomy_command_queue: str = "taxonomy_command_queue"
     taxonomy_decisions_enabled: bool = False
     taxonomy_trusted_actor_header: str = ""
+    admin_password: str = ""
+    admin_session_ttl_seconds: int = 28800
+    admin_login_window_seconds: int = 900
+    admin_login_max_attempts: int = 5
+    admin_allowed_origin: str = ""
 
     @property
     def postgres_dsn(self) -> str:
@@ -57,7 +62,7 @@ class MonitoringUiSettings:
 
     @classmethod
     def from_env(cls) -> "MonitoringUiSettings":
-        return cls(
+        settings = cls(
             ui_host=os.getenv("UI_HOST", "127.0.0.1"),
             ui_port=_int_env("UI_PORT", 8080),
             ui_api_base_url=os.getenv("UI_API_BASE_URL", "http://localhost:8080/api"),
@@ -100,7 +105,30 @@ class MonitoringUiSettings:
             taxonomy_trusted_actor_header=os.getenv(
                 "UI_TAXONOMY_TRUSTED_ACTOR_HEADER", ""
             ).strip(),
+            admin_password=os.getenv("UI_ADMIN_PASSWORD", "").strip(),
+            admin_session_ttl_seconds=_int_env("UI_ADMIN_SESSION_TTL_SECONDS", 28800),
+            admin_login_window_seconds=_int_env("UI_ADMIN_LOGIN_WINDOW_SECONDS", 900),
+            admin_login_max_attempts=_int_env("UI_ADMIN_LOGIN_MAX_ATTEMPTS", 5),
+            admin_allowed_origin=os.getenv("UI_ADMIN_ALLOWED_ORIGIN", "").strip().rstrip("/"),
         )
+        settings.validate_admin_auth()
+        return settings
+
+    def validate_admin_auth(self) -> None:
+        if not self.taxonomy_decisions_enabled:
+            return
+        if self.taxonomy_trusted_actor_header:
+            raise ValueError("UI_TAXONOMY_TRUSTED_ACTOR_HEADER is incompatible with single-admin authentication")
+        if not self.admin_password:
+            raise ValueError("UI_ADMIN_PASSWORD must be configured when taxonomy decisions are enabled")
+        if min(self.admin_session_ttl_seconds, self.admin_login_window_seconds, self.admin_login_max_attempts) <= 0:
+            raise ValueError("administrator authentication limits must be positive")
+        origin = self.admin_allowed_origin or self.ui_api_base_url.removesuffix("/api")
+        local_host = self.ui_host in {"127.0.0.1", "localhost", "::1"}
+        if not origin.startswith(("http://", "https://")):
+            raise ValueError("UI_ADMIN_ALLOWED_ORIGIN must name the public HTTPS UI origin")
+        if not local_host and not origin.startswith("https://"):
+            raise ValueError("single-admin authentication requires HTTPS outside loopback development")
 
 
 def _int_env(key: str, default: int) -> int:

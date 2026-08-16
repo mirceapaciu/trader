@@ -4,9 +4,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ApiError,
   decideThesisBuilderTaxonomyGap,
+  fetchAdminSession,
   fetchThesisBuilderTaxonomyDecision,
   fetchThesisBuilderTaxonomyGaps,
   fetchThesisBuilderTaxonomyValues,
+  loginAdmin,
+  logoutAdmin,
   type ThesisBuilderTaxonomyDecisionRequest,
   type ThesisBuilderTaxonomyDecisionResponse,
   type ThesisBuilderTaxonomyGap,
@@ -293,6 +296,16 @@ function TaxonomyGapDrawer({
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [commandId, setCommandId] = useState<string | null>(initialCommandId);
   const [lastCommand, setLastCommand] = useState<ThesisBuilderTaxonomyDecisionResponse | null>(null);
+  const [loginUsername, setLoginUsername] = useState("admin");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const session = useQuery({ queryKey: ["admin-session"], queryFn: fetchAdminSession, staleTime: 30000 });
+  const login = useMutation({
+    mutationFn: () => loginAdmin(loginUsername, loginPassword),
+    onSuccess: () => { setLoginPassword(""); setLoginError(""); void session.refetch(); },
+    onError: () => setLoginError("Sign-in failed. Check your credentials and try again."),
+  });
+  const logout = useMutation({ mutationFn: logoutAdmin, onSuccess: () => void session.refetch() });
   const values = useQuery({
     queryKey: ["thesis-builder", "taxonomy-values", gap.dimension, gap.family_scope ?? ""],
     queryFn: () =>
@@ -459,7 +472,19 @@ function TaxonomyGapDrawer({
           )}
 
           {status && <TaxonomyCommandStatus status={status} />}
-          {!pending && status?.status !== "completed" && (
+          {session.data?.authenticated && (
+            <div className="taxonomy-admin-bar"><span>Signed in as <strong>admin</strong></span><button type="button" className="secondary-button" onClick={() => logout.mutate()}>Log out</button></div>
+          )}
+          {session.data && !session.data.authenticated && (
+            <form className="taxonomy-login" onSubmit={(event) => { event.preventDefault(); login.mutate(); }}>
+              <h4>Admin sign-in required</h4>
+              <label>Username<input autoComplete="username" value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} /></label>
+              <label>Password<input type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} /></label>
+              {loginError && <div className="inline-error" role="alert">{loginError}</div>}
+              <button type="submit" className="primary-button" disabled={login.isPending}>{login.isPending ? "Signing in…" : "Sign in"}</button>
+            </form>
+          )}
+          {(!session.data || session.data.authenticated) && !pending && status?.status !== "completed" && (
             <form noValidate onSubmit={(event) => { event.preventDefault(); requestConfirmation(); }}>
               <fieldset className="taxonomy-action-picker">
                 <legend>Decision</legend>

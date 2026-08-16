@@ -284,7 +284,7 @@ Required read endpoints:
 - `GET /api/thesis-builder/metrics` returns bounded-window ThesisBuilder KPIs and pending evidence windows for `15m`, `1h`, `1d`, `7d`, or `30d`.
 - `GET /api/thesis-builder/throughput` returns bounded-window ThesisBuilder article throughput buckets for `15m`, `1h`, `1d`, `7d`, or `30d`.
 - `GET /api/thesis-builder/taxonomy-gaps` returns read-only unresolved and historical taxonomy-gap proposals for operator visibility.
-- `POST /api/thesis-builder/taxonomy-decisions` returns `202 Accepted` after durable command submission; `GET /api/thesis-builder/taxonomy-decisions/{command_id}` exposes command and bounded backfill progress. Mutation is disabled by default. Enabling it requires `UI_TAXONOMY_DECISIONS_ENABLED=true` and `UI_TAXONOMY_TRUSTED_ACTOR_HEADER` naming a principal header set by an authenticated reverse proxy that strips client-supplied copies. Haas must never use the placeholder shared actor.
+- `POST /api/thesis-builder/taxonomy-decisions` returns `202 Accepted` after durable command submission; `GET /api/thesis-builder/taxonomy-decisions/{command_id}` exposes command and bounded backfill progress. Mutation is disabled by default. Enabling it requires `UI_TAXONOMY_DECISIONS_ENABLED=true` and `UI_ADMIN_PASSWORD` from `.env.secrets`; the fixed authenticated actor is `admin`. The UI obtains a short-lived, HttpOnly session cookie and a session-bound CSRF token, and does not persist the password or token.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.
 - `GET /api/dead-letter` returns recent dead-letter items with bounded pagination.
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.

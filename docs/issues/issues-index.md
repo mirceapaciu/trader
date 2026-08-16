@@ -51,3 +51,4 @@
 | 260729-02 | Add asynchronous taxonomy-decision commands and trusted actor identity | resolved | docs/issues/issues-detail/260729-02.md |
 | 260729-03 | Execute bounded and resumable event-taxonomy backfill jobs | resolved | docs/issues/issues-detail/260729-03.md |
 | 260729-04 | Complete the Monitoring UI taxonomy decision workflow | resolved | docs/issues/issues-detail/260729-04.md |
+| 260816-01 | Add single-admin authentication for taxonomy decisions | resolved | docs/issues/issues-detail/260816-01.md |

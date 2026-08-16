@@ -76,12 +76,18 @@ The browser UI must use `UI_API_BASE_URL` to reach the Monitoring UI API. It mus
 
 ```env
 UI_TAXONOMY_DECISIONS_ENABLED=false
-UI_TAXONOMY_TRUSTED_ACTOR_HEADER=
+UI_ADMIN_PASSWORD=replace-with-a-secret-from-.env.secrets
+UI_ADMIN_SESSION_TTL_SECONDS=28800
+UI_ADMIN_LOGIN_WINDOW_SECONDS=900
+UI_ADMIN_LOGIN_MAX_ATTEMPTS=5
+UI_ADMIN_ALLOWED_ORIGIN=https://monitoring.example.com
 THESIS_BUILDER_TAXONOMY_COMMAND_QUEUE=taxonomy_command_queue
 ```
 
-Taxonomy mutation is unavailable unless it is explicitly enabled and a trusted
-principal header is configured. The named header must be supplied by an
-authenticated reverse proxy that removes client-provided copies. The actor is
-never accepted in the request body. Leave the feature disabled on Haas until
-that proxy contract exists.
+Taxonomy mutation is unavailable unless it is explicitly enabled and
+`UI_ADMIN_PASSWORD` is supplied from untracked `.env.secrets`. The only account is
+`admin`; its server-derived actor is never accepted from a browser payload or header.
+The legacy `UI_TAXONOMY_TRUSTED_ACTOR_HEADER` cannot be combined with this mode.
+Sessions are in-memory, expire after the configured bounded lifetime, and are lost on
+restart. Login and authenticated mutation must be served over HTTPS outside loopback
+development; set `UI_ADMIN_ALLOWED_ORIGIN` to the public HTTPS UI origin.
