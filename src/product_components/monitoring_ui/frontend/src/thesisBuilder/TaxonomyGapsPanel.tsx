@@ -79,7 +79,7 @@ function operatorError(error: unknown): string {
 
 export function TaxonomyGapsPanel() {
   const [dimensionFilter, setDimensionFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("open");
   const [sortMode, setSortMode] = useState<SortMode>("occurrence_count");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [commandByGap, setCommandByGap] = useState<Record<number, string>>({});

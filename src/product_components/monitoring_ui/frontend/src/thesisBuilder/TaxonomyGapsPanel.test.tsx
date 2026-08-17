@@ -111,6 +111,8 @@ describe("TaxonomyGapsPanel", () => {
     renderPanel();
 
     const proposal = await screen.findByRole("button", { name: "Announcement" });
+    expect(screen.getByLabelText("Filter taxonomy gaps by status")).toHaveValue("open");
+    expect(screen.queryByRole("button", { name: "Deal Update" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("row")[1]).toHaveTextContent("8");
     fireEvent.change(screen.getByLabelText("Filter taxonomy gaps by status"), { target: { value: "rejected" } });
     expect(screen.queryByRole("button", { name: "Announcement" })).not.toBeInTheDocument();
