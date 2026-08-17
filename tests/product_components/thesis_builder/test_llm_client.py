@@ -23,6 +23,8 @@ from src.product_components.thesis_builder.models import (
     ThesisStrategy,
     TradeDirection,
 )
+from src.product_components.thesis_builder.event_identity import DEFAULT_TAXONOMY_SNAPSHOT
+from src.product_components.thesis_builder.taxonomy_runtime import TaxonomyValue, build_taxonomy_snapshot
 
 
 def test_parse_analysis_result_validates_structured_response() -> None:
@@ -804,6 +806,94 @@ def test_build_prompt_fundamentals_null_when_missing() -> None:
     # The key is always present so prompt structure is deterministic; a missing
     # snapshot renders as null.
     assert '"fundamentals": null' in prompt
+
+
+def test_build_prompt_serializes_selected_taxonomy_in_stable_order() -> None:
+    taxonomy = build_taxonomy_snapshot(
+        revision=9,
+        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+        values=(
+            TaxonomyValue("event_subtype", "zeta_results", "active", "earnings_results"),
+            TaxonomyValue("event_family", "custom_event", "active"),
+            TaxonomyValue("event_subtype", "alpha_results", "active", "earnings_results"),
+        ),
+    )
+
+    prompt = json.loads(
+        _build_prompt(
+            article=_article(), ticker="AAPL", exchange_code="XNAS",
+            market_context_snapshot=None, taxonomy_revision=taxonomy.revision, taxonomy=taxonomy,
+        )
+    )
+
+    active = prompt["active_event_taxonomy"]
+    assert active["revision"] == 9
+    assert active["canonical_values"]["event_family"] == sorted(active["canonical_values"]["event_family"])
+    assert active["canonical_values"]["event_subtype"] == sorted(active["canonical_values"]["event_subtype"])
+    assert active["event_subtypes_by_family"]["earnings_results"] == sorted(
+        active["event_subtypes_by_family"]["earnings_results"]
+    )
+    assert "custom_event" in active["canonical_values"]["event_family"]
+    assert "alpha_results" in active["event_subtypes_by_family"]["earnings_results"]
+
+
+def test_build_prompt_taxonomy_changes_cache_sensitive_prompt() -> None:
+    first = build_taxonomy_snapshot(
+        revision=8,
+        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+        values=(TaxonomyValue("event_family", "first_custom_event", "active"),),
+    )
+    second = build_taxonomy_snapshot(
+        revision=9,
+        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+        values=(TaxonomyValue("event_family", "second_custom_event", "active"),),
+    )
+
+    kwargs = dict(article=_article(), ticker="AAPL", exchange_code="XNAS", market_context_snapshot=None)
+    assert _build_prompt(**kwargs, taxonomy_revision=first.revision, taxonomy=first) != _build_prompt(
+        **kwargs, taxonomy_revision=second.revision, taxonomy=second
+    )
+
+
+def test_analyzer_passes_selected_runtime_taxonomy_to_production_prompt() -> None:
+    taxonomy = build_taxonomy_snapshot(
+        revision=9,
+        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+        values=(TaxonomyValue("event_family", "runtime_visible_event", "active"),),
+    )
+    client = _PromptCapturingClient()
+    analyzer = ThesisAnalyzer(
+        client=client, model="test-model", max_tokens_per_run=10_000, max_tokens_per_item=200,
+        taxonomy_snapshot_provider=_StaticTaxonomyProvider(taxonomy), taxonomy_revision=taxonomy.revision,
+    )
+
+    analyzer.analyze_article(article=_article(), ticker="AAPL", exchange_code="XNAS")
+
+    prompt = json.loads(client.prompt)
+    assert prompt["taxonomy_revision"] == 9
+    assert "runtime_visible_event" in prompt["active_event_taxonomy"]["canonical_values"]["event_family"]
+
+
+class _StaticTaxonomyProvider:
+    def __init__(self, taxonomy) -> None:
+        self._taxonomy = taxonomy
+
+    def get(self, taxonomy_revision=None):
+        assert taxonomy_revision in (None, self._taxonomy.revision)
+        return self._taxonomy
+
+
+class _PromptCapturingClient:
+    prompt = ""
+
+    def analyze(self, *, model, prompt, max_output_tokens):
+        self.prompt = prompt
+        return {
+            "ticker": "AAPL", "exchange_code": "XNAS", "sentiment": 0.1, "relevance": 0.1,
+            "urgency": "informational", "suggested_action": "hold", "candidate_strategy": "event_driven",
+            "direction": "hold", "confidence": 0.1, "reasoning": "test", "is_market_moving": False,
+            "estimated_tokens": 1,
+        }
 
 
 def _article() -> NewsArticle:

@@ -25,4 +25,5 @@ pythonpath = ["."]
 addopts = "--import-mode=importlib"
 markers = [
     "integration: marks tests as integration tests",
+    "llm_eval: marks opt-in integration tests that call a real LLM and incur API cost",
 ]

@@ -189,6 +189,7 @@ class ThesisAnalyzer:
             market_context_snapshot=market_context_snapshot,
             fundamentals_snapshot=fundamentals_snapshot,
             taxonomy_revision=taxonomy.revision,
+            taxonomy=taxonomy,
         )
         cached = _get_cached_analysis(
             self.client,
@@ -581,7 +582,9 @@ def _build_prompt(
     market_context_snapshot: dict[str, Any] | None,
     fundamentals_snapshot: dict[str, Any] | None = None,
     taxonomy_revision: int = 1,
+    taxonomy: EventTaxonomySnapshot | None = None,
 ) -> str:
+    active_taxonomy = taxonomy or DEFAULT_TAXONOMY_SNAPSHOT
     return json.dumps(
         {
             "task": (
@@ -624,7 +627,9 @@ def _build_prompt(
             ],
             "event_identity_rules": [
                 "Return event_identity for the underlying occurrence, not trading interpretation.",
+                "Choose canonical values only from active_event_taxonomy. Keep each taxonomy dimension separate.",
                 "Use a canonical event_family only when it fits; otherwise preserve the proposed value in event_family_candidate.",
+                "Use event_subtype only when it is allowed for the selected event_family; never put a subtype, coverage role, or stage in event_family.",
                 "Keep coverage_role separate from event family: previews, announcements, reactions and recaps can reference one occurrence.",
                 "Include subject ticker/exchange, known fiscal period or identifiers, and event stage when grounded in the article. Unknown values must remain lossless rather than guessed.",
             ],
@@ -667,6 +672,7 @@ def _build_prompt(
             ],
             "instrument": {"ticker": ticker, "exchange_code": exchange_code},
             "taxonomy_revision": taxonomy_revision,
+            "active_event_taxonomy": _prompt_taxonomy(active_taxonomy),
             "article": {
                 "id": article.id,
                 "source": article.source,
@@ -705,6 +711,24 @@ def _build_prompt(
         },
         sort_keys=True,
     )
+
+
+def _prompt_taxonomy(taxonomy: EventTaxonomySnapshot) -> dict[str, Any]:
+    """Serialize the selected immutable snapshot deterministically for model guidance."""
+    subtypes_by_family: dict[str, list[str]] = {}
+    for subtype, family in taxonomy.subtype_families.items():
+        subtypes_by_family.setdefault(family, []).append(subtype)
+    return {
+        "revision": taxonomy.revision,
+        "canonical_values": {
+            dimension: sorted(values)
+            for dimension, values in sorted(taxonomy.canonical_values.items())
+        },
+        "event_subtypes_by_family": {
+            family: sorted(subtypes)
+            for family, subtypes in sorted(subtypes_by_family.items())
+        },
+    }
 
 
 def _build_triage_prompt(*, article, ticker: str, exchange_code: str) -> str:

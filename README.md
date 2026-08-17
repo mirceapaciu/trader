@@ -75,6 +75,22 @@ The news-fetcher startup path applies the shared and news-fetcher schema SQL fil
 - Full suite: uv run pytest
 - Monitoring UI frontend build: cd src/product_components/monitoring_ui/frontend; npm run build
 
+### Opt-in ThesisBuilder LLM taxonomy evaluation
+
+The taxonomy corpus makes real, cost-bearing OpenAI calls and is excluded from the
+normal unit and integration commands. It loads only `.env.secrets` for
+`OPENAI_API_KEY`, uses the pinned `gpt-4o-mini-2024-07-18` baseline by default, and
+writes a concise result artifact to `temp/taxonomy-llm-integration-results.jsonl`.
+
+```powershell
+$env:RUN_LLM_INTEGRATION = "1"
+uv run pytest -m "integration and llm_eval" tests/integration/test_thesis_builder_taxonomy_llm_integration.py
+```
+
+Set `THESIS_BUILDER_LLM_INTEGRATION_MODEL` only when intentionally changing the
+evaluation baseline. Use `uv run pytest -m "integration and not llm_eval"` for
+infrastructure integration tests without paid model calls.
+
 ## Ubuntu Deployment
 
 Production deployment for the `haas` Ubuntu server is Docker Compose based:
