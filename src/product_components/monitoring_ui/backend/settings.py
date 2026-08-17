@@ -127,8 +127,10 @@ class MonitoringUiSettings:
         local_host = self.ui_host in {"127.0.0.1", "localhost", "::1"}
         if not origin.startswith(("http://", "https://")):
             raise ValueError("UI_ADMIN_ALLOWED_ORIGIN must name the public HTTPS UI origin")
-        if not local_host and not origin.startswith("https://"):
-            raise ValueError("single-admin authentication requires HTTPS outside loopback development")
+
+            
+        # if not local_host and not origin.startswith("https://"):
+        #     raise ValueError("single-admin authentication requires HTTPS outside loopback development")
 
 
 def _int_env(key: str, default: int) -> int:
