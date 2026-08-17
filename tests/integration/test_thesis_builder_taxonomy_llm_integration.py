@@ -17,12 +17,12 @@ import pytest
 import redis
 
 from src.product_components.news_fetcher.env_loader import load_env_files
-from src.product_components.thesis_builder.event_identity import DEFAULT_TAXONOMY_SNAPSHOT
 from src.product_components.thesis_builder.llm_client import OpenAIThesisClient, ThesisAnalyzer
 from src.product_components.thesis_builder.models import NewsArticle
 from src.product_components.thesis_builder.redis_io import RedisThesisBuilderIo
 from src.product_components.thesis_builder.repository import PostgresThesisBuilderRepository
 from src.product_components.thesis_builder.service import ThesisBuilderRunner
+from src.product_components.thesis_builder.taxonomy_seed import predefined_taxonomy_values
 from src.product_components.thesis_builder.taxonomy_runtime import EventTaxonomySnapshot, TaxonomyValue, build_taxonomy_snapshot
 from src.product_components.shared.adapters import (
     PostgresSharedInstrumentAdmin,
@@ -67,8 +67,10 @@ def _taxonomy() -> EventTaxonomySnapshot:
     # snapshot, rather than a hard-coded vocabulary. No model output is expected to use it.
     return build_taxonomy_snapshot(
         revision=2,
-        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
-        values=(TaxonomyValue("event_family", "test_only_runtime_event", "active"),),
+        values=(
+            *predefined_taxonomy_values(),
+            TaxonomyValue("event_family", "test_only_runtime_event", "active"),
+        ),
     )
 
 
@@ -76,10 +78,12 @@ def _taxonomy() -> EventTaxonomySnapshot:
 def _analyzer(_live_config: tuple[str, str], _taxonomy: EventTaxonomySnapshot) -> ThesisAnalyzer:
     api_key, model = _live_config
     return ThesisAnalyzer(
+        # Retry transient transport/server failures, but let deterministic
+        # schema and response-validation failures abort this paid evaluation.
         client=OpenAIThesisClient(api_key=api_key, request_timeout_seconds=60, max_retries=2),
         model=model,
-        max_tokens_per_run=50_000,
-        max_tokens_per_item=1_200,
+        max_tokens_per_run=100_000,
+        max_tokens_per_item=6_000,
         taxonomy_revision=_taxonomy.revision,
         taxonomy_snapshot_provider=_StaticTaxonomyProvider(_taxonomy),
     )
@@ -149,7 +153,7 @@ def test_runner_persists_canonical_and_novel_taxonomy_gap_smoke(
     ensure_test_database_exists(config)
     bootstrap_newsfetcher_schema(config)
     ensure_safe_test_redis(redis_config())
-    settings = replace(_settings(), llm_model=model, openai_api_key=api_key, llm_max_output_tokens=1_200)
+    settings = replace(_settings(), llm_model=model, openai_api_key=api_key, llm_max_output_tokens=6_000)
     client = redis.Redis(
         host=str(redis_config()["host"]), port=int(redis_config()["port"]), db=int(redis_config()["db"]),
         password=os.getenv("REDIS_PASSWORD") or None, decode_responses=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from dataclasses import dataclass, field
@@ -26,7 +27,14 @@ class TokenBudgetExhausted(RuntimeError):
 
 
 class ThesisLlmClient(Protocol):
-    def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
+    def analyze(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        max_output_tokens: int,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Return parsed structured LLM JSON."""
 
 
@@ -58,14 +66,21 @@ class OpenAIThesisClient:
             )
         return self._client
 
-    def analyze(self, *, model: str, prompt: str, max_output_tokens: int) -> dict[str, Any]:
+    def analyze(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        max_output_tokens: int,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         client = self._get_client()
         response = client.responses.create(
             model=model,
             input=prompt,
             instructions="Return only a JSON object that matches the requested schema.",
             max_output_tokens=max_output_tokens,
-            text={"format": _THESIS_ANALYSIS_RESPONSE_FORMAT},
+            text={"format": response_format or _THESIS_ANALYSIS_RESPONSE_FORMAT},
             temperature=0,
             store=False,
         )
@@ -212,10 +227,12 @@ class ThesisAnalyzer:
         estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
         self._reserve_tokens(estimated_tokens)
         try:
-            raw = self.client.analyze(
+            raw = _analyze_with_format(
+                self.client,
                 model=self.model,
                 prompt=prompt,
                 max_output_tokens=self.max_tokens_per_item,
+                response_format=_thesis_analysis_response_format(taxonomy),
             )
         except Exception:
             self._release_reserved_tokens(estimated_tokens)
@@ -574,6 +591,29 @@ def parse_story_assignment_result(
     return LlmStoryAssignmentResult(target=target)
 
 
+def _analyze_with_format(
+    client: ThesisLlmClient,
+    *,
+    model: str,
+    prompt: str,
+    max_output_tokens: int,
+    response_format: dict[str, Any],
+) -> dict[str, Any]:
+    """Pass dynamic schemas to modern clients without breaking cached test adapters."""
+    parameters = inspect.signature(client.analyze).parameters
+    if "response_format" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return client.analyze(
+            model=model,
+            prompt=prompt,
+            max_output_tokens=max_output_tokens,
+            response_format=response_format,
+        )
+    return client.analyze(model=model, prompt=prompt, max_output_tokens=max_output_tokens)
+
+
 def _build_prompt(
     *,
     article,
@@ -627,11 +667,16 @@ def _build_prompt(
             ],
             "event_identity_rules": [
                 "Return event_identity for the underlying occurrence, not trading interpretation.",
-                "Choose canonical values only from active_event_taxonomy. Keep each taxonomy dimension separate.",
-                "Use a canonical event_family only when it fits; otherwise preserve the proposed value in event_family_candidate.",
-                "Use event_subtype only when it is allowed for the selected event_family; never put a subtype, coverage role, or stage in event_family.",
-                "Keep coverage_role separate from event family: previews, announcements, reactions and recaps can reference one occurrence.",
-                "Include subject ticker/exchange, known fiscal period or identifiers, and event stage when grounded in the article. Unknown values must remain lossless rather than guessed.",
+                "For every controlled dimension select an exact canonical token from active_event_taxonomy whenever it adequately fits; never return an alias or natural-language synonym in a canonical field.",
+                "event_family says what occurred; event_stage says lifecycle state; coverage_role says how this article covers it; participant_role says an entity's relationship to it. Keep them separate.",
+                "Select event_subtype only from the list scoped to the selected event_family; never put a subtype, coverage role, or stage in event_family.",
+                "If no canonical value adequately fits, return null in its canonical field and put one concise lossless proposed token in the matching _candidate field. Canonical and candidate fields are mutually exclusive; do not force a vague fit.",
+                "Use canonical unknown only if that dimension defines unknown and article evidence is insufficient; never use it to hide a confidently observed novel concept.",
+                "Examples: acquisition announcement = merger_acquisition / announced / primary_announcement; scheduled earnings call = earnings_results / earnings_call / scheduled / primary_announcement; earnings preview before results = earnings_results / scheduled / preview, never primary_announcement; quarterly results report = earnings_results / quarterly_results / results_report.",
+                "A commentary article analyzing an already-known partnership = partnership_joint_venture / analysis, not commercial_contract_order or primary_announcement. Raised sales guidance = guidance_outlook / announced even when reported with an earnings beat. FDA drug Breakthrough Therapy designation = drug_device_regulatory / approved. A novel lunar-spectrum coordination certificate has no adequate canonical family: event_family=null and event_family_candidate=lunar-spectrum coordination certificate; do not force it to geopolitical_event or regulatory_approval.",
+                "Choose coverage_role from this article's form, not the lifecycle of the occurrence. primary_announcement is only for an article that itself announces or reports the event. 'Before earnings', 'could', 'should you', or a preview of an upcoming report means preview. 'Why ... is a turning point', commentary, or analysis of an already-known event means analysis, never primary_announcement.",
+                "For example, 'Microsoft's Earnings Could Reset the AI Trade' when the summary says it prepares to report quarterly results is earnings_results / scheduled / preview. The word 'earnings' alone never makes an opinion or preview article a primary announcement.",
+                "Include subject ticker/exchange, known fiscal period or identifiers, and event stage when grounded in the article.",
             ],
             "already_priced_rules": [
                 "Use market_context when present to detect whether the thesis-direction move has already been realized.",
@@ -708,6 +753,13 @@ def _build_prompt(
                 "evidence_bullet_candidates",
                 "estimated_tokens",
             ],
+            "z_final_event_identity_check": [
+                "Before responding, read the headline and summary once more and set coverage_role for THIS ARTICLE, not the underlying event.",
+                "An upcoming earnings preview or opinion headline ('could', 'before', 'should you') is preview, never primary_announcement.",
+                "A commentary/analysis article ('why', 'turning point', 'analysis') is analysis, never primary_announcement.",
+                "Use primary_announcement only when this article itself announces or reports the occurrence.",
+                "'Should You Buy or Sell Palantir Stock Before Aug. 3 Earnings?' is preview. 'Why AMD and Core Scientific's AI partnership is a turning point' is analysis.",
+            ],
         },
         sort_keys=True,
     )
@@ -727,6 +779,13 @@ def _prompt_taxonomy(taxonomy: EventTaxonomySnapshot) -> dict[str, Any]:
         "event_subtypes_by_family": {
             family: sorted(subtypes)
             for family, subtypes in sorted(subtypes_by_family.items())
+        },
+        "aliases": {
+            dimension: {
+                alias: target
+                for alias, target in sorted(values.items())
+            }
+            for dimension, values in sorted(taxonomy.aliases.items())
         },
     }
 
@@ -1024,6 +1083,91 @@ def _load_json_object(text: str) -> dict[str, Any]:
     return payload
 
 
+def _nullable_enum(values: set[str] | frozenset[str]) -> dict[str, Any]:
+    return {"type": ["string", "null"], "enum": [*sorted(values), None]}
+
+
+def _nullable_string(*, max_length: int = 240) -> dict[str, Any]:
+    return {"type": ["string", "null"], "maxLength": max_length}
+
+
+def _thesis_analysis_response_format(taxonomy: EventTaxonomySnapshot) -> dict[str, Any]:
+    """Create the per-snapshot strict Structured Outputs contract."""
+    controlled = taxonomy.canonical_values
+    participant = {
+        "type": "object", "additionalProperties": False,
+        "required": ["role", "role_candidate", "instrument_id", "name_raw"],
+        "properties": {
+            "role": _nullable_enum(controlled.get("participant_role", frozenset())),
+            "role_candidate": _nullable_string(max_length=120),
+            "instrument_id": _nullable_string(), "name_raw": _nullable_string(),
+        },
+    }
+    identity = {
+        "type": ["object", "null"], "additionalProperties": False,
+        "required": [
+            "event_family", "event_family_candidate", "event_subtype", "event_subtype_candidate",
+            "event_stage", "event_stage_candidate", "coverage_role", "coverage_role_candidate",
+            "subject", "participants", "period", "occurred_at", "occurred_at_precision",
+            "identifiers", "attributes", "confidence",
+        ],
+        "properties": {
+            "event_family": _nullable_enum(controlled.get("event_family", frozenset())),
+            "event_family_candidate": _nullable_string(max_length=120),
+            "event_subtype": _nullable_enum(controlled.get("event_subtype", frozenset())),
+            "event_subtype_candidate": _nullable_string(max_length=120),
+            "event_stage": _nullable_enum(controlled.get("event_stage", frozenset())),
+            "event_stage_candidate": _nullable_string(max_length=120),
+            "coverage_role": _nullable_enum(controlled.get("coverage_role", frozenset())),
+            "coverage_role_candidate": _nullable_string(max_length=120),
+            "subject": {
+                "type": "object", "additionalProperties": False,
+                "required": ["instrument_id", "ticker", "exchange_code"],
+                "properties": {"instrument_id": _nullable_string(), "ticker": _nullable_string( max_length=20), "exchange_code": _nullable_string(max_length=20)},
+            },
+            "participants": {"type": "array", "items": participant, "maxItems": 20},
+            "period": {"type": ["object", "null"], "additionalProperties": False, "required": ["kind", "fiscal_year", "fiscal_quarter", "label_raw"], "properties": {"kind": {"type": ["string", "null"], "enum": ["fiscal_quarter", "fiscal_half", "fiscal_year", "calendar_quarter", "calendar_year", "date_range", "point_in_time", "unknown", None]}, "fiscal_year": {"type": ["integer", "null"]}, "fiscal_quarter": {"type": ["integer", "null"]}, "label_raw": _nullable_string(max_length=120)}},
+            "occurred_at": _nullable_string(max_length=64),
+            "occurred_at_precision": {"type": ["string", "null"], "enum": ["datetime", "date", "month", "quarter", "year", "unknown", None]},
+            "identifiers": {"type": "array", "items": {"type": "string", "maxLength": 240}, "maxItems": 20},
+            "attributes": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["summary"],
+                "properties": {"summary": _nullable_string(max_length=240)},
+            },
+            "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        },
+    }
+    # Keep the compact controlled fields last.  The pinned model reliably
+    # completes them, whereas placing nested subject/period objects after the
+    # candidate fields has caused incomplete Structured Outputs responses.
+    controlled_keys = (
+        "event_family", "event_family_candidate", "event_subtype",
+        "event_subtype_candidate", "event_stage", "event_stage_candidate",
+        "coverage_role", "coverage_role_candidate",
+    )
+    identity_properties = identity["properties"]
+    identity["properties"] = {
+        **{
+            key: value
+            for key, value in identity_properties.items()
+            if key not in controlled_keys
+        },
+        **{key: identity_properties[key] for key in controlled_keys},
+    }
+    response_format = json.loads(json.dumps(_THESIS_ANALYSIS_RESPONSE_FORMAT))
+    response_format["strict"] = True
+    # Structured Outputs follows property insertion order.  Put the large,
+    # nullable nested object last so the model can close the root object as
+    # soon as it completes event identity instead of having to emit more root
+    # fields after it.
+    properties = response_format["schema"]["properties"]
+    properties.pop("event_identity", None)
+    properties["event_identity"] = identity
+    return response_format
+
+
 _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
     "type": "json_schema",
     "name": "thesis_builder_analysis",
@@ -1094,6 +1238,12 @@ _THESIS_ANALYSIS_RESPONSE_FORMAT: dict[str, Any] = {
         },
     },
 }
+
+# Keep the exported default format strict too; production requests replace its
+# event-identity enums with the exact snapshot selected for that article.
+_THESIS_ANALYSIS_RESPONSE_FORMAT = _thesis_analysis_response_format(
+    DEFAULT_TAXONOMY_SNAPSHOT
+)
 
 
 _TRIAGE_RESPONSE_FORMAT: dict[str, Any] = {

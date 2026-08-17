@@ -115,7 +115,7 @@ class ThesisBuilderSettings:
             tradeability_atr_stop_mult=_float_env("THESIS_BUILDER_TRADEABILITY_ATR_STOP_MULT", 1.5),
             llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
             llm_daily_token_budget=_int_env("LLM_DAILY_TOKEN_BUDGET", 5000000),
-            llm_max_output_tokens=_int_env("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", 1200),
+            llm_max_output_tokens=_int_env("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", 6000),
             triage_enabled=_bool_env("THESIS_BUILDER_TRIAGE_ENABLED", False),
             triage_model=os.getenv("THESIS_BUILDER_TRIAGE_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
             triage_max_output_tokens=_int_env("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", 200),

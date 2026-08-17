@@ -58,8 +58,8 @@ def normalize_event_identity(raw: dict[str, Any] | None, *, ticker: str, exchang
         safe_participants.append({"role": resolved_role or "other", "role_candidate": role if role and resolved_role is None else None, "instrument_id": participant.get("instrument_id"), "name_raw": str(participant.get("name_raw") or "")[:240] or None})
     status = "classified" if classified else "unmapped"
     occurred_value = source.get("occurred_at") or (occurred_at.isoformat() if occurred_at else None)
-    stage_candidate = normalize_token(source.get("event_stage"))
-    role_candidate = normalize_token(source.get("coverage_role"))
+    stage_candidate = normalize_token(source.get("event_stage")) or normalize_token(source.get("event_stage_candidate"))
+    role_candidate = normalize_token(source.get("coverage_role")) or normalize_token(source.get("coverage_role_candidate"))
     stage = snapshot.resolve("event_stage", stage_candidate)
     coverage_role = snapshot.resolve("coverage_role", role_candidate)
     identity = {
@@ -79,7 +79,7 @@ def normalize_event_identity(raw: dict[str, Any] | None, *, ticker: str, exchang
         "identifiers": [str(value)[:240] for value in source.get("identifiers", [])[:20] if str(value).strip()],
         "attributes": source.get("attributes") if isinstance(source.get("attributes"), dict) else {},
         "confidence": _confidence(source.get("confidence")),
-        "provenance": {"source": "full_analysis_llm", "prompt_version": "event-identity-v1", "taxonomy_revision": snapshot.revision, "raw_response": source},
+        "provenance": {"source": "full_analysis_llm", "prompt_version": "event-identity-v2", "taxonomy_revision": snapshot.revision, "raw_response": source},
     }
     identity["event_instance_key"] = _instance_key(identity)
     return identity

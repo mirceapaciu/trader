@@ -874,6 +874,39 @@ def test_analyzer_passes_selected_runtime_taxonomy_to_production_prompt() -> Non
     assert "runtime_visible_event" in prompt["active_event_taxonomy"]["canonical_values"]["event_family"]
 
 
+def test_analyzer_passes_snapshot_specific_strict_response_format() -> None:
+    taxonomy = build_taxonomy_snapshot(
+        revision=9,
+        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
+        values=(TaxonomyValue("event_family", "runtime_visible_event", "active"),),
+    )
+    client = _FormatCapturingClient()
+    ThesisAnalyzer(
+        client=client, model="test-model", max_tokens_per_run=10_000, max_tokens_per_item=200,
+        taxonomy_snapshot_provider=_StaticTaxonomyProvider(taxonomy), taxonomy_revision=taxonomy.revision,
+    ).analyze_article(article=_article(), ticker="AAPL", exchange_code="XNAS")
+
+    identity = client.response_format["schema"]["properties"]["event_identity"]
+    assert client.response_format["strict"] is True
+    assert identity["additionalProperties"] is False
+    assert "runtime_visible_event" in identity["properties"]["event_family"]["enum"]
+    assert set(identity["required"]) == set(identity["properties"])
+
+
+class _FormatCapturingClient:
+    response_format: dict = {}
+
+    def analyze(self, *, model, prompt, max_output_tokens, response_format):
+        self.prompt = prompt
+        self.response_format = response_format
+        return {
+            "ticker": "AAPL", "exchange_code": "XNAS", "sentiment": 0.1, "relevance": 0.1,
+            "urgency": "informational", "suggested_action": "hold", "candidate_strategy": "event_driven",
+            "direction": "hold", "confidence": 0.1, "reasoning": "test", "is_market_moving": False,
+            "estimated_tokens": 1,
+        }
+
+
 class _StaticTaxonomyProvider:
     def __init__(self, taxonomy) -> None:
         self._taxonomy = taxonomy

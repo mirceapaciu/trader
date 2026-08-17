@@ -337,6 +337,14 @@ ThesisBuilder owns loading the event taxonomy used by analysis:
 - A requested historical revision is reconstructed from values and aliases effective at that revision; full taxonomy copies are not stored.
 - Accepted canonical values and mapped aliases become effective for the next live analysis without a process deployment.
 - Snapshot replacement is atomic. A transient database failure retains the last valid loaded snapshot rather than substituting an empty taxonomy.
+- Each full-analysis request serializes that exact immutable snapshot into a compact,
+  deterministically sorted taxonomy block (canonical values, family-scoped subtypes, and
+  aliases). The same snapshot builds the strict Structured Outputs schema and normalizes
+  the response, so a live request cannot mix revisions.
+- The model must return an exact canonical token when one fits. Unsupported concepts use
+  the matching nullable `_candidate` field rather than an improvised synonym; canonical
+  and candidate fields are mutually exclusive. The event-identity prompt contract is
+  versioned and forms part of the LLM cache key through the complete prompt payload.
 - Family-scoped subtypes resolve only under their configured event family.
 
 ## 10. Failure Handling

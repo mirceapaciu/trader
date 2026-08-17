@@ -54,4 +54,4 @@
 | 260816-01 | Add single-admin authentication for taxonomy decisions | resolved | docs/issues/issues-detail/260816-01.md |
 | 260817-01 | Add real-LLM integration tests for ThesisBuilder event-taxonomy selection | resolved | docs/issues/issues-detail/260817-01.md |
 | 260817-02 | Make the event-taxonomy database authoritative and bootstrap the complete predefined seed | resolved | docs/issues/issues-detail/260817-02.md |
-| 260817-03 | Instruct the analysis LLM to select from the active event taxonomy before proposing new values | new | docs/issues/issues-detail/260817-03.md |
+| 260817-03 | Instruct the analysis LLM to select from the active event taxonomy before proposing new values | resolved | docs/issues/issues-detail/260817-03.md |
