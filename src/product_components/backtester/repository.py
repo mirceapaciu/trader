@@ -12,6 +12,7 @@ import psycopg
 from psycopg.types.json import Json
 
 from src.product_components.thesis_builder.export import ExportedThesisCard
+from src.product_components.thesis_builder.taxonomy_seed import bootstrap_predefined_taxonomy
 
 from .models import (
     BacktestRunParams,
@@ -56,6 +57,7 @@ class BacktesterRepository:
             with connection.cursor() as cursor:
                 for schema_file in schema_files:
                     cursor.execute(schema_file.read_text(encoding="utf-8"))
+            bootstrap_predefined_taxonomy(connection, schema=self._thesis_builder_schema)
 
     def create_run(
         self,
@@ -332,9 +334,11 @@ class BacktesterRepository:
         _safe_identifier(sim_schema)
         schema_sql = render_thesis_schema_sql(repo_root=repo_root, target_schema=sim_schema)
         with closing(psycopg.connect(self._dsn)) as connection:
-            connection.autocommit = True
+            connection.autocommit = False
             with connection.cursor() as cursor:
                 cursor.execute(schema_sql)
+            bootstrap_predefined_taxonomy(connection, schema=sim_schema)
+            connection.commit()
 
     def count_sim_evidence_windows(self, *, sim_schema: str) -> int:
         """Number of evidence windows the regeneration created in its sim schema."""

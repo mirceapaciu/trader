@@ -31,7 +31,7 @@ from .models import (
 from .event_identity import compare_event_identity, taxonomy_gap_values
 from .taxonomy_decisions import TaxonomyDecisionRequest, TaxonomyDecisionValidationError
 from .taxonomy_gateway import TaxonomyBackfillStatus, TaxonomyCommand
-from .taxonomy_runtime import TaxonomyValue, family_rules_scope
+from .taxonomy_runtime import TaxonomyValue, family_rules_implied_subtype, family_rules_scope
 from .taxonomy_worker import (
     TaxonomyBackfillAnalysis,
     TaxonomyBackfillJob,
@@ -1476,6 +1476,7 @@ class PostgresThesisBuilderRepository:
                     if row.get("alias_for_value")
                     else None
                 ),
+                implied_subtype=family_rules_implied_subtype(row.get("family_rules")),
             )
             for row in rows
         )

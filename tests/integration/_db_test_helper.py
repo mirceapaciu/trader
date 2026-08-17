@@ -109,6 +109,7 @@ def ensure_test_database_exists(config: dict[str, object]) -> None:
 
 
 def bootstrap_newsfetcher_schema(config: dict[str, object]) -> None:
+    from src.product_components.thesis_builder.taxonomy_seed import bootstrap_predefined_taxonomy
     schema_files = [
         (
             Path(__file__).resolve().parents[2]
@@ -149,6 +150,7 @@ def bootstrap_newsfetcher_schema(config: dict[str, object]) -> None:
             for schema_file in schema_files:
                 sql_text = schema_file.read_text(encoding="utf-8")
                 cur.execute(sql_text)
+        bootstrap_predefined_taxonomy(conn)
         conn.commit()
 
 

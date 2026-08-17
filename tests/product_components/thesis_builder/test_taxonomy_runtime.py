@@ -12,6 +12,7 @@ from src.product_components.thesis_builder.taxonomy_runtime import (
     TaxonomyValue,
     build_taxonomy_snapshot,
 )
+from src.product_components.thesis_builder.taxonomy_seed import predefined_taxonomy_values
 
 
 @dataclass
@@ -39,7 +40,7 @@ def test_alias_is_effective_only_from_its_revision() -> None:
     source = _Source(
         revision=2,
         values_by_revision={
-            2: (
+            2: predefined_taxonomy_values() + (
                 TaxonomyValue(
                     dimension="event_family",
                     canonical_value="partnership",
@@ -77,8 +78,7 @@ def test_alias_is_effective_only_from_its_revision() -> None:
 def test_accepted_value_is_recognized_without_code_constant() -> None:
     snapshot = build_taxonomy_snapshot(
         revision=2,
-        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
-        values=(
+        values=predefined_taxonomy_values() + (
             TaxonomyValue(
                 dimension="event_family",
                 canonical_value="space_industry_event",
@@ -101,8 +101,7 @@ def test_accepted_value_is_recognized_without_code_constant() -> None:
 def test_subtype_scope_is_enforced() -> None:
     snapshot = build_taxonomy_snapshot(
         revision=2,
-        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
-        values=(
+        values=predefined_taxonomy_values() + (
             TaxonomyValue(
                 dimension="event_subtype",
                 canonical_value="capacity_reservation",
@@ -172,8 +171,7 @@ def test_persisted_identity_can_be_renormalized_for_backfill() -> None:
     )
     snapshot = build_taxonomy_snapshot(
         revision=2,
-        baseline=DEFAULT_TAXONOMY_SNAPSHOT,
-        values=(
+        values=predefined_taxonomy_values() + (
             TaxonomyValue(
                 dimension="event_family",
                 canonical_value="partnership",
@@ -188,3 +186,21 @@ def test_persisted_identity_can_be_renormalized_for_backfill() -> None:
     assert updated["event_family"] == "partnership_joint_venture"
     assert updated["taxonomy_revision"] == 2
     assert updated["subject"]["ticker"] == "AMD"
+
+
+def test_database_rows_alone_preserve_implied_subtype_aliases() -> None:
+    snapshot = build_taxonomy_snapshot(revision=1, values=predefined_taxonomy_values())
+
+    identity = normalize_event_identity(
+        {"event_family": "military action"}, ticker="LMT", exchange_code="XNYS", taxonomy=snapshot
+    )
+
+    assert identity["event_family"] == "geopolitical_event"
+    assert identity["event_subtype"] == "military_action"
+
+
+def test_later_deprecation_is_not_reintroduced_by_a_baseline() -> None:
+    values = tuple(value for value in predefined_taxonomy_values() if value.canonical_value != "announced")
+    snapshot = build_taxonomy_snapshot(revision=3, values=values, baseline=DEFAULT_TAXONOMY_SNAPSHOT)
+
+    assert snapshot.resolve("event_stage", "announced") is None

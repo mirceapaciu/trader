@@ -9,78 +9,16 @@ from datetime import datetime
 import hashlib
 import json
 import re
-from types import MappingProxyType
 from typing import Any, Literal
 
 from .taxonomy_runtime import EventTaxonomySnapshot
+from .taxonomy_seed import TAXONOMY_VERSION, predefined_taxonomy_snapshot
 
 
 SCHEMA_VERSION = 1
-TAXONOMY_VERSION = "event-taxonomy-v1"
-
-EVENT_FAMILIES = frozenset("""earnings_results guidance_outlook investor_day_strategy accounting_audit_restatement dividend share_repurchase financing_debt equity_offering credit_rating bankruptcy_restructuring merger_acquisition divestiture_spin_off ownership_stake_transaction partnership_joint_venture management_change governance_shareholder_action security_corporate_action listing_index_change commercial_contract_order government_award_subsidy capital_investment_capacity product_service_launch retail_sales_promotion_event product_pricing_change commercial_metrics production_operations_update supply_chain_disruption workforce_labor operational_incident_outage cybersecurity_incident product_recall_safety regulatory_approval regulatory_investigation_enforcement litigation_judgment_settlement intellectual_property filing_disclosure clinical_trial_result drug_device_regulatory investment_research_report analyst_rating_price_target digital_asset_event macroeconomic_data monetary_policy fiscal_trade_policy geopolitical_event political_election_transition natural_disaster_weather_event commodity_market_event sector_industry_development market_move""".split())
-
-SUBTYPES = {
-    "earnings_results": frozenset("quarterly_results half_year_results annual_results preliminary_results earnings_call".split()),
-    "fiscal_trade_policy": frozenset("sanctions export_controls tariff subsidy tax_policy".split()),
-    "geopolitical_event": frozenset("military_action military_conflict diplomatic_agreement ceasefire peace_deal".split()),
-    "retail_sales_promotion_event": frozenset("prime_day black_friday cyber_monday other_sales_event".split()),
-    "digital_asset_event": frozenset("protocol_upgrade stablecoin_authorization exchange_or_broker_launch token_regulatory_action digital_asset_market_event".split()),
-    "investment_research_report": frozenset("short_seller_report activist_report independent_research".split()),
-    "political_election_transition": frozenset("election government_formation leadership_transition referendum".split()),
-    "natural_disaster_weather_event": frozenset("hurricane earthquake wildfire flood tornado extreme_weather".split()),
-}
-_STAGES = frozenset("proposed scheduled announced pending approved in_progress completed cancelled denied corrected unknown".split())
-_ROLES = frozenset("primary_announcement results_report preview follow_up_update reaction analysis recap rumor correction denial opinion syndicated_copy unknown".split())
 _PRECISIONS = frozenset("datetime date month quarter year unknown".split())
 _PERIOD_KINDS = frozenset("fiscal_quarter fiscal_half fiscal_year calendar_quarter calendar_year date_range point_in_time unknown".split())
-_PARTICIPANT_ROLES = frozenset("subject acquirer target buyer seller partner customer supplier issuer lender investor analyst regulator government plaintiff defendant trial_sponsor other".split())
-LEGACY_ALIASES = {
-    "earnings": ("earnings_results", None), "geopolitical": ("geopolitical_event", None),
-    "military action": ("geopolitical_event", "military_action"),
-    "military conflict": ("geopolitical_event", "military_conflict"),
-    "sanctions": ("fiscal_trade_policy", "sanctions"),
-    "retail event": ("retail_sales_promotion_event", "other_sales_event"),
-}
-
-DEFAULT_TAXONOMY_SNAPSHOT = EventTaxonomySnapshot(
-    revision=1,
-    canonical_values=MappingProxyType(
-        {
-            "event_family": EVENT_FAMILIES,
-            "event_subtype": frozenset(
-                subtype for subtypes in SUBTYPES.values() for subtype in subtypes
-            ),
-            "event_stage": _STAGES,
-            "coverage_role": _ROLES,
-            "participant_role": _PARTICIPANT_ROLES,
-        }
-    ),
-    aliases=MappingProxyType(
-        {
-            "event_family": MappingProxyType(
-                {
-                    alias: canonical
-                    for alias, (canonical, _) in LEGACY_ALIASES.items()
-                }
-            )
-        }
-    ),
-    subtype_families=MappingProxyType(
-        {
-            subtype: family
-            for family, subtypes in SUBTYPES.items()
-            for subtype in subtypes
-        }
-    ),
-    family_alias_subtypes=MappingProxyType(
-        {
-            alias: subtype
-            for alias, (_, subtype) in LEGACY_ALIASES.items()
-            if subtype is not None
-        }
-    ),
-)
+DEFAULT_TAXONOMY_SNAPSHOT = predefined_taxonomy_snapshot()
 
 
 def normalize_token(value: Any, *, limit: int = 120) -> str | None:

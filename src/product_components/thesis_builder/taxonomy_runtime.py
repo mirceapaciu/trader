@@ -14,6 +14,7 @@ class TaxonomyValue:
     status: str
     family_scope: str | None = None
     alias_for_value: str | None = None
+    implied_subtype: str | None = None
 
 
 class TaxonomySnapshotSource(Protocol):
@@ -65,17 +66,10 @@ def build_taxonomy_snapshot(
     aliases: dict[str, dict[str, str]] = {}
     subtype_families: dict[str, str] = {}
     family_alias_subtypes: dict[str, str] = {}
-    if baseline is not None:
-        canonical = {
-            dimension: set(items)
-            for dimension, items in baseline.canonical_values.items()
-        }
-        aliases = {
-            dimension: dict(items)
-            for dimension, items in baseline.aliases.items()
-        }
-        subtype_families = dict(baseline.subtype_families)
-        family_alias_subtypes = dict(baseline.family_alias_subtypes)
+    # ``baseline`` remains an accepted argument for old callers, but is never
+    # merged.  A database-loaded revision must be reconstructed solely from
+    # rows effective at that revision.
+    del baseline
 
     for value in values:
         dimension = value.dimension
@@ -85,6 +79,8 @@ def build_taxonomy_snapshot(
                 subtype_families[value.canonical_value] = value.family_scope
         elif value.status == "mapped_alias" and value.alias_for_value:
             aliases.setdefault(dimension, {})[value.canonical_value] = value.alias_for_value
+            if dimension == "event_family" and value.implied_subtype:
+                family_alias_subtypes[value.canonical_value] = value.implied_subtype
 
     return EventTaxonomySnapshot(
         revision=revision,
@@ -109,15 +105,12 @@ class EventTaxonomySnapshotProvider:
         self,
         *,
         source: TaxonomySnapshotSource,
-        baseline: EventTaxonomySnapshot,
+        baseline: EventTaxonomySnapshot | None = None,
     ) -> None:
         self._source = source
-        self._baseline = baseline
         self._lock = threading.RLock()
-        self._snapshots: dict[int, EventTaxonomySnapshot] = {
-            baseline.revision: baseline
-        }
-        self._last_valid = baseline
+        self._snapshots: dict[int, EventTaxonomySnapshot] = {}
+        self._last_valid: EventTaxonomySnapshot | None = None
 
     def get(self, taxonomy_revision: int | None = None) -> EventTaxonomySnapshot:
         """Return an explicit revision, or the latest failure-safe snapshot."""
@@ -131,6 +124,8 @@ class EventTaxonomySnapshotProvider:
             # A transient database failure must not swap a working taxonomy for
             # an empty or partially constructed snapshot.
             with self._lock:
+                if self._last_valid is None:
+                    raise
                 return self._last_valid
 
     def refresh(self) -> EventTaxonomySnapshot:
@@ -149,11 +144,10 @@ class EventTaxonomySnapshotProvider:
         snapshot = build_taxonomy_snapshot(
             revision=taxonomy_revision,
             values=values,
-            baseline=self._baseline,
         )
         with self._lock:
             existing = self._snapshots.setdefault(taxonomy_revision, snapshot)
-            if existing.revision >= self._last_valid.revision:
+            if self._last_valid is None or existing.revision >= self._last_valid.revision:
                 self._last_valid = existing
             return existing
 
@@ -163,3 +157,10 @@ def family_rules_scope(value: Any) -> str | None:
         return None
     family = value.get("family")
     return str(family) if family else None
+
+
+def family_rules_implied_subtype(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    subtype = value.get("implied_subtype")
+    return str(subtype) if subtype else None

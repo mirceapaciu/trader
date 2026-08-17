@@ -256,52 +256,8 @@ ALTER TABLE thesis_builder.t_event_taxonomy_commands
     ADD CONSTRAINT fk_event_taxonomy_commands_backfill_job
     FOREIGN KEY (backfill_job_id) REFERENCES thesis_builder.t_event_taxonomy_backfill_jobs(id);
 
--- The registry is data, rather than a CHECK enum, so operator decisions can be
--- audited and taxonomy versions can evolve without a schema migration.
-INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
-SELECT 'event_family', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
-FROM unnest(ARRAY[
-    'earnings_results','guidance_outlook','investor_day_strategy','accounting_audit_restatement','dividend','share_repurchase','financing_debt','equity_offering','credit_rating','bankruptcy_restructuring',
-    'merger_acquisition','divestiture_spin_off','ownership_stake_transaction','partnership_joint_venture','management_change','governance_shareholder_action','security_corporate_action','listing_index_change',
-    'commercial_contract_order','government_award_subsidy','capital_investment_capacity','product_service_launch','retail_sales_promotion_event','product_pricing_change','commercial_metrics','production_operations_update','supply_chain_disruption','workforce_labor','operational_incident_outage','cybersecurity_incident','product_recall_safety',
-    'regulatory_approval','regulatory_investigation_enforcement','litigation_judgment_settlement','intellectual_property','filing_disclosure','clinical_trial_result','drug_device_regulatory','investment_research_report',
-    'analyst_rating_price_target','digital_asset_event','macroeconomic_data','monetary_policy','fiscal_trade_policy','geopolitical_event','political_election_transition','natural_disaster_weather_event','commodity_market_event','sector_industry_development','market_move'
-]) AS value
-ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
-
-INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version, family_rules)
-SELECT 'event_subtype', subtype, replace(initcap(replace(subtype, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1', jsonb_build_object('family', family)
-FROM (VALUES
-    ('earnings_results','quarterly_results'),('earnings_results','half_year_results'),('earnings_results','annual_results'),('earnings_results','preliminary_results'),('earnings_results','earnings_call'),
-    ('fiscal_trade_policy','sanctions'),('fiscal_trade_policy','export_controls'),('fiscal_trade_policy','tariff'),('fiscal_trade_policy','subsidy'),('fiscal_trade_policy','tax_policy'),
-    ('geopolitical_event','military_action'),('geopolitical_event','military_conflict'),('geopolitical_event','diplomatic_agreement'),('geopolitical_event','ceasefire'),('geopolitical_event','peace_deal'),
-    ('retail_sales_promotion_event','prime_day'),('retail_sales_promotion_event','black_friday'),('retail_sales_promotion_event','cyber_monday'),('retail_sales_promotion_event','other_sales_event')
-) AS subtypes(family, subtype)
-ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
-
--- All built-in controlled values must be present in the registry. The runtime
--- normalizer uses the same v1 baseline, while the Monitoring UI reads this
--- table to populate its "map to existing" choices.
-INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
-SELECT 'event_stage', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
-FROM unnest(ARRAY[
-    'proposed','scheduled','announced','pending','approved','in_progress','completed','cancelled','denied','corrected','unknown'
-]) AS value
-ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
-
-INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
-SELECT 'coverage_role', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
-FROM unnest(ARRAY[
-    'primary_announcement','results_report','preview','follow_up_update','reaction','analysis','recap','rumor','correction','denial','opinion','syndicated_copy','unknown'
-]) AS value
-ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
-
-INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
-SELECT 'participant_role', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
-FROM unnest(ARRAY[
-    'subject','acquirer','target','buyer','seller','partner','customer','supplier','issuer','lender','investor','analyst','regulator','government','plaintiff','defendant','trial_sponsor','other'
-]) AS value
-ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
+-- Taxonomy seed rows are inserted from taxonomy_seed.py so the application manifest is
+-- the single source of predefined taxonomy membership.
 
 -- Opinion articles are retained for a future stock-analyst component to consume.
 CREATE INDEX IF NOT EXISTS ix_news_analyses_opinion

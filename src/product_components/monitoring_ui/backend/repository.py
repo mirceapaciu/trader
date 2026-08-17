@@ -162,9 +162,11 @@ class PostgresRedisMonitoringDataSource:
             cur.execute(schema_file.read_text(encoding="utf-8"))
 
     def bootstrap_thesis_builder_schema(self, *, repo_root: Path) -> None:
+        from src.product_components.thesis_builder.taxonomy_seed import bootstrap_predefined_taxonomy
         schema_file = repo_root / "src" / "product_components" / "thesis_builder" / "db" / "schema.sql"
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(schema_file.read_text(encoding="utf-8"))
+            bootstrap_predefined_taxonomy(conn, schema=self._thesis_builder_schema)
 
     def list_providers(self) -> ProvidersResponse:
         sql = (

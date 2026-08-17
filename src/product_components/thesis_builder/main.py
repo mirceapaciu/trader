@@ -19,6 +19,7 @@ from src.product_components.shared.adapters import (
 
 from .service import ThesisBuilderRunner
 from .settings import ThesisBuilderSettings
+from .taxonomy_seed import bootstrap_predefined_taxonomy
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
@@ -36,10 +37,12 @@ def _bootstrap_database_schema(settings: ThesisBuilderSettings) -> None:
     )
 
     with closing(psycopg.connect(settings.postgres_dsn)) as connection:
-        connection.autocommit = True
+        connection.autocommit = False
         with connection.cursor() as cursor:
             for schema_file in schema_files:
                 cursor.execute(schema_file.read_text(encoding="utf-8"))
+        bootstrap_predefined_taxonomy(connection)
+        connection.commit()
 
 
 def _configure_logging(settings: ThesisBuilderSettings, repo_root: Path) -> None:
