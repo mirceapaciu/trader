@@ -161,7 +161,7 @@ Behavioral constraints:
 - Instrument identity is the pair (`ticker`, `exchange_code`) for all downstream joins and lookups.
 - `article_id` must reference an accepted NewsFetcher article id from the event payload or NewsFetcher API response.
 - Analysis records are append-oriented for auditability.
-- `t_event_taxonomy_values` is the revisioned controlled-value and alias registry. `effective_from_revision` is inclusive and `effective_to_revision` is exclusive; subtype rows may carry a family scope in `family_rules`.
+- `t_event_taxonomy_values` is the revisioned controlled-value and alias registry. Bootstrap seeds every built-in v1 value (families, subtypes, stages, coverage roles, and participant roles), so the Monitoring UI's map-to-existing list uses the same baseline as runtime normalization. `effective_from_revision` is inclusive and `effective_to_revision` is exclusive; subtype rows may carry a family scope in `family_rules`.
 - `t_event_taxonomy_state` contains the one current, monotonically increasing integer `taxonomy_revision`. A revision is metadata over effective value rows, not a copied taxonomy release.
 - `t_event_taxonomy_gaps` aggregates bounded unknown proposals, and `t_event_taxonomy_decisions` is the immutable operator-decision audit trail. Monitoring UI may read these through its adapter but must not write ThesisBuilder tables directly.
 - `t_event_taxonomy_commands` durably records each authenticated operator command and its `accepted -> running -> completed|failed` lifecycle. The idempotency key is unique, the browser cannot supply the audit actor, and the completed row links the immutable decision and backfill job.

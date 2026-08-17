@@ -279,6 +279,30 @@ FROM (VALUES
 ) AS subtypes(family, subtype)
 ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
 
+-- All built-in controlled values must be present in the registry. The runtime
+-- normalizer uses the same v1 baseline, while the Monitoring UI reads this
+-- table to populate its "map to existing" choices.
+INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
+SELECT 'event_stage', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
+FROM unnest(ARRAY[
+    'proposed','scheduled','announced','pending','approved','in_progress','completed','cancelled','denied','corrected','unknown'
+]) AS value
+ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
+
+INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
+SELECT 'coverage_role', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
+FROM unnest(ARRAY[
+    'primary_announcement','results_report','preview','follow_up_update','reaction','analysis','recap','rumor','correction','denial','opinion','syndicated_copy','unknown'
+]) AS value
+ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
+
+INSERT INTO thesis_builder.t_event_taxonomy_values (dimension, canonical_value, display_name, taxonomy_version)
+SELECT 'participant_role', value, replace(initcap(replace(value, '_', ' ')), ' And ', ' and '), 'event-taxonomy-v1'
+FROM unnest(ARRAY[
+    'subject','acquirer','target','buyer','seller','partner','customer','supplier','issuer','lender','investor','analyst','regulator','government','plaintiff','defendant','trial_sponsor','other'
+]) AS value
+ON CONFLICT (dimension, canonical_value, taxonomy_version) DO NOTHING;
+
 -- Opinion articles are retained for a future stock-analyst component to consume.
 CREATE INDEX IF NOT EXISTS ix_news_analyses_opinion
     ON thesis_builder.t_news_analyses (analyzed_at DESC)

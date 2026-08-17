@@ -59,6 +59,33 @@ def _prepare_infrastructure() -> None:
     ensure_safe_test_redis(redis_config())
 
 
+def test_registry_seeds_all_builtin_event_stages_for_monitoring_ui() -> None:
+    settings = ThesisBuilderSettings.from_env()
+    data_source = PostgresRedisMonitoringDataSource(
+        dsn=settings.postgres_dsn,
+        news_schema=settings.news_fetcher_db_schema,
+        filter_quality_schema=os.getenv(
+            "FILTER_QUALITY_DB_SCHEMA", "filter_quality_evaluator"
+        ),
+        thesis_builder_schema=settings.thesis_builder_db_schema,
+        queue_url=settings.queue_url,
+        news_raw_queue=settings.news_raw_queue,
+        failed_messages_dlq=settings.failed_messages_dlq,
+        query_timeout_seconds=5,
+    )
+
+    values = data_source.get_thesis_builder_taxonomy_values(
+        dimension="event_stage",
+        family_scope=None,
+    )
+
+    assert {value.canonical_value for value in values.values} >= {
+        "proposed", "scheduled", "announced", "pending", "approved",
+        "in_progress", "completed", "cancelled", "denied", "corrected",
+        "unknown",
+    }
+
+
 def test_authenticated_command_activates_value_and_completes_bounded_backfill() -> None:
     settings = ThesisBuilderSettings.from_env()
     suffix = uuid.uuid4().hex
