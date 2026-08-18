@@ -633,7 +633,7 @@ function WindowDetail({ window: w }: { window: ThesisBuilderEvidenceWindow }) {
       {w.story_narrative && (
         <div className="pending-detail-row analysis-reasoning">
           <span>Story</span>
-          <strong>{w.story_narrative}</strong>
+          <strong className="story-narrative">{w.story_narrative}</strong>
         </div>
       )}
       <EventIdentityDetails identity={w.event_identity} />
@@ -1018,7 +1018,7 @@ function ThesisCardDetail({ card: c }: { card: ThesisCardSummary }) {
       {c.story_narrative && (
         <div className="pending-detail-row analysis-reasoning">
           <span>Story</span>
-          <strong>{c.story_narrative}</strong>
+          <strong className="story-narrative">{c.story_narrative}</strong>
         </div>
       )}
       <EventIdentityDetails identity={c.event_identity} />

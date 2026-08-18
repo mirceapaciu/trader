@@ -354,6 +354,57 @@ describe("ThesisBuilderTab", () => {
     expect(within(rows[3]).getByText("OLD")).toBeInTheDocument();
   });
 
+  it("preserves story narrative line breaks in evidence-window details", () => {
+    const narrative = "Headline: AMD launches Instinct Coder\nEvidence bullets:\n- First bullet\n- Second bullet";
+    const windowsResult = {
+      ...metricsQueryResult,
+      data: {
+        ...metricsQueryResult.data,
+        pending_windows: [
+          {
+            window_id: 1,
+            ticker: "AMD",
+            exchange_code: "XNAS",
+            strategy: "event_driven",
+            direction: "buy",
+            window_started_at: "2026-06-16T09:00:00Z",
+            last_evidence_at: "2026-06-16T09:30:00Z",
+            pending_age_seconds: 1800,
+            expires_in_seconds: 3600,
+            evidence_count: 1,
+            required_evidence_count: 3,
+            story_narrative: narrative,
+          },
+        ],
+      },
+    };
+    useQuery.mockImplementation((options: { queryKey?: unknown[] }) => {
+      if (options?.queryKey?.includes("taxonomy-gaps")) {
+        return { data: { available: true, gaps: [], generated_at: "2026-06-16T10:00:00Z" }, isError: false, error: null };
+      }
+      if (options?.queryKey?.includes("reprocess")) {
+        return { data: undefined, error: null };
+      }
+      if (options?.queryKey?.includes("cards")) {
+        return cardsQueryResult;
+      }
+      if (options?.queryKey?.includes("throughput")) {
+        return throughputQueryResult;
+      }
+      if (options?.queryKey?.includes("analyses")) {
+        return analysesQueryResult;
+      }
+      return windowsResult;
+    });
+
+    render(<ThesisBuilderTab />);
+    fireEvent.click(screen.getByText("AMD"));
+
+    const story = document.querySelector(".story-narrative");
+    expect(story).not.toBeNull();
+    expect(story?.textContent).toBe(narrative);
+  });
+
   it("defaults to valid buy/sell live cards and hides rejected/expired", () => {
     render(<ThesisBuilderTab />);
 

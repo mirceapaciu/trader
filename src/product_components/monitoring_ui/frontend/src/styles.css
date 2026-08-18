@@ -809,6 +809,11 @@ tr[data-selectable].selected {
   color: #18221f;
 }
 
+.story-narrative {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
