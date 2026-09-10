@@ -179,3 +179,32 @@ Once the issue is fixed, update the status in issues-index.md to resolved.
 
 ## Temporary files
 Write local temporary files under the `temp` folder
+
+### GitHub-triggered issue implementation
+
+`docs/issues` on `main` is the authoritative project issue registry. GitHub
+Issues are execution triggers and do not introduce a separate project issue numbering scheme.
+
+Before a GitHub issue may receive the `codex:ready` label:
+
+- A `YYMMDD-XX` project issue must already exist on `main`.
+- `docs/issues/issues-index.md` must contain the issue with `status=new`.
+- Its detail file must contain the problem statement, verified evidence,
+  expected behavior, acceptance criteria, and test plan.
+- The GitHub issue must identify the project issue using
+  `Project issue: YYMMDD-XX`.
+
+An automated run must:
+
+- Extract and validate the project issue IDs mentioned in the GitHub issue.
+- Refuse to proceed if the index entry or detail file of the relevant project issues do not exist on `main`.
+- Use branch `codex/YYMMDD-XX`.
+- Reuse the same branch and pull request on retries.
+- Implement the requirements from the project issue detail. The GitHub issue may provide 
+  additional context but must not silently change the documented
+  acceptance criteria.
+- Update the issue detail file with the root cause or implementation rationale,
+  changes made, tests and results, remaining risks, and GitHub pull request.
+- Change the index status to `resolved` only when the implementation and
+  required verification are complete.
+- Use `Closes #<github-number>` in the pull request body.
