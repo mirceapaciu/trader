@@ -1060,7 +1060,7 @@ function ThesisCardDetail({ card: c }: { card: ThesisCardSummary }) {
         type="button"
         className="quality-link"
         onClick={() => setArticlesOpen(true)}
-        disabled={c.evidence_count === 0}
+        disabled={c.evidence_count + c.corroboration_count === 0}
       >
         View {c.evidence_count} evidence article{c.evidence_count === 1 ? "" : "s"} →
       </button>

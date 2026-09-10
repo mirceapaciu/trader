@@ -1070,6 +1070,65 @@ def test_get_thesis_card_articles_forwards_card_id() -> None:
     assert response.card_id == "card-1"
 
 
+def test_repository_includes_corroboration_articles_in_thesis_card_details(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            self.sql = sql
+            self.params = params
+
+        def fetchall(self):
+            return [{
+                "article_id": "corroboration-1",
+                "article_snapshot": {
+                    "headline": "A second source confirms the event",
+                    "url": "https://example.test/corroboration-1",
+                    "source": "example",
+                },
+                "confidence": 0.82,
+                "is_market_moving": True,
+                "validation_status": "valid",
+                "rejection_reason_code": None,
+                "event_identity": {},
+            }]
+
+    cursor = _Cursor()
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self, row_factory=None):
+            return cursor
+
+    monkeypatch.setattr(repository, "_connect", lambda: _Connection())
+
+    response = repository.get_thesis_card_articles(card_id="card-1")
+
+    assert cursor.params == ("card-1", "card-1")
+    assert "t_card_corroborations" in cursor.sql
+    assert response.articles[0].article_id == "corroboration-1"
+
+
 def test_get_thesis_builder_metrics_rejects_invalid_window() -> None:
     data_source = FakeDataSource(dependencies=[], providers=[])
     service = MonitoringService(settings=_settings(), data_source=data_source)

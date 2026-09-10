@@ -611,13 +611,15 @@ class PostgresRedisMonitoringDataSource:
             f"FROM {schema}.t_news_analyses "
             f"WHERE id IN ("
             f"SELECT jsonb_array_elements_text(source_analysis_ids)::bigint "
-            f"FROM {schema}.t_thesis_cards WHERE id = %s"
+            f"FROM {schema}.t_thesis_cards WHERE id = %s "
+            f"UNION "
+            f"SELECT analysis_id FROM {schema}.t_card_corroborations WHERE card_id = %s"
             f") "
             f"ORDER BY article_id, analyzed_at DESC"
         )
         try:
             with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(sql, (card_id,))
+                cur.execute(sql, (card_id, card_id))
                 rows = cur.fetchall()
         except (errors.InvalidSchemaName, errors.UndefinedTable, errors.UndefinedColumn):
             return WindowArticlesResponse(
