@@ -1,0 +1,103 @@
+name: Implement project issue
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: GitHub issue number to implement or retry
+        required: true
+        type: number
+
+concurrency:
+  group: codex-issue-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: write
+
+jobs:
+  implement:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'codex:ready'
+    runs-on: [self-hosted, Linux, trader-dev]
+    timeout-minutes: 90
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch and validate issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue view "$ISSUE_NUMBER" --json body --jq .body > "$RUNNER_TEMP/issue-body.md"
+          python3 scripts/development/validate_issue.py \
+            --issue-body-file "$RUNNER_TEMP/issue-body.md" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Create or reuse implementation branch
+        env:
+          BRANCH: ${{ steps.issue.outputs.branch }}
+        run: |
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+
+      - name: Run Codex implementation
+        env:
+          PROJECT_ISSUE_ID: ${{ steps.issue.outputs.project_issue }}
+          PROJECT_ISSUE_DETAIL: ${{ steps.issue.outputs.detail_file }}
+        run: |
+          codex exec --sandbox workspace-write \
+            --output-last-message codex-output.md \
+            "$(cat .github/codex/prompts/implement-issue.md)"
+
+      - name: Verify implementation
+        env:
+          PROJECT_ISSUE: ${{ steps.issue.outputs.project_issue }}
+          DETAIL_FILE: ${{ steps.issue.outputs.detail_file }}
+        run: |
+          rm -f codex-output.md
+          grep -Eq "^\\|[[:space:]]*$PROJECT_ISSUE[[:space:]]*\\|.*\\|[[:space:]]*resolved[[:space:]]*\\|" docs/issues/issues-index.md
+          grep -q '^## Tests and Results' "$DETAIL_FILE"
+          uv sync --frozen
+          uv run pytest -m "not integration"
+          npm --prefix src/product_components/monitoring_ui/frontend ci
+          npm --prefix src/product_components/monitoring_ui/frontend run build
+          git diff --check
+
+      - name: Commit, push, and create or update pull request
+        env:
+          BRANCH: ${{ steps.issue.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_ISSUE: ${{ steps.issue.outputs.project_issue }}
+          DETAIL_FILE: ${{ steps.issue.outputs.detail_file }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if [[ -n "$(git status --short)" ]]; then
+            git add --all
+            git commit -m "Resolve $PROJECT_ISSUE"
+          fi
+          git push --set-upstream origin "$BRANCH"
+
+          PR_URL="$(gh pr list --head "$BRANCH" --json url --jq '.[0].url')"
+          if [[ -z "$PR_URL" ]]; then
+            printf 'Implements project issue %s.\n\nCloses #%s\n' "$PROJECT_ISSUE" "$ISSUE_NUMBER" > "$RUNNER_TEMP/pr-body.md"
+            PR_URL="$(gh pr create --base main --head "$BRANCH" --title "Resolve $PROJECT_ISSUE" --body-file "$RUNNER_TEMP/pr-body.md")"
+          fi
+          sed -i "s|GitHub pull request: created by automation|GitHub pull request: $PR_URL|" "$DETAIL_FILE"
+          if ! git diff --quiet -- "$DETAIL_FILE"; then
+            git add "$DETAIL_FILE"
+            git commit -m "Document pull request for $PROJECT_ISSUE"
+            git push origin "$BRANCH"
+          fi

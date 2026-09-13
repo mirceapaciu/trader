@@ -104,6 +104,10 @@ The workflow expects a self-hosted runner registered to this repository with
 the `trader-prod` label and production env files under
 `/home/gh-runner/trader-env`.
 
+For a development server provisioned from blank Ubuntu 24.04, including the
+self-hosted issue-implementation runner, see [Remote development on Ubuntu
+24.04](docs/design/deployment/remote-development.md).
+
 ## Environment Separation
 
 Use separate database configuration for test and production-like runs.

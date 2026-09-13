@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/product_components/monitoring_ui/frontend/package-lock.json
+      - name: Install Python dependencies
+        run: uv sync --frozen
+      - name: Run unit tests
+        run: uv run pytest -m "not integration"
+      - name: Install frontend dependencies
+        run: npm --prefix src/product_components/monitoring_ui/frontend ci
+      - name: Test and build frontend
+        run: |
+          npm --prefix src/product_components/monitoring_ui/frontend test
+          npm --prefix src/product_components/monitoring_ui/frontend run build

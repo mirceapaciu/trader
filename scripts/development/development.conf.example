@@ -1,0 +1,14 @@
+# Copy outside the repository and replace placeholders before running remote-bootstrap.sh.
+DEV_SERVER_HOST="<server-ip-or-hostname>"
+DEV_SERVER_SSH_PORT="22"
+DEV_SERVER_USER="<ubuntu-sudo-user>"
+DEV_SERVER_SSH_KEY_PATH="<local-path-to-private-ssh-key>"
+EXPECTED_UBUNTU_VERSION="24.04"
+
+GITHUB_REPOSITORY="<owner/repository>"
+GITHUB_TOKEN_FILE="<local-path-to-github-token-file>"
+
+# A dedicated, non-login account created by bootstrap.sh.
+TRADER_DEV_USER="trader-dev"
+TRADER_DEV_ROOT="/opt/trader-dev"
+GITHUB_RUNNER_LABELS="trader-dev"
