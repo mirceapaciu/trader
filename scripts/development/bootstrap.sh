@@ -6,6 +6,7 @@ CONFIG_FILE="${1:-/tmp/trader-development-bootstrap/development.conf}"
 # shellcheck source=/dev/null
 source "$CONFIG_FILE"
 
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY%.git}"
 EXPECTED_UBUNTU_VERSION="${EXPECTED_UBUNTU_VERSION:-24.04}"
 TRADER_DEV_USER="${TRADER_DEV_USER:-trader-dev}"
 TRADER_DEV_ROOT="${TRADER_DEV_ROOT:-/opt/trader-dev}"
@@ -40,7 +41,27 @@ install -d -o "$TRADER_DEV_USER" -g "$TRADER_DEV_USER" -m 0750 "$TRADER_DEV_ROOT
 install -o "$TRADER_DEV_USER" -g "$TRADER_DEV_USER" -m 0600 "$STAGE_DIR/github.token" "$TRADER_DEV_ROOT/secrets/github.token"
 
 if ! command -v uv >/dev/null 2>&1; then
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+  UV_INSTALLER="$STAGE_DIR/uv-install.sh"
+  curl --http1.1 --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+    --connect-timeout 15 --max-time 60 \
+    https://astral.sh/uv/install.sh -o "$UV_INSTALLER"
+  UV_CURL_WRAPPER_DIR="$(mktemp -d)"
+  UV_SYSTEM_CURL="$(command -v curl)"
+  printf '#!/bin/sh\nexec "%s" --http1.1 "$@"\n' "$UV_SYSTEM_CURL" > "$UV_CURL_WRAPPER_DIR/curl"
+  chmod 700 "$UV_CURL_WRAPPER_DIR/curl"
+  if timeout --foreground 5m env PATH="$UV_CURL_WRAPPER_DIR:$PATH" UV_INSTALL_DIR=/usr/local/bin \
+    UV_INSTALLER_GITHUB_BASE_URL=https://github.com sh "$UV_INSTALLER"; then
+    UV_INSTALL_STATUS=0
+  else
+    UV_INSTALL_STATUS=$?
+  fi
+  rm -f "$UV_CURL_WRAPPER_DIR/curl"
+  rmdir "$UV_CURL_WRAPPER_DIR"
+  if [[ "$UV_INSTALL_STATUS" -ne 0 ]]; then
+    echo "uv installation failed or timed out. Check outbound HTTPS access to astral.sh and GitHub releases." >&2
+    exit 4
+  fi
+  rm -f "$UV_INSTALLER"
 fi
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -52,10 +73,13 @@ fi
 
 REPO_DIR="$TRADER_DEV_ROOT/repository"
 TOKEN="$(tr -d '\r\n' < "$TRADER_DEV_ROOT/secrets/github.token")"
+GITHUB_BASIC_AUTH="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w 0)"
 if [[ ! -d "$REPO_DIR/.git" ]]; then
-  sudo -u "$TRADER_DEV_USER" git -c http.extraHeader="Authorization: Bearer $TOKEN" clone "https://github.com/$GITHUB_REPOSITORY.git" "$REPO_DIR"
+  sudo -u "$TRADER_DEV_USER" env GIT_TERMINAL_PROMPT=0 \
+    git -c http.extraHeader="Authorization: Basic $GITHUB_BASIC_AUTH" clone "https://github.com/$GITHUB_REPOSITORY.git" "$REPO_DIR"
 else
-  sudo -u "$TRADER_DEV_USER" git -C "$REPO_DIR" -c http.extraHeader="Authorization: Bearer $TOKEN" fetch origin main
+  sudo -u "$TRADER_DEV_USER" env GIT_TERMINAL_PROMPT=0 \
+    git -C "$REPO_DIR" -c http.extraHeader="Authorization: Basic $GITHUB_BASIC_AUTH" fetch origin main
   sudo -u "$TRADER_DEV_USER" git -C "$REPO_DIR" checkout main
   sudo -u "$TRADER_DEV_USER" git -C "$REPO_DIR" pull --ff-only origin main
 fi

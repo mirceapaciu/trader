@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "${1:?configuration file required}"
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY%.git}"
 LABELS="${2:-trader-dev}"
 TRADER_DEV_USER="${TRADER_DEV_USER:-trader-dev}"
 TRADER_DEV_ROOT="${TRADER_DEV_ROOT:-/opt/trader-dev}"
