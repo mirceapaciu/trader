@@ -22,7 +22,31 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git jq openssh-client openssl sudo build-essential software-properties-common postgresql-client
+apt-get install -y \
+  apparmor-profiles \
+  apparmor-utils \
+  bubblewrap \
+  build-essential \
+  ca-certificates \
+  curl \
+  git \
+  jq \
+  openssh-client \
+  openssl \
+  postgresql-client \
+  software-properties-common \
+  sudo
+
+# Ubuntu 24.04 needs this profile for the unprivileged user namespaces used by Codex.
+BWRAP_APPARMOR_SOURCE=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+BWRAP_APPARMOR_TARGET=/etc/apparmor.d/bwrap-userns-restrict
+[[ -f "$BWRAP_APPARMOR_SOURCE" ]] || {
+  echo "Missing Bubblewrap AppArmor profile: $BWRAP_APPARMOR_SOURCE" >&2
+  exit 4
+}
+install -m 0644 "$BWRAP_APPARMOR_SOURCE" "$BWRAP_APPARMOR_TARGET"
+apparmor_parser -r "$BWRAP_APPARMOR_TARGET"
+
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc

@@ -35,11 +35,13 @@ bash scripts/development/remote-bootstrap.sh /secure/path/development.conf
 
 The launcher uploads the versioned setup bundle using `scp`, then invokes the
 remote bootstrap over SSH. The bootstrap verifies Ubuntu 24.04, installs system
-tools, Docker, Node 22, uv, GitHub CLI, and a uv-managed Python 3.14 environment.
-It creates the `trader-dev` account, clones the repository under
-`/opt/trader-dev/repository`, starts PostgreSQL and Redis, registers the
-`trader-dev` runner, and runs unit tests, infrastructure integration tests, and
-the frontend build. It does not authenticate Codex on your behalf.
+tools, Docker, Node 22, uv, GitHub CLI, Bubblewrap, the Ubuntu 24.04 Bubblewrap
+AppArmor profile required by the Codex Linux sandbox, and a uv-managed Python
+3.14 environment. It creates the `trader-dev` account, clones the repository
+under `/opt/trader-dev/repository`, starts PostgreSQL and Redis, registers the
+`trader-dev` runner, and verifies Bubblewrap user/network namespace creation
+before running unit tests, infrastructure integration tests, and the frontend
+build. It does not authenticate Codex on your behalf.
 
 After bootstrap, authenticate the dedicated runner account using the device
 flow and your ChatGPT subscription:
@@ -110,3 +112,7 @@ If a run fails, correct the issue record or implementation cause and use the
 manual workflow with the same GitHub issue number. The branch and pull request
 are reused. Runner logs are available in GitHub Actions and through the runner's
 systemd service journal.
+
+If a Codex run reports `bwrap: loopback: Failed RTM_NEWADDR`, rerun the bootstrap.
+It installs and reloads the Ubuntu 24.04 `bwrap-userns-restrict` AppArmor profile
+without disabling the host-wide unprivileged-user-namespace restriction.
