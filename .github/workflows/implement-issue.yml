@@ -67,13 +67,21 @@ jobs:
           DETAIL_FILE: ${{ steps.issue.outputs.detail_file }}
         run: |
           rm -f codex-output.md
-          grep -Eq "^\\|[[:space:]]*$PROJECT_ISSUE[[:space:]]*\\|.*\\|[[:space:]]*resolved[[:space:]]*\\|" docs/issues/issues-index.md
+          grep -Eq "^\\|[[:space:]]*$PROJECT_ISSUE[[:space:]]*\\|.*\\|[[:space:]]*new[[:space:]]*\\|" docs/issues/issues-index.md
           grep -q '^## Tests and Results' "$DETAIL_FILE"
           uv sync --frozen
           uv run pytest -m "not integration"
           npm --prefix src/product_components/monitoring_ui/frontend ci
           npm --prefix src/product_components/monitoring_ui/frontend run build
           git diff --check
+
+      - name: Mark verified project issue resolved
+        env:
+          PROJECT_ISSUE: ${{ steps.issue.outputs.project_issue }}
+        run: |
+          python3 scripts/development/validate_issue.py \
+            --mark-resolved \
+            --project-issue "$PROJECT_ISSUE"
 
       - name: Commit, push, and create or update pull request
         env:

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.development.validate_issue import validate
+from scripts.development.validate_issue import mark_resolved, validate
 
 
 def _registry(tmp_path: Path, *, status: str = "new", sections: bool = True) -> Path:
@@ -37,3 +37,26 @@ def test_validate_requires_all_sections(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Test Plan"):
         validate(_registry(tmp_path, sections=False), "Project issue: 260910-01")
 
+
+def test_mark_resolved_updates_only_a_new_matching_issue(tmp_path: Path) -> None:
+    repo = _registry(tmp_path)
+
+    mark_resolved(repo, "260910-01")
+
+    index = (repo / "docs/issues/issues-index.md").read_text(encoding="utf-8")
+    assert "| 260910-01 | Test | resolved |" in index
+
+
+def test_mark_resolved_rejects_already_resolved_issue(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="status=new"):
+        mark_resolved(_registry(tmp_path, status="resolved"), "260910-01")
+
+
+def test_issue_workflow_marks_resolved_only_after_verification() -> None:
+    workflow = (Path(__file__).parents[2] / ".github/workflows/implement-issue.yml").read_text(encoding="utf-8")
+    verify_start = workflow.index("- name: Verify implementation")
+    resolve_start = workflow.index("- name: Mark verified project issue resolved")
+
+    assert verify_start < resolve_start
+    assert "[[:space:]]*new[[:space:]]*" in workflow[verify_start:resolve_start]
+    assert "--mark-resolved" in workflow[resolve_start:]
