@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.product_components.market_data.models import (
     FetchRun,
+    HistoricalBarsPrefetchOutcome,
     Instrument,
     MarketBar,
     MarketDataProvider,
@@ -321,7 +322,12 @@ def test_prefetch_reports_progress_and_dedupes() -> None:
 def test_prefetch_reports_unavailable_when_provider_fetch_fails() -> None:
     class _FailingClient(_CountingClient):
         def fetch_historical_bars(self, symbol, *, interval, start, end):
-            raise TimeoutError("gateway timed out")
+            raise TimeoutError(
+                "gateway timed out authorization=Bearer super-secret-token "
+                "dsn=postgresql://alice:database-password@db/trader "
+                "api_key=provider-key headers={'Cookie': 'session=cookie-value'} "
+                + "x" * 400
+            )
 
     storage = _FakeStorage()
     polygon = _FailingClient(MarketDataProvider.POLYGON)
@@ -331,8 +337,78 @@ def test_prefetch_reports_unavailable_when_provider_fetch_fails() -> None:
         [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
     )
 
-    assert outcomes == {("AAPL", "XNAS"): "unavailable"}
+    outcome = outcomes[("AAPL", "XNAS")]
+    assert outcome == HistoricalBarsPrefetchOutcome(
+        ticker="AAPL",
+        exchange_code="XNAS",
+        status="unavailable",
+        provider=MarketDataProvider.POLYGON,
+        failure_category="provider_error",
+        considered_providers=(
+            MarketDataProvider.POLYGON,
+            MarketDataProvider.IBKR,
+            MarketDataProvider.ALPHA_VANTAGE,
+        ),
+        error_code="TimeoutError",
+        error_message=outcome.error_message,
+    )
+    assert outcome.error_message is not None
+    for secret in (
+        "super-secret-token",
+        "database-password",
+        "provider-key",
+        "cookie-value",
+    ):
+        assert secret not in outcome.error_message
+    assert "<redacted>" in outcome.error_message
+    assert len(outcome.error_message) <= 300
     assert storage.fetch_runs[-1].status == "failed"
+
+
+def test_prefetch_distinguishes_no_configured_provider() -> None:
+    outcomes = _service(_FakeStorage(), {}).prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )
+
+    outcome = outcomes[("AAPL", "XNAS")]
+    assert outcome.failure_category == "no_provider_configured"
+    assert outcome.provider is None
+    assert outcome.considered_providers == (
+        MarketDataProvider.POLYGON,
+        MarketDataProvider.IBKR,
+        MarketDataProvider.ALPHA_VANTAGE,
+    )
+
+
+def test_prefetch_distinguishes_missing_symbol_mapping() -> None:
+    ibkr = _CountingClient(MarketDataProvider.IBKR)
+    outcomes = _service(
+        _FakeStorage(), {MarketDataProvider.IBKR: ibkr}
+    ).prefetch_historical_bars([("VOD", "XLON")], interval="1m", start=_START, end=_END)
+
+    outcome = outcomes[("VOD", "XLON")]
+    assert outcome.failure_category == "no_symbol_mapping"
+    assert outcome.provider is None
+    assert outcome.considered_providers == (MarketDataProvider.IBKR,)
+    assert ibkr.calls == []
+
+
+def test_prefetch_distinguishes_successful_empty_response() -> None:
+    class _EmptyClient(_CountingClient):
+        def fetch_historical_bars(self, symbol, *, interval, start, end):
+            self.calls.append((symbol.ticker, start, end))
+            return []
+
+    polygon = _EmptyClient(MarketDataProvider.POLYGON)
+    outcomes = _service(
+        _FakeStorage(), {MarketDataProvider.POLYGON: polygon}
+    ).prefetch_historical_bars([("AAPL", "XNAS")], interval="1m", start=_START, end=_END)
+
+    outcome = outcomes[("AAPL", "XNAS")]
+    assert outcome.failure_category == "empty_response"
+    assert outcome.provider is MarketDataProvider.POLYGON
+    assert outcome.error_code is None
+    assert outcome.error_message is None
 
 
 def test_rate_limiter_spaces_provider_calls() -> None:

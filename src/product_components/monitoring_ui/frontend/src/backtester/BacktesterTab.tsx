@@ -570,7 +570,8 @@ function SummaryTilesPanel({
       </div>
       {run.status === "failed" ? (
         <div className="inline-error" role="alert">
-          {backtestFailureMessage(run)}
+          <div>{backtestFailureMessage(run)}</div>
+          <MarketDataFailureDetails run={run} />
         </div>
       ) : null}
       <div className="thesis-kpi-grid">
@@ -596,6 +597,58 @@ function backtestFailureMessage(run: BacktestRunSummary): string {
     return "Historical market data could not be received for the backtest.";
   }
   return `Backtest failed${run.error_code ? `: ${run.error_code}` : "."}`;
+}
+
+function MarketDataFailureDetails({ run }: { run: BacktestRunSummary }) {
+  if (run.error_code !== "MarketDataUnavailableError") return null;
+  const rawOutcomes = run.error_details?.unavailable_instruments;
+  if (!Array.isArray(rawOutcomes)) return null;
+  const outcomes = rawOutcomes.filter(
+    (value): value is Record<string, unknown> => value !== null && typeof value === "object"
+  );
+  if (outcomes.length === 0) return null;
+
+  return (
+    <ul aria-label="Historical market data failure details">
+      {outcomes.map((outcome, index) => {
+        const ticker = stringField(outcome, "ticker") ?? "Unknown instrument";
+        const exchange = stringField(outcome, "exchange_code");
+        const provider = stringField(outcome, "provider");
+        const category = stringField(outcome, "failure_category");
+        const considered = Array.isArray(outcome.considered_providers)
+          ? outcome.considered_providers.filter((value): value is string => typeof value === "string")
+          : [];
+        const errorCode = stringField(outcome, "error_code");
+        const errorMessage = stringField(outcome, "error_message");
+        const source = provider
+          ? `Provider: ${provider}`
+          : considered.length > 0
+            ? `Considered: ${considered.join(", ")}`
+            : "No eligible provider";
+        const cause = marketDataFailureCategoryLabel(category);
+        const providerError = [errorCode, errorMessage].filter(Boolean).join(": ");
+        return (
+          <li key={`${ticker}-${exchange ?? "unknown"}-${index}`}>
+            <strong>{ticker}{exchange ? `/${exchange}` : ""}</strong>
+            {` — ${source}; ${cause}${providerError ? ` (${providerError})` : ""}`}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function stringField(value: Record<string, unknown>, key: string): string | null {
+  const field = value[key];
+  return typeof field === "string" && field.trim() ? field : null;
+}
+
+function marketDataFailureCategoryLabel(category: string | null): string {
+  if (category === "no_provider_configured") return "No historical-data provider is configured";
+  if (category === "no_symbol_mapping") return "No provider symbol mapping is available";
+  if (category === "empty_response") return "The provider returned no bars for this window";
+  if (category === "provider_error") return "The provider request failed";
+  return "Historical data is unavailable";
 }
 
 function RegenerationPanel({ stats }: { stats: BacktestRegenerationStats }) {

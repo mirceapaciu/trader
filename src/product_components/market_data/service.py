@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from src.product_components.market_data.context import build_market_context
@@ -9,6 +11,7 @@ from src.product_components.market_data.fundamentals_provider import FinnhubFund
 from src.product_components.market_data.models import (
     ContextSourceStatus,
     FetchRun,
+    HistoricalBarsPrefetchOutcome,
     Instrument,
     InstrumentFundamentals,
     MarketBar,
@@ -29,6 +32,39 @@ _US_EXCHANGES = {"XNAS", "XNYS"}
 # Progress callback: (done, total, ticker, status) where status is one of
 # "fetched" | "cached" | "skipped".
 PrefetchProgress = Callable[[int, int, str, str], None]
+
+_MAX_PROVIDER_ERROR_MESSAGE_LENGTH = 300
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(?P<label>['\"]?(?:api[_-]?key|access[_-]?key|access[_-]?token|refresh[_-]?token|"
+    r"id[_-]?token|token|password|passwd|client[_-]?secret|private[_-]?key|secret|credential|"
+    r"authorization|proxy-authorization|cookie|set-cookie|dsn)['\"]?\s*[:=]\s*)"
+    r"(?P<value>['\"]?[^\s,;&}\]]+['\"]?)"
+)
+_AUTH_VALUE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+_URL_CREDENTIALS = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@")
+_REQUEST_HEADERS = re.compile(
+    r"(?i)\b(?:request[_ -]?)?headers?\s*[:=]\s*(?:\{.*?\}|\[.*?\])"
+)
+
+
+@dataclass(frozen=True)
+class _HistoricalBarsFetchResult:
+    fetched_count: int | None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+def _sanitize_provider_error(error: Exception) -> str | None:
+    message = " ".join(str(error).split())
+    if not message:
+        return None
+    message = _REQUEST_HEADERS.sub("headers=<redacted>", message)
+    message = _URL_CREDENTIALS.sub(r"\1<redacted>@", message)
+    message = _AUTH_VALUE.sub(r"\1 <redacted>", message)
+    message = _SECRET_ASSIGNMENT.sub(r"\g<label><redacted>", message)
+    if len(message) > _MAX_PROVIDER_ERROR_MESSAGE_LENGTH:
+        message = message[: _MAX_PROVIDER_ERROR_MESSAGE_LENGTH - 1] + "…"
+    return message
 
 
 class MarketDataService:
@@ -230,7 +266,7 @@ class MarketDataService:
         start: datetime,
         end: datetime,
         progress: PrefetchProgress | None = None,
-    ) -> dict[tuple[str, str], str]:
+    ) -> dict[tuple[str, str], HistoricalBarsPrefetchOutcome]:
         """Warm the DB with bars for many instruments, rate-limited for the free tier.
 
         Instruments already covered by the coverage ledger are skipped without consuming the
@@ -238,16 +274,35 @@ class MarketDataService:
         provider request is throttled to ``max_requests_per_minute``.
         """
         unique = _unique_instruments(instruments)
-        outcomes: dict[tuple[str, str], str] = {}
+        outcomes: dict[tuple[str, str], HistoricalBarsPrefetchOutcome] = {}
         total = len(unique)
         limiter = _RateLimiter(
             self._max_requests_per_minute, clock=self._clock, sleep=self._sleep
         )
         for index, (ticker, exchange_code) in enumerate(unique, start=1):
-            mapping = self._resolve_bars_mapping(ticker=ticker, exchange_code=exchange_code)
-            if mapping is None or self._provider_clients.get(mapping.provider) is None:
+            existing = self._load_provider_symbol_map(
+                ticker=ticker, exchange_code=exchange_code
+            )
+            considered = self._bars_provider_candidates(
+                ticker=ticker, exchange_code=exchange_code, existing=existing
+            )
+            mapping = self._resolve_bars_mapping(
+                ticker=ticker, exchange_code=exchange_code, existing=existing
+            )
+            if mapping is None:
+                any_configured = any(
+                    provider in self._provider_clients for provider in considered
+                )
                 self._emit_progress(progress, index, total, ticker, "skipped")
-                outcomes[(ticker, exchange_code)] = "unavailable"
+                outcomes[(ticker, exchange_code)] = HistoricalBarsPrefetchOutcome(
+                    ticker=ticker,
+                    exchange_code=exchange_code,
+                    status="unavailable",
+                    failure_category=(
+                        "no_symbol_mapping" if any_configured else "no_provider_configured"
+                    ),
+                    considered_providers=considered,
+                )
                 continue
             stored = self._storage.load_bars_in_range(
                 ticker=ticker,
@@ -259,18 +314,44 @@ class MarketDataService:
             )
             if self._is_covered(stored, mapping=mapping, interval=interval, start=start, end=end):
                 self._emit_progress(progress, index, total, ticker, "cached")
-                outcomes[(ticker, exchange_code)] = "cached" if stored else "empty"
+                status = "cached" if stored else "unavailable"
+                outcomes[(ticker, exchange_code)] = HistoricalBarsPrefetchOutcome(
+                    ticker=ticker,
+                    exchange_code=exchange_code,
+                    status=status,
+                    provider=mapping.provider,
+                    failure_category=None if stored else "empty_response",
+                    considered_providers=considered,
+                )
                 continue
             limiter.acquire()
-            fetched_count = self._fetch_historical_bars(
+            fetch_result = self._fetch_historical_bars(
                 mapping,
                 self._provider_clients[mapping.provider],
                 interval=interval,
                 start=start,
                 end=end,
             )
-            status = "fetched" if fetched_count is not None and fetched_count > 0 else "unavailable"
-            outcomes[(ticker, exchange_code)] = status
+            status = (
+                "fetched"
+                if fetch_result.fetched_count is not None and fetch_result.fetched_count > 0
+                else "unavailable"
+            )
+            failure_category = None
+            if status == "unavailable":
+                failure_category = (
+                    "provider_error" if fetch_result.error_code else "empty_response"
+                )
+            outcomes[(ticker, exchange_code)] = HistoricalBarsPrefetchOutcome(
+                ticker=ticker,
+                exchange_code=exchange_code,
+                status=status,
+                provider=mapping.provider,
+                failure_category=failure_category,
+                considered_providers=considered,
+                error_code=fetch_result.error_code,
+                error_message=fetch_result.error_message,
+            )
             self._emit_progress(progress, index, total, ticker, status)
         return outcomes
 
@@ -352,9 +433,20 @@ class MarketDataService:
             )
         }
 
-    def _resolve_bars_mapping(self, *, ticker: str, exchange_code: str) -> ProviderSymbol | None:
-        existing = self._load_provider_symbol_map(ticker=ticker, exchange_code=exchange_code)
-        for provider in self._provider_preference(exchange_code):
+    def _resolve_bars_mapping(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        existing: dict[MarketDataProvider, ProviderSymbol] | None = None,
+    ) -> ProviderSymbol | None:
+        if existing is None:
+            existing = self._load_provider_symbol_map(
+                ticker=ticker, exchange_code=exchange_code
+            )
+        for provider in self._bars_provider_candidates(
+            ticker=ticker, exchange_code=exchange_code, existing=existing
+        ):
             if provider not in self._provider_clients:
                 continue
             mapping = self._mapping_for_provider(
@@ -362,10 +454,21 @@ class MarketDataService:
             )
             if mapping is not None:
                 return mapping
-        for provider, symbol in existing.items():
-            if provider in self._provider_clients:
-                return symbol
         return None
+
+    def _bars_provider_candidates(
+        self,
+        *,
+        ticker: str,
+        exchange_code: str,
+        existing: dict[MarketDataProvider, ProviderSymbol] | None = None,
+    ) -> tuple[MarketDataProvider, ...]:
+        if existing is None:
+            existing = self._load_provider_symbol_map(
+                ticker=ticker, exchange_code=exchange_code
+            )
+        ordered = [*self._provider_preference(exchange_code), *existing]
+        return tuple(dict.fromkeys(ordered))
 
     def _is_covered(
         self,
@@ -397,11 +500,12 @@ class MarketDataService:
         interval: str,
         start: datetime,
         end: datetime,
-    ) -> int | None:
+    ) -> _HistoricalBarsFetchResult:
         started_at = datetime.now(timezone.utc)
         fetched_count = 0
         status = "success"
         error_code = None
+        error_message = None
         try:
             bars = client.fetch_historical_bars(
                 mapping,
@@ -428,7 +532,8 @@ class MarketDataService:
             )
         except Exception as exc:  # pragma: no cover - exercised through service tests with broad failure behavior.
             status = "failed"
-            error_code = exc.__class__.__name__
+            error_code = exc.__class__.__name__[:100]
+            error_message = _sanitize_provider_error(exc)
         self._storage.record_fetch_run(
             FetchRun(
                 provider=mapping.provider,
@@ -442,7 +547,11 @@ class MarketDataService:
                 fetched_count=fetched_count,
             )
         )
-        return fetched_count if status == "success" else None
+        return _HistoricalBarsFetchResult(
+            fetched_count=fetched_count if status == "success" else None,
+            error_code=error_code,
+            error_message=error_message,
+        )
 
     def refresh_watchlist_once(self) -> None:
         for instrument in self._storage.load_active_instruments():
