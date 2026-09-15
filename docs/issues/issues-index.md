@@ -56,5 +56,4 @@
 | 260817-02 | Make the event-taxonomy database authoritative and bootstrap the complete predefined seed | resolved | docs/issues/issues-detail/260817-02.md |
 | 260817-03 | Instruct the analysis LLM to select from the active event taxonomy before proposing new values | resolved | docs/issues/issues-detail/260817-03.md |
 | 260913-01 | Include data-source failure details in backtest historical-market-data errors | resolved | docs/issues/issues-detail/260913-01.md |
-| 260913-01 | Include data-source failure details in backtest historical-market-data errors | new | docs/issues/issues-detail/260913-01.md |
 | 260915-01 | Show exact conditions and thresholds for blocked backtest candidates | new | docs/issues/issues-detail/260915-01.md |
