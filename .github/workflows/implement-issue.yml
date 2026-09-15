@@ -52,12 +52,39 @@ jobs:
             git checkout -b "$BRANCH"
           fi
 
+      - name: Select implementation model
+        id: model
+        env:
+          PROJECT_ISSUE_ID: ${{ steps.issue.outputs.project_issue }}
+          PROJECT_ISSUE_DETAIL: ${{ steps.issue.outputs.detail_file }}
+        run: |
+          ROUTING_FILE="$RUNNER_TEMP/codex-model-routing.json"
+          codex exec --sandbox read-only \
+            --model gpt-5.6-terra \
+            --config 'model_reasoning_effort="low"' \
+            --output-last-message "$ROUTING_FILE" \
+            "$(cat .github/codex/prompts/select-implementation-model.md)"
+
+          MODEL="$(jq -er '.model | strings' "$ROUTING_FILE")"
+          REASONING_EFFORT="$(jq -er '.reasoning_effort | strings' "$ROUTING_FILE")"
+          case "$MODEL:$REASONING_EFFORT" in
+            gpt-5.6-terra:medium|gpt-5.6-sol:medium|gpt-5.6-sol:high|gpt-6-astra:high) ;;
+            *)
+              echo "Unsupported Codex implementation profile: $MODEL:$REASONING_EFFORT" >&2
+              exit 1
+              ;;
+          esac
+          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
+          echo "reasoning_effort=$REASONING_EFFORT" >> "$GITHUB_OUTPUT"
+
       - name: Run Codex implementation
         env:
           PROJECT_ISSUE_ID: ${{ steps.issue.outputs.project_issue }}
           PROJECT_ISSUE_DETAIL: ${{ steps.issue.outputs.detail_file }}
         run: |
           codex exec --sandbox workspace-write \
+            --model '${{ steps.model.outputs.model }}' \
+            --config 'model_reasoning_effort="${{ steps.model.outputs.reasoning_effort }}"' \
             --output-last-message codex-output.md \
             "$(cat .github/codex/prompts/implement-issue.md)"
 
