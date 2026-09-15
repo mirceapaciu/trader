@@ -199,6 +199,51 @@ describe("BacktesterTab", () => {
     const run = makeRun({
       status: "failed",
       error_code: "MarketDataUnavailableError",
+      error_details: {
+        message: "No usable historical market data was available from the configured sources.",
+        interval: "1m",
+        unavailable_instruments: [
+          {
+            ticker: "AAPL",
+            exchange_code: "XNAS",
+            status: "unavailable",
+            provider: "polygon",
+            failure_category: "provider_error",
+            considered_providers: ["polygon", "ibkr"],
+            error_code: "TimeoutError",
+            error_message: "gateway timed out"
+          },
+          {
+            ticker: "VOD",
+            exchange_code: "XLON",
+            status: "unavailable",
+            failure_category: "no_symbol_mapping",
+            considered_providers: ["ibkr"]
+          }
+        ]
+      }
+    });
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) }
+    });
+    render(<BacktesterTab />);
+
+    expect(
+      screen.getByText("No usable historical market data was available from the configured sources.")
+    ).toBeInTheDocument();
+    expect(screen.getByText(/AAPL\/XNAS/).closest("li")).toHaveTextContent(
+      "Provider: polygon; The provider request failed (TimeoutError: gateway timed out)"
+    );
+    expect(screen.getByText(/VOD\/XLON/).closest("li")).toHaveTextContent(
+      "Considered: ibkr; No provider symbol mapping is available"
+    );
+  });
+
+  it("uses a safe fallback for a legacy market-data failure payload", () => {
+    const run = makeRun({
+      status: "failed",
+      error_code: "MarketDataUnavailableError",
       error_details: { message: "Historical market data could not be received for the backtest." }
     });
     installQueryRouter({
@@ -210,6 +255,9 @@ describe("BacktesterTab", () => {
     expect(
       screen.getByText("Historical market data could not be received for the backtest.")
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("list", { name: "Historical market data failure details" })
+    ).not.toBeInTheDocument();
   });
 
   it("shows the gap tiles for a both run", () => {

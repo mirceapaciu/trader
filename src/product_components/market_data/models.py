@@ -138,3 +138,37 @@ class FetchRun:
     finished_at: datetime
     fetched_count: int
     details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class HistoricalBarsPrefetchOutcome:
+    """Safe, consumer-visible result of warming one instrument's bar history."""
+
+    ticker: str
+    exchange_code: str
+    status: str
+    provider: MarketDataProvider | None = None
+    failure_category: str | None = None
+    considered_providers: tuple[MarketDataProvider, ...] = ()
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "ticker": self.ticker,
+            "exchange_code": self.exchange_code,
+            "status": self.status,
+        }
+        if self.provider is not None:
+            result["provider"] = self.provider.value
+        if self.failure_category is not None:
+            result["failure_category"] = self.failure_category
+        if self.considered_providers:
+            result["considered_providers"] = [
+                provider.value for provider in self.considered_providers
+            ]
+        if self.error_code is not None:
+            result["error_code"] = self.error_code
+        if self.error_message is not None:
+            result["error_message"] = self.error_message
+        return result

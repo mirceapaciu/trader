@@ -359,9 +359,11 @@ Run policy:
 - Retries create a new `run_id`; completed results are never mutated.
 - A run fails closed before simulation only when required historical bars cannot be received for
   every instrument in its selected card population, indicating a broad market-data outage. It
-  finalizes as `failed` with `MarketDataUnavailableError` and persists the interval plus affected
-  instruments for operators. Isolated unavailable instruments or exchanges are logged and their
-  cards are skipped as `cards_skipped_no_price`; the remaining population continues to simulate.
+  finalizes as `failed` with `MarketDataUnavailableError` and persists the interval plus each
+  affected instrument's selected or considered providers, stable failure category, and bounded safe
+  provider error when present. Isolated unavailable instruments or exchanges are logged with the
+  same structured cause and their cards are skipped as `cards_skipped_no_price`; the remaining
+  population continues to simulate.
 - Partial per-instrument simulation failures after a successful prewarm are recorded per trade and
   do not invalidate completed trades; other hard failures (e.g. unreadable inputs or exhausted LLM
   budget in regeneration mode) also finalize the run as `failed` with a machine-readable `error_code`.

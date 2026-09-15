@@ -10,6 +10,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from src.product_components.market_data.models import HistoricalBarsPrefetchOutcome
+
 from .clients import BarsProvider, CardsProvider, RegenerationProvider
 from .engine import BacktesterEngine
 from .models import BacktestMode, BacktestRunParams
@@ -26,18 +28,17 @@ ProgressSink = Callable[[str, int, int, "str | None"], None]
 class MarketDataUnavailableError(RuntimeError):
     """Raised when a backtest cannot obtain bars for any selected instrument."""
 
-    def __init__(self, *, interval: str, unavailable: list[tuple[str, str, str]]) -> None:
+    def __init__(
+        self, *, interval: str, unavailable: list[HistoricalBarsPrefetchOutcome]
+    ) -> None:
         self.details = {
-            "message": "Historical market data could not be received for the backtest.",
+            "message": "No usable historical market data was available from the configured sources.",
             "interval": interval,
-            "unavailable_instruments": [
-                {"ticker": ticker, "exchange_code": exchange_code, "status": status}
-                for ticker, exchange_code, status in unavailable
-            ],
+            "unavailable_instruments": [outcome.as_dict() for outcome in unavailable],
         }
         instruments = ", ".join(
-            f"{ticker}/{exchange_code} ({status})"
-            for ticker, exchange_code, status in unavailable
+            f"{outcome.ticker}/{outcome.exchange_code} ({outcome.failure_category})"
+            for outcome in unavailable
         )
         super().__init__(f"market_data_unavailable: {instruments}")
 
@@ -330,9 +331,7 @@ class BacktesterService:
         )
         if outcomes is not None:
             unavailable = [
-                (ticker, exchange_code, status)
-                for (ticker, exchange_code), status in outcomes.items()
-                if status in {"unavailable", "empty"}
+                outcome for outcome in outcomes.values() if outcome.status == "unavailable"
             ]
             # A missing provider or bar history for one instrument must not discard a
             # usable backtest population. The engine records those cards as
@@ -349,7 +348,10 @@ class BacktesterService:
                     params.run_id,
                     len(unavailable),
                     len(instruments),
-                    ", ".join(f"{ticker}/{exchange_code}" for ticker, exchange_code, _ in unavailable),
+                    ", ".join(
+                        f"{outcome.ticker}/{outcome.exchange_code} ({outcome.failure_category})"
+                        for outcome in unavailable
+                    ),
                 )
         LOGGER.info("prefetch complete run_id=%s", params.run_id)
 
