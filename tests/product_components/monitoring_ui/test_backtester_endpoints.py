@@ -323,20 +323,34 @@ def test_detail_projects_summary_json_into_per_strategy_and_card_status() -> Non
 
 
 def test_detail_projects_run_failure_details() -> None:
+    error_details = {
+        "message": "No usable historical market data was available from the configured sources.",
+        "interval": "1m",
+        "unavailable_instruments": [
+            {
+                "ticker": "AAPL",
+                "exchange_code": "XNAS",
+                "status": "unavailable",
+                "provider": "polygon",
+                "failure_category": "provider_error",
+                "considered_providers": ["polygon", "ibkr"],
+                "error_code": "TimeoutError",
+                "error_message": "gateway timed out",
+            }
+        ],
+    }
     ds = FakeBacktestDataSource()
     ds.run_by_id["bt_1"] = _run_row(
         status="failed",
         error_code="MarketDataUnavailableError",
-        error_details={"message": "Historical market data could not be received for the backtest."},
+        error_details=error_details,
     )
 
     detail = _service(ds).get_backtest_detail(run_id="bt_1")
 
     assert detail is not None
     assert detail.run.error_code == "MarketDataUnavailableError"
-    assert detail.run.error_details == {
-        "message": "Historical market data could not be received for the backtest."
-    }
+    assert detail.run.error_details == error_details
 
 
 def test_list_flags_budget_exhausted_run_from_row_columns() -> None:
@@ -467,6 +481,37 @@ def test_route_detail_404(monkeypatch) -> None:
     client = _client(monkeypatch, ds, FakeBacktestRunner())
     response = client.get("/api/backtests/missing")
     assert response.status_code == 404
+
+
+def test_route_detail_preserves_structured_market_data_failure(monkeypatch) -> None:
+    error_details = {
+        "message": "No usable historical market data was available from the configured sources.",
+        "interval": "1m",
+        "unavailable_instruments": [
+            {
+                "ticker": "AAPL",
+                "exchange_code": "XNAS",
+                "status": "unavailable",
+                "provider": "polygon",
+                "failure_category": "provider_error",
+                "considered_providers": ["polygon", "ibkr"],
+                "error_code": "TimeoutError",
+                "error_message": "gateway timed out",
+            }
+        ],
+    }
+    ds = FakeBacktestDataSource()
+    ds.run_by_id["bt_1"] = _run_row(
+        run_id="bt_1",
+        status="failed",
+        error_code="MarketDataUnavailableError",
+        error_details=error_details,
+    )
+
+    response = _client(monkeypatch, ds, FakeBacktestRunner()).get("/api/backtests/bt_1")
+
+    assert response.status_code == 200
+    assert response.json()["run"]["error_details"] == error_details
 
 
 def test_route_trades_passes_filters(monkeypatch) -> None:

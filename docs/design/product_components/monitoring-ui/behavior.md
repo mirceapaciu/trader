@@ -224,7 +224,9 @@ Failed runs retain their machine-readable error code and structured error detail
 The detail view keeps the run list visible and shows:
 - A visible failure alert when the run failed, using its persisted error details. In particular,
   unavailable historical market data is shown as an operator-actionable backtest failure rather
-  than as a completed zero-trade result.
+  than as a completed zero-trade result. The alert lists each affected instrument, selected or
+  considered providers, failure category, and safe provider error detail when present; legacy run
+  payloads that contain only a message retain a summary-only fallback.
 - Summary tiles: total return, net P&L, win rate, profit factor, expectancy, max drawdown, Sharpe
   ratio, number of trades, exposure fraction, and signal accuracy.
 - Equity curve chart. For a `both` run, the ideal and actual equity curves are overlaid.

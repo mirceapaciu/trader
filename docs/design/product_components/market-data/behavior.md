@@ -118,6 +118,16 @@ Historical bars are a permanent, reusable store, not a request cache:
   re-querying providers. The rolling quote and derived-context cache semantics in Sections 3 and 4
   are unchanged; durability applies to the bar store.
 
+The bulk prefetch contract returns one `HistoricalBarsPrefetchOutcome` per canonical instrument.
+Every outcome contains `ticker`, `exchange_code`, and `status`; unavailable outcomes additionally
+contain a stable `failure_category` (`no_provider_configured`, `no_symbol_mapping`,
+`empty_response`, or `provider_error`), the selected `provider` when a request was possible, and the
+ordered `considered_providers`. Provider failures may include a bounded `error_code` and
+`error_message`. Error messages are whitespace-normalized, secret-redacted, and limited to 300
+characters before crossing the MarketData boundary. An empty successful provider response is
+reported as `empty_response`, never as `provider_error`, and routing failures never claim that a
+provider request occurred.
+
 ### 4.3 Fundamentals read API
 
 MarketData also exposes optional slow-moving company fundamentals so consumers can judge the scale

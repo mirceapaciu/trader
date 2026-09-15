@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.core_components.backtest_engine import Bar
+from src.product_components.market_data.models import HistoricalBarsPrefetchOutcome
 from src.product_components.market_data.service import MarketDataService
 from src.product_components.thesis_builder.export import ExportedThesisCard
 
@@ -34,7 +35,7 @@ class BarsProvider(Protocol):
         start: datetime,
         end: datetime,
         progress: WarmProgress | None = None,
-    ) -> dict[tuple[str, str], str] | None: ...
+    ) -> dict[tuple[str, str], HistoricalBarsPrefetchOutcome] | None: ...
 
 
 @runtime_checkable
@@ -134,7 +135,7 @@ class MarketDataBarsProvider:
         start: datetime,
         end: datetime,
         progress: WarmProgress | None = None,
-    ) -> dict[tuple[str, str], str]:
+    ) -> dict[tuple[str, str], HistoricalBarsPrefetchOutcome]:
         return self._market_data_service.prefetch_historical_bars(
             instruments,
             interval=interval,
