@@ -304,6 +304,58 @@ def test_live_parity_admission_gate_blocks_with_pipeline_reason(
 
     assert trade.exit_reason == ExitReason.RISK_BLOCKED
     assert trade.risk_block_rule == expected_rule
+    assert trade.decision_at == card.created_at
+    assert trade.decision_stage == "admission"
+    assert trade.decision_reason == expected_rule
+    assert trade.decision_details_json is not None
+    assert trade.decision_details_json["schema_version"] == 1
+    assert trade.decision_details_json["comparison"]
+
+
+def test_live_parity_atr_failure_captures_bounded_coverage_context() -> None:
+    card = _card()
+    available_daily_bars = _daily_bars_before_entry()[:10]
+    bars = FakeBars(
+        intraday_by_key={"AAPL|XNAS": _intraday_bars()},
+        daily_by_key={"AAPL|XNAS": available_daily_bars},
+    )
+
+    trade = _run([card], bars).trades[0]
+
+    assert trade.decision_stage == "market_data"
+    assert trade.decision_reason == "atr_unavailable"
+    assert trade.decision_details_json is not None
+    inputs = trade.decision_details_json["inputs"]
+    assert inputs["required_metric"]["value"] == "atr_20d"
+    assert inputs["required_lookback_bars"]["value"] == 20
+    assert inputs["required_source_bars"]["value"] == 21
+    assert inputs["available_bars"]["value"] == 10
+    assert inputs["failure_category"]["value"] == "insufficient_history"
+
+
+def test_live_parity_zero_share_sizing_captures_every_constraint() -> None:
+    card = _card(risk_max_loss_usd=1.0)
+    bars = FakeBars(
+        intraday_by_key={"AAPL|XNAS": _intraday_bars()},
+        daily_by_key={"AAPL|XNAS": _daily_bars_before_entry()},
+    )
+
+    trade = _run([card], bars).trades[0]
+
+    assert trade.decision_stage == "sizing"
+    assert trade.decision_reason == "size_below_one_share"
+    assert trade.decision_details_json is not None
+    details = trade.decision_details_json
+    assert details["comparison"]["observed"]["value"] == 0
+    assert details["inputs"]["entry_price"]["value"] == pytest.approx(100.05)
+    assert details["inputs"]["atr_20d"]["value"] == pytest.approx(2.0)
+    assert details["inputs"]["atr_stop_multiplier"]["value"] == 1.5
+    derived = details["derived_values"]
+    assert derived["risk_budget_quantity"]["value"] == 0
+    assert derived["position_cap_quantity"]["value"] == 99
+    assert derived["portfolio_headroom_quantity"]["value"] == 499
+    assert derived["final_quantity"]["value"] == 0
+    assert details["binding_constraint"] == "risk_budget"
 
 
 def test_live_parity_risk_gate_blocks_max_daily_trades() -> None:
@@ -375,6 +427,34 @@ def test_live_parity_risk_gate_blocks_max_positions() -> None:
     by_card = {trade.thesis_card_id: trade for trade in result.trades}
     assert by_card["second"].exit_reason == ExitReason.RISK_BLOCKED
     assert by_card["second"].risk_block_rule == "portfolio_cap_exceeded"
+    assert by_card["second"].decision_stage == "portfolio_risk"
+    details = by_card["second"].decision_details_json
+    assert details is not None
+    assert details["check_id"] == "portfolio_risk.max_positions"
+    assert details["comparison"]["observed"]["value"] == 1
+    assert details["comparison"]["expected"]["value"] == 1
+
+
+def test_live_parity_position_exists_links_blocking_simulated_trade() -> None:
+    first = _card(card_id="first", ticker="AAPL", created_at=ENTRY)
+    second = _card(card_id="second", ticker="AAPL", created_at=ENTRY + timedelta(minutes=1))
+    bars = FakeBars(
+        intraday_by_key={"AAPL|XNAS": _flat_until_time_exit()},
+        daily_by_key={"AAPL|XNAS": _daily_bars_before_entry()},
+    )
+
+    result = _run([first, second], bars)
+    by_card = {trade.thesis_card_id: trade for trade in result.trades}
+
+    blocked = by_card["second"]
+    assert blocked.decision_reason == "position_exists"
+    assert blocked.decision_details_json is not None
+    assert blocked.decision_details_json["related_records"] == [
+        {
+            "record_type": "simulated_trade",
+            "record_id": by_card["first"].trade_id,
+        }
+    ]
 
 
 def test_live_parity_daily_loss_halt_latches_for_remainder_of_day() -> None:

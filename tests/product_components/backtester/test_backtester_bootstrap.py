@@ -64,3 +64,8 @@ def test_bootstrap_backtester_schema_applies_schema_sql(monkeypatch) -> None:
     assert "t_llm_analysis_cache" in applied
     assert "ADD COLUMN IF NOT EXISTS mfe_pct" in applied
     assert "ADD COLUMN IF NOT EXISTS horizon_returns_json" in applied
+    assert "ADD COLUMN IF NOT EXISTS decision_at" in applied
+    assert "ADD COLUMN IF NOT EXISTS decision_stage" in applied
+    assert "ADD COLUMN IF NOT EXISTS decision_reason" in applied
+    assert "ADD COLUMN IF NOT EXISTS decision_details_json" in applied
+    assert "CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_decision_stage_reason" in applied

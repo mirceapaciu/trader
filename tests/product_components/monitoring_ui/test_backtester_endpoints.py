@@ -9,10 +9,14 @@ from src.product_components.monitoring_ui.backend.app import create_app
 from src.product_components.monitoring_ui.backend.backtest_run_request import BacktestRunRequest
 from src.product_components.monitoring_ui.backend.backtest_runner import BacktestProgress
 from src.product_components.monitoring_ui.backend.repository import (
+    BacktestBlockedDecisionCountRow,
+    BacktestCardRow,
+    BacktestCardTradeRow,
     BacktestEquityRow,
     BacktestRunRow,
     BacktestTradeRow,
     BacktesterTablesUnavailable,
+    PostgresRedisMonitoringDataSource,
 )
 from src.product_components.monitoring_ui.backend.service import (
     BacktestRunAlreadyActive,
@@ -131,6 +135,8 @@ class FakeBacktestDataSource:
         self.run_by_id: dict[str, BacktestRunRow] = {}
         self.trades: list[BacktestTradeRow] = []
         self.equity: list[BacktestEquityRow] = []
+        self.blocked_counts: list[BacktestBlockedDecisionCountRow] = []
+        self.cards: list[BacktestCardRow] = []
         self.unavailable = False
         self.last_trade_filters: dict | None = None
         self.window_start_at: datetime | None = None
@@ -151,12 +157,12 @@ class FakeBacktestDataSource:
             raise BacktesterTablesUnavailable("missing")
         return self.run_by_id.get(run_id)
 
-    def count_backtest_trades(self, *, run_id, timing_scenario=None, strategy=None, exit_reason=None, card_status=None):
+    def count_backtest_trades(self, *, run_id, timing_scenario=None, strategy=None, exit_reason=None, card_status=None, decision_stage=None, decision_reason=None):
         if self.unavailable:
             raise BacktesterTablesUnavailable("missing")
         return len(self.trades)
 
-    def list_backtest_trades(self, *, run_id, timing_scenario=None, strategy=None, exit_reason=None, card_status=None, limit, offset):
+    def list_backtest_trades(self, *, run_id, timing_scenario=None, strategy=None, exit_reason=None, card_status=None, decision_stage=None, decision_reason=None, limit, offset):
         if self.unavailable:
             raise BacktesterTablesUnavailable("missing")
         self.last_trade_filters = {
@@ -164,15 +170,27 @@ class FakeBacktestDataSource:
             "strategy": strategy,
             "exit_reason": exit_reason,
             "card_status": card_status,
+            "decision_stage": decision_stage,
+            "decision_reason": decision_reason,
             "limit": limit,
             "offset": offset,
         }
         return list(self.trades)
 
+    def list_backtest_blocked_decision_counts(self, *, run_id, timing_scenario=None, strategy=None, card_status=None):
+        if self.unavailable:
+            raise BacktesterTablesUnavailable("missing")
+        return list(self.blocked_counts)
+
     def list_backtest_equity_points(self, *, run_id: str):
         if self.unavailable:
             raise BacktesterTablesUnavailable("missing")
         return list(self.equity)
+
+    def list_backtest_cards(self, *, run_id: str):
+        if self.unavailable:
+            raise BacktesterTablesUnavailable("missing")
+        return list(self.cards)
 
 
 class FakeBacktestRunner:
@@ -526,12 +544,225 @@ def test_route_trades_passes_filters(monkeypatch) -> None:
         )
     ]
     client = _client(monkeypatch, ds, FakeBacktestRunner())
-    response = client.get("/api/backtests/bt_1/trades", params={"strategy": "sentiment_momentum", "limit": 10})
+    response = client.get(
+        "/api/backtests/bt_1/trades",
+        params={
+            "strategy": "sentiment_momentum",
+            "decision_stage": "sizing",
+            "decision_reason": "size_below_one_share",
+            "limit": 10,
+        },
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["total_count"] == 1
     assert body["trades"][0]["trade_id"] == "t1"
     assert ds.last_trade_filters["strategy"] == "sentiment_momentum"
+    assert ds.last_trade_filters["decision_stage"] == "sizing"
+    assert ds.last_trade_filters["decision_reason"] == "size_below_one_share"
+
+
+def test_trades_serializes_details_breakdown_and_legacy_fallback() -> None:
+    ds = FakeBacktestDataSource()
+    ds.blocked_counts = [
+        BacktestBlockedDecisionCountRow(stage="legacy", reason="review_not_approved", count=1),
+        BacktestBlockedDecisionCountRow(stage="sizing", reason="size_below_one_share", count=1),
+    ]
+    ds.trades = [
+        BacktestTradeRow(
+            trade_id="structured", ticker="AAPL", exchange_code="XNAS", strategy="sentiment_momentum",
+            direction="buy", entry_timing_scenario="actual", entry_at=None, entry_price=None,
+            exit_at=None, exit_price=None, net_pnl=None, return_pct=None, exit_reason="risk_blocked",
+            risk_block_rule="size_below_one_share", news_fetch_delay_seconds=1.0,
+            thesis_build_delay_seconds=2.0, total_pipeline_delay_seconds=3.0,
+            card_decision_state="approved", card_was_live_expired=False, decision_at=_now(),
+            decision_stage="sizing", decision_reason="size_below_one_share",
+            decision_details_json={
+                "version": 1,
+                "observed": {"value": 0, "unit": "shares"},
+                "api_key": "must-not-leak",
+                "token": "must-not-leak-either",
+                "context": "postgresql://user:password@example.invalid/database",
+                "note": "x" * 1_200,
+            },
+        ),
+        BacktestTradeRow(
+            trade_id="legacy", ticker="MSFT", exchange_code="XNAS", strategy="sentiment_momentum",
+            direction="buy", entry_timing_scenario="actual", entry_at=None, entry_price=None,
+            exit_at=None, exit_price=None, net_pnl=None, return_pct=None, exit_reason="risk_blocked",
+            risk_block_rule="review_not_approved", news_fetch_delay_seconds=None,
+            thesis_build_delay_seconds=None, total_pipeline_delay_seconds=None,
+            card_decision_state="rejected", card_was_live_expired=False,
+        ),
+    ]
+
+    result = _service(ds).list_backtest_trades(run_id="bt_1", limit=50, offset=0)
+    body = result.model_dump(mode="json")
+    assert body["blocked_candidate_breakdown"] == {
+        "total": 2,
+        "candidate_total": 2,
+        "percentage": 100.0,
+        "by_stage": [
+            {"stage": "legacy", "count": 1, "reasons": [{"reason": "review_not_approved", "count": 1}]},
+            {"stage": "sizing", "count": 1, "reasons": [{"reason": "size_below_one_share", "count": 1}]},
+        ],
+    }
+    structured, legacy = body["trades"]
+    assert structured["decision_details_json"]["observed"] == {"value": 0, "unit": "shares"}
+    assert structured["decision_details_json"]["api_key"] == "[redacted]"
+    assert structured["decision_details_json"]["token"] == "[redacted]"
+    assert structured["decision_details_json"]["context"] == "[redacted]"
+    assert len(structured["decision_details_json"]["note"]) == 1_001
+    assert structured["decision_details_available"] is True
+    assert legacy["decision_reason"] == "review_not_approved"
+    assert legacy["decision_details_json"] is None
+    assert legacy["decision_details_available"] is False
+    assert "legacy run" in legacy["decision_details_message"]
+
+
+def test_repository_filters_decisions_and_maps_json(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+    captured: dict[str, object] = {}
+    details = {"version": 1, "check_id": "risk.max_positions"}
+
+    def _fetch(sql, params):
+        captured["sql"] = sql
+        captured["params"] = params
+        return [{
+            "trade_id": "blocked", "ticker": "AAPL", "exchange_code": "XNAS",
+            "strategy": "sentiment_momentum", "direction": "buy",
+            "entry_timing_scenario": "actual", "entry_at": None, "entry_price": None,
+            "exit_at": None, "exit_price": None, "net_pnl": None, "return_pct": None,
+            "exit_reason": "risk_blocked", "risk_block_rule": "max_positions",
+            "decision_at": _now(), "decision_stage": "portfolio_risk",
+            "decision_reason": "max_positions", "decision_details_json": details,
+            "news_fetch_delay_seconds": None, "thesis_build_delay_seconds": None,
+            "total_pipeline_delay_seconds": None, "card_decision_state": "approved",
+            "card_was_live_expired": False,
+        }]
+
+    monkeypatch.setattr(repository, "_fetch_backtest_rows", _fetch)
+
+    rows = repository.list_backtest_trades(
+        run_id="bt-1",
+        decision_stage="portfolio_risk",
+        decision_reason="max_positions",
+        limit=10,
+        offset=0,
+    )
+
+    assert "decision_stage = %s" in captured["sql"]
+    assert "COALESCE(decision_reason, risk_block_rule) = %s" in captured["sql"]
+    assert captured["params"] == ("bt-1", "portfolio_risk", "max_positions", 10, 0)
+    assert rows[0].decision_details_json == details
+    assert rows[0].decision_at == _now()
+
+
+def test_repository_aggregates_blocked_counts_in_database(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+    captured: dict[str, object] = {}
+
+    def _fetch(sql, params):
+        captured["sql"] = sql
+        captured["params"] = params
+        return [
+            {"stage": "market_data", "reason": "atr_unavailable", "total": 6},
+            {"stage": "legacy", "reason": "review_not_approved", "total": 2},
+        ]
+
+    monkeypatch.setattr(repository, "_fetch_backtest_rows", _fetch)
+
+    rows = repository.list_backtest_blocked_decision_counts(
+        run_id="bt-1", timing_scenario="actual", strategy="sentiment_momentum"
+    )
+
+    assert "COUNT(*) AS total" in captured["sql"]
+    assert "GROUP BY" in captured["sql"]
+    assert "COALESCE(decision_stage, 'legacy')" in captured["sql"]
+    assert captured["params"] == ("bt-1", "actual", "sentiment_momentum", "risk_blocked")
+    assert [(row.stage, row.reason, row.count) for row in rows] == [
+        ("market_data", "atr_unavailable", 6),
+        ("legacy", "review_not_approved", 2),
+    ]
+
+
+def test_card_trade_exposes_same_structured_decision_and_legacy_fallback() -> None:
+    ds = FakeBacktestDataSource()
+    ds.cards = [
+        BacktestCardRow(
+            thesis_card_id="card-1",
+            ticker="AAPL",
+            exchange_code="XNAS",
+            direction="buy",
+            strategy="sentiment_momentum",
+            time_horizon="swing",
+            confidence=0.8,
+            decision_state="approved",
+            card_created_at=_now(),
+            card_expires_at=None,
+            trades=[
+                BacktestCardTradeRow(
+                    trade_id="structured",
+                    entry_timing_scenario="actual",
+                    entry_at=None,
+                    entry_price=None,
+                    exit_at=None,
+                    exit_price=None,
+                    net_pnl=None,
+                    return_pct=None,
+                    exit_reason="risk_blocked",
+                    risk_block_rule="atr_unavailable",
+                    decision_at=_now(),
+                    decision_stage="market_data",
+                    decision_reason="atr_unavailable",
+                    decision_details_json={"schema_version": 1, "check_id": "market_data.atr"},
+                ),
+                BacktestCardTradeRow(
+                    trade_id="legacy",
+                    entry_timing_scenario="ideal",
+                    entry_at=None,
+                    entry_price=None,
+                    exit_at=None,
+                    exit_price=None,
+                    net_pnl=None,
+                    return_pct=None,
+                    exit_reason="risk_blocked",
+                    risk_block_rule="review_not_approved",
+                ),
+            ],
+        )
+    ]
+
+    trades = _service(ds).list_backtest_cards(run_id="bt-1").cards[0].trades
+
+    assert trades[0].decision_details_json == {
+        "schema_version": 1,
+        "check_id": "market_data.atr",
+    }
+    assert trades[0].decision_details_available is True
+    assert trades[1].decision_reason == "review_not_approved"
+    assert trades[1].decision_details_available is False
+    assert trades[1].decision_details_message == (
+        "Detailed decision operands were not recorded for this legacy run."
+    )
 
 
 def test_route_start_run_returns_202(monkeypatch) -> None:
