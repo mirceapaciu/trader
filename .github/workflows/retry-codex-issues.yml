@@ -1,0 +1,34 @@
+name: Retry Codex issues
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: retry-codex-issues
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch deferred issue implementations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue list --state open --label codex:retry --limit 100 --json number --jq '.[].number' |
+          while read -r ISSUE_NUMBER; do
+            [[ -n "$ISSUE_NUMBER" ]] || continue
+            gh issue edit "$ISSUE_NUMBER" --remove-label codex:retry
+            if ! gh workflow run implement-issue.yml -f issue_number="$ISSUE_NUMBER"; then
+              gh issue edit "$ISSUE_NUMBER" --add-label codex:retry
+              exit 1
+            fi
+          done

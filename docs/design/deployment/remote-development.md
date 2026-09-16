@@ -114,6 +114,16 @@ manual workflow with the same GitHub issue number. The branch and pull request
 are reused. Runner logs are available in GitHub Actions and through the runner's
 systemd service journal.
 
+Codex subscription usage exhaustion is handled separately from ordinary
+failures. The implementation workflow commits and pushes the current working
+tree to the issue branch, applies the `codex:retry` label to the GitHub issue,
+and fails the run so the interruption remains visible. The
+`retry-codex-issues.yml` workflow checks twice an hour for that label, removes
+it, and dispatches the implementation workflow with the same GitHub issue
+number. If the allowance has not reset, the new run checkpoints again and
+reapplies the label; after a successful verified implementation, the label is
+removed. Do not remove the label manually unless automatic retries should stop.
+
 If a Codex run reports `bwrap: loopback: Failed RTM_NEWADDR`, rerun the bootstrap.
 It installs and reloads the Ubuntu 24.04 `bwrap-userns-restrict` AppArmor profile
 without disabling the host-wide unprivileged-user-namespace restriction.

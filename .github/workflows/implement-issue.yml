@@ -16,7 +16,7 @@ concurrency:
 
 permissions:
   contents: write
-  issues: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -52,43 +52,83 @@ jobs:
             git checkout -b "$BRANCH"
           fi
 
-      - name: Select implementation model
-        id: model
+      - name: Run Codex implementation
+        id: codex
         env:
           PROJECT_ISSUE_ID: ${{ steps.issue.outputs.project_issue }}
           PROJECT_ISSUE_DETAIL: ${{ steps.issue.outputs.detail_file }}
         run: |
+          set +e
+          CODEX_LOG="$RUNNER_TEMP/codex-exec.log"
           ROUTING_FILE="$RUNNER_TEMP/codex-model-routing.json"
           codex exec --sandbox read-only \
             --model gpt-5.6-terra \
             --config 'model_reasoning_effort="low"' \
             --output-last-message "$ROUTING_FILE" \
-            "$(cat .github/codex/prompts/select-implementation-model.md)"
+            "$(cat .github/codex/prompts/select-implementation-model.md)" \
+            2>&1 | tee "$CODEX_LOG"
+          CODEX_EXIT=${PIPESTATUS[0]}
 
-          MODEL="$(jq -er '.model | strings' "$ROUTING_FILE")"
-          REASONING_EFFORT="$(jq -er '.reasoning_effort | strings' "$ROUTING_FILE")"
-          case "$MODEL:$REASONING_EFFORT" in
-            gpt-5.6-terra:medium|gpt-5.6-sol:medium|gpt-5.6-sol:high|gpt-6-astra:high) ;;
-            *)
-              echo "Unsupported Codex implementation profile: $MODEL:$REASONING_EFFORT" >&2
-              exit 1
-              ;;
-          esac
-          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
-          echo "reasoning_effort=$REASONING_EFFORT" >> "$GITHUB_OUTPUT"
+          if [[ "$CODEX_EXIT" -eq 0 ]]; then
+            MODEL="$(jq -er '.model | strings' "$ROUTING_FILE")"
+            CODEX_EXIT=$?
+          fi
+          if [[ "$CODEX_EXIT" -eq 0 ]]; then
+            REASONING_EFFORT="$(jq -er '.reasoning_effort | strings' "$ROUTING_FILE")"
+            CODEX_EXIT=$?
+          fi
 
-      - name: Run Codex implementation
+          if [[ "$CODEX_EXIT" -eq 0 ]]; then
+            case "$MODEL:$REASONING_EFFORT" in
+              gpt-5.6-terra:medium|gpt-5.6-sol:medium|gpt-5.6-sol:high|gpt-6-astra:high) ;;
+              *)
+                echo "Unsupported Codex implementation profile: $MODEL:$REASONING_EFFORT" | tee -a "$CODEX_LOG" >&2
+                CODEX_EXIT=1
+                ;;
+            esac
+          fi
+
+          if [[ "$CODEX_EXIT" -eq 0 ]]; then
+            codex exec --sandbox workspace-write \
+              --model "$MODEL" \
+              --config "model_reasoning_effort=\"$REASONING_EFFORT\"" \
+              --output-last-message codex-output.md \
+              "$(cat .github/codex/prompts/implement-issue.md)" \
+              2>&1 | tee -a "$CODEX_LOG"
+            CODEX_EXIT=${PIPESTATUS[0]}
+          fi
+
+          if [[ "$CODEX_EXIT" -eq 0 ]]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          elif grep -Eqi "hit your usage limit|usage limit.*try again" "$CODEX_LOG"; then
+            echo "status=usage_limit" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Checkpoint work deferred by Codex usage limit
+        if: steps.codex.outputs.status == 'usage_limit'
         env:
-          PROJECT_ISSUE_ID: ${{ steps.issue.outputs.project_issue }}
-          PROJECT_ISSUE_DETAIL: ${{ steps.issue.outputs.detail_file }}
+          BRANCH: ${{ steps.issue.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_ISSUE: ${{ steps.issue.outputs.project_issue }}
         run: |
-          codex exec --sandbox workspace-write \
-            --model '${{ steps.model.outputs.model }}' \
-            --config 'model_reasoning_effort="${{ steps.model.outputs.reasoning_effort }}"' \
-            --output-last-message codex-output.md \
-            "$(cat .github/codex/prompts/implement-issue.md)"
+          rm -f codex-output.md
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if [[ -n "$(git status --short)" ]]; then
+            git add --all
+            git commit -m "Checkpoint $PROJECT_ISSUE after Codex usage limit"
+          fi
+          git push --set-upstream origin "$BRANCH"
+          gh label create codex:retry --color D4C5F9 \
+            --description "Retry after the Codex usage allowance resets" --force
+          gh issue edit "$ISSUE_NUMBER" --add-label codex:retry
+          echo "Codex usage was exhausted. Partial work is on $BRANCH; a scheduled workflow will retry it."
 
       - name: Verify implementation
+        if: steps.codex.outputs.status == 'success'
         env:
           PROJECT_ISSUE: ${{ steps.issue.outputs.project_issue }}
           DETAIL_FILE: ${{ steps.issue.outputs.detail_file }}
@@ -103,6 +143,7 @@ jobs:
           git diff --check
 
       - name: Mark verified project issue resolved
+        if: steps.codex.outputs.status == 'success'
         env:
           PROJECT_ISSUE: ${{ steps.issue.outputs.project_issue }}
         run: |
@@ -111,6 +152,7 @@ jobs:
             --project-issue "$PROJECT_ISSUE"
 
       - name: Commit, push, and create or update pull request
+        if: steps.codex.outputs.status == 'success'
         env:
           BRANCH: ${{ steps.issue.outputs.branch }}
           GH_TOKEN: ${{ github.token }}
@@ -136,3 +178,19 @@ jobs:
             git commit -m "Document pull request for $PROJECT_ISSUE"
             git push origin "$BRANCH"
           fi
+
+          if gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name' | grep -Fxq codex:retry; then
+            gh issue edit "$ISSUE_NUMBER" --remove-label codex:retry
+          fi
+
+      - name: Report deferred or failed Codex execution
+        if: steps.codex.outputs.status != 'success'
+        env:
+          CODEX_STATUS: ${{ steps.codex.outputs.status }}
+        run: |
+          if [[ "$CODEX_STATUS" == "usage_limit" ]]; then
+            echo "Codex usage limit reached; checkpointed for scheduled retry." >&2
+          else
+            echo "Codex failed for a reason that is not eligible for automatic retry." >&2
+          fi
+          exit 1

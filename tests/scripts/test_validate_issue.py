@@ -60,3 +60,17 @@ def test_issue_workflow_marks_resolved_only_after_verification() -> None:
     assert verify_start < resolve_start
     assert "[[:space:]]*new[[:space:]]*" in workflow[verify_start:resolve_start]
     assert "--mark-resolved" in workflow[resolve_start:]
+
+
+def test_issue_workflow_checkpoints_and_defers_usage_limit_failures() -> None:
+    repo = Path(__file__).parents[2]
+    workflow = (repo / ".github/workflows/implement-issue.yml").read_text(encoding="utf-8")
+    retry_workflow = (repo / ".github/workflows/retry-codex-issues.yml").read_text(encoding="utf-8")
+
+    assert "status=usage_limit" in workflow
+    assert "Checkpoint work deferred by Codex usage limit" in workflow
+    assert 'git push --set-upstream origin "$BRANCH"' in workflow
+    assert "--add-label codex:retry" in workflow
+    assert "schedule:" in retry_workflow
+    assert "--label codex:retry" in retry_workflow
+    assert "gh workflow run implement-issue.yml" in retry_workflow
