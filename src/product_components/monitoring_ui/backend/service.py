@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Protocol
+from typing import Any, Protocol
 
 import psycopg
 import redis
@@ -22,6 +22,9 @@ from .models import (
     BacktestCardStatusMetrics,
     BacktestCardTrade,
     BacktestCardsResponse,
+    BacktestBlockedCandidateBreakdown,
+    BacktestBlockedReasonCount,
+    BacktestBlockedStageCount,
     BacktestDelayAggregates,
     BacktestEquityPoint,
     BacktestEquityResponse,
@@ -78,7 +81,9 @@ from .models import (
     WindowArticlesResponse,
 )
 from .repository import (
+    BacktestCardTradeRow,
     BacktestCardRow,
+    BacktestBlockedDecisionCountRow,
     BacktestEquityRow,
     BacktestRunRow,
     BacktestTradeRow,
@@ -92,6 +97,11 @@ from src.product_components.thesis_builder.taxonomy_gateway import TaxonomyComma
 logger = logging.getLogger(__name__)
 
 _INFRASTRUCTURE_ERRORS = (psycopg.Error, redis.RedisError, TimeoutError)
+_LEGACY_DECISION_MESSAGE = "Detailed decision operands were not recorded for this legacy run."
+_MAX_DECISION_DETAIL_DEPTH = 6
+_MAX_DECISION_DETAIL_NODES = 256
+_MAX_DECISION_DETAIL_STRING_LENGTH = 1_000
+_MAX_DECISION_DETAIL_COLLECTION_ITEMS = 64
 
 
 def _taxonomy_command_response(
@@ -214,6 +224,8 @@ class MonitoringDataSource(Protocol):
         strategy: str | None = None,
         exit_reason: str | None = None,
         card_status: str | None = None,
+        decision_stage: str | None = None,
+        decision_reason: str | None = None,
         limit: int,
         offset: int,
     ) -> list[BacktestTradeRow]: ...
@@ -226,7 +238,18 @@ class MonitoringDataSource(Protocol):
         strategy: str | None = None,
         exit_reason: str | None = None,
         card_status: str | None = None,
+        decision_stage: str | None = None,
+        decision_reason: str | None = None,
     ) -> int: ...
+
+    def list_backtest_blocked_decision_counts(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        card_status: str | None = None,
+    ) -> list[BacktestBlockedDecisionCountRow]: ...
 
     def list_backtest_equity_points(self, *, run_id: str) -> list[BacktestEquityRow]: ...
 
@@ -1065,6 +1088,8 @@ class MonitoringService:
         strategy: str | None = None,
         exit_reason: str | None = None,
         card_status: str | None = None,
+        decision_stage: str | None = None,
+        decision_reason: str | None = None,
         limit: int,
         offset: int,
     ) -> BacktestTradesResponse:
@@ -1077,6 +1102,8 @@ class MonitoringService:
                 strategy=strategy,
                 exit_reason=exit_reason,
                 card_status=card_status,
+                decision_stage=decision_stage,
+                decision_reason=decision_reason,
             )
             trades = self._data_source.list_backtest_trades(
                 run_id=run_id,
@@ -1084,8 +1111,22 @@ class MonitoringService:
                 strategy=strategy,
                 exit_reason=exit_reason,
                 card_status=card_status,
+                decision_stage=decision_stage,
+                decision_reason=decision_reason,
                 limit=bounded_limit,
                 offset=bounded_offset,
+            )
+            candidate_total = self._data_source.count_backtest_trades(
+                run_id=run_id,
+                timing_scenario=timing_scenario,
+                strategy=strategy,
+                card_status=card_status,
+            )
+            blocked_counts = self._data_source.list_backtest_blocked_decision_counts(
+                run_id=run_id,
+                timing_scenario=timing_scenario,
+                strategy=strategy,
+                card_status=card_status,
             )
         except BacktesterTablesUnavailable:
             return BacktestTradesResponse(
@@ -1096,6 +1137,7 @@ class MonitoringService:
                 limit=bounded_limit,
                 offset=bounded_offset,
                 total_count=0,
+                blocked_candidate_breakdown=BacktestBlockedCandidateBreakdown(),
                 generated_at=_utc_now(),
             )
         return BacktestTradesResponse(
@@ -1104,6 +1146,9 @@ class MonitoringService:
             limit=bounded_limit,
             offset=bounded_offset,
             total_count=total_count,
+            blocked_candidate_breakdown=_blocked_candidate_breakdown(
+                blocked_counts, candidate_total=candidate_total
+            ),
             generated_at=_utc_now(),
         )
 
@@ -1161,6 +1206,7 @@ class MonitoringService:
                             return_pct=t.return_pct,
                             exit_reason=t.exit_reason,
                             risk_block_rule=t.risk_block_rule,
+                            **_decision_api_fields(t),
                         )
                         for t in card.trades
                     ],
@@ -1404,12 +1450,145 @@ def _backtest_trade(row: BacktestTradeRow) -> BacktestTrade:
         return_pct=row.return_pct,
         exit_reason=row.exit_reason,
         risk_block_rule=row.risk_block_rule,
+        **_decision_api_fields(row),
         news_fetch_delay_seconds=row.news_fetch_delay_seconds,
         thesis_build_delay_seconds=row.thesis_build_delay_seconds,
         total_pipeline_delay_seconds=row.total_pipeline_delay_seconds,
         card_decision_state=row.card_decision_state,
         card_was_live_expired=row.card_was_live_expired,
     )
+
+
+def _blocked_candidate_breakdown(
+    rows: list[BacktestBlockedDecisionCountRow],
+    *,
+    candidate_total: int,
+) -> BacktestBlockedCandidateBreakdown:
+    by_stage: dict[str, list[BacktestBlockedDecisionCountRow]] = {}
+    for row in rows:
+        by_stage.setdefault(row.stage, []).append(row)
+    stages = [
+        BacktestBlockedStageCount(
+            stage=stage,
+            count=sum(row.count for row in stage_rows),
+            reasons=[
+                BacktestBlockedReasonCount(reason=row.reason, count=row.count)
+                for row in stage_rows
+            ],
+        )
+        for stage, stage_rows in sorted(by_stage.items())
+    ]
+    blocked_total = sum(stage.count for stage in stages)
+    return BacktestBlockedCandidateBreakdown(
+        total=blocked_total,
+        candidate_total=candidate_total,
+        percentage=(blocked_total / candidate_total * 100.0 if candidate_total else 0.0),
+        by_stage=stages,
+    )
+
+
+def _decision_api_fields(row: BacktestTradeRow | BacktestCardTradeRow) -> dict[str, Any]:
+    details = _bounded_decision_details(row.decision_details_json)
+    is_blocked = row.exit_reason == "risk_blocked"
+    return {
+        "decision_at": row.decision_at,
+        "decision_stage": row.decision_stage,
+        "decision_reason": row.decision_reason or (row.risk_block_rule if is_blocked else None),
+        "decision_details_json": details,
+        "decision_details_available": details is not None,
+        "decision_details_message": (
+            _LEGACY_DECISION_MESSAGE if is_blocked and details is None else None
+        ),
+    }
+
+
+def _bounded_decision_details(details: dict[str, Any] | None) -> dict[str, Any] | None:
+    if details is None:
+        return None
+    remaining = [_MAX_DECISION_DETAIL_NODES]
+    bounded = _bounded_decision_value(details, depth=0, remaining=remaining)
+    return bounded if isinstance(bounded, dict) else None
+
+
+def _bounded_decision_value(value: Any, *, depth: int, remaining: list[int]) -> Any:
+    if remaining[0] <= 0:
+        return "[truncated]"
+    remaining[0] -= 1
+    if depth >= _MAX_DECISION_DETAIL_DEPTH:
+        return "[truncated]"
+    if isinstance(value, dict):
+        bounded: dict[str, Any] = {}
+        items = list(value.items())
+        for key, item in items[:_MAX_DECISION_DETAIL_COLLECTION_ITEMS]:
+            safe_key = str(key)[:128]
+            bounded[safe_key] = (
+                "[redacted]"
+                if _is_sensitive_decision_key(safe_key)
+                else _bounded_decision_value(item, depth=depth + 1, remaining=remaining)
+            )
+        if len(items) > _MAX_DECISION_DETAIL_COLLECTION_ITEMS:
+            bounded["_truncated"] = True
+        return bounded
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+        bounded_items = [
+            _bounded_decision_value(item, depth=depth + 1, remaining=remaining)
+            for item in items[:_MAX_DECISION_DETAIL_COLLECTION_ITEMS]
+        ]
+        if len(items) > _MAX_DECISION_DETAIL_COLLECTION_ITEMS:
+            bounded_items.append("[truncated]")
+        return bounded_items
+    if isinstance(value, str):
+        normalized_value = value.lower()
+        if any(
+            marker in normalized_value
+            for marker in (
+                "authorization: bearer ",
+                "postgres://",
+                "postgresql://",
+                "redis://",
+            )
+        ):
+            return "[redacted]"
+        if len(value) <= _MAX_DECISION_DETAIL_STRING_LENGTH:
+            return value
+        return value[:_MAX_DECISION_DETAIL_STRING_LENGTH] + "…"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:_MAX_DECISION_DETAIL_STRING_LENGTH]
+
+
+def _is_sensitive_decision_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    exact = {
+        "authorization",
+        "cookie",
+        "credentials",
+        "database_url",
+        "dsn",
+        "headers",
+        "password",
+        "private_key",
+        "request_headers",
+        "secret",
+        "set_cookie",
+        "token",
+    }
+    if normalized in exact:
+        return True
+    return normalized == "token" or normalized.endswith(("_headers", "_token")) or any(
+        marker in normalized
+        for marker in (
+            "api_key",
+            "apikey",
+            "client_secret",
+            "access_token",
+            "auth_token",
+            "bearer_token",
+            "refresh_token",
+            "session_token",
+        )
+    ) or normalized.endswith(("_password", "_secret"))
 
 
 def _project_per_strategy(summary_json: dict) -> list[BacktestStrategyMetrics]:

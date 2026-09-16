@@ -247,10 +247,26 @@ In `live_parity`, the Backtester maps simulated state onto the TradeExecutor pur
 In `legacy_flat_percent`, the Backtester keeps the previous fixed-fractional sizing, exposure caps,
 cooldown, daily trade cap, and daily loss circuit breaker for regression and counterfactual runs.
 
-When a card cannot be opened because a portfolio constraint is binding, the trade is recorded with
-`exit_reason = risk_blocked` and the binding rule is captured for attribution. Sizing and risk
-parameters are run inputs (Section 7 of the configuration spec) so a single historical card set can
-be evaluated under different risk regimes.
+Every candidate rejected by admission, ATR availability, sizing, or a portfolio guardrail is
+recorded with `exit_reason = risk_blocked` and a versioned explanation captured at the simulated
+decision time. The explanation uses the TradeExecutor pipeline contract and preserves the failed
+comparison, observed and expected operands, units, calculation inputs, derived values, binding
+constraint, and safe related-record references. Sizing records the quantities independently
+allowed by risk budget, per-position notional, and portfolio headroom before choosing the minimum.
+ATR failures include the requested metric, required lookback/source-bar counts, available-bar count,
+bounded coverage dates, and a safe availability category. Legacy simulator guardrails are adapted
+to the same public explanation shape without changing their policy or their existing
+`risk_block_rule` values.
+
+The Monitoring API groups blocked candidates in SQL by stage and reason and exposes stage/reason
+filters, so the frontend does not need to fetch all trade rows to calculate a breakdown. The UI
+uses “Blocked candidates” and reserves “Portfolio risk” for that decision stage, renders the
+structured comparison as readable fields, and links related simulated trades when present. Rows
+created before this contract continue to show their `risk_block_rule` with an explicit notice that
+the decision-time operands were not recorded; the UI never combines those rows with current run or
+service configuration to invent an explanation. Sizing and risk parameters remain run inputs
+(Section 7 of the configuration spec), and this observability contract does not alter any admission,
+sizing, execution, or portfolio-risk decision.
 
 ## 7. Metrics
 

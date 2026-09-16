@@ -632,6 +632,8 @@ def create_app(
         strategy: str | None = Query(default=None),
         exit_reason: str | None = Query(default=None),
         card_status: str | None = Query(default=None),
+        decision_stage: str | None = Query(default=None),
+        decision_reason: str | None = Query(default=None),
         limit: int = Query(default=50, ge=1),
         offset: int = Query(default=0, ge=0),
     ) -> BacktestTradesResponse:
@@ -642,6 +644,8 @@ def create_app(
                 strategy=strategy,
                 exit_reason=exit_reason,
                 card_status=card_status,
+                decision_stage=decision_stage,
+                decision_reason=decision_reason,
                 limit=limit,
                 offset=offset,
             ),

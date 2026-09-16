@@ -782,6 +782,26 @@ export type BacktestDetailResponse = {
   generated_at: string;
 };
 
+export type BacktestBlockedReasonBucket = {
+  reason: string;
+  count: number;
+};
+
+export type BacktestBlockedStageBucket = {
+  stage: string;
+  count: number;
+  reasons: BacktestBlockedReasonBucket[];
+};
+
+export type BacktestBlockedCandidateBreakdown = {
+  total: number;
+  candidate_total?: number | null;
+  percentage?: number | null;
+  by_stage: BacktestBlockedStageBucket[];
+};
+
+export type BacktestDecisionDetails = Record<string, unknown>;
+
 export type BacktestTrade = {
   trade_id: string;
   ticker: string;
@@ -789,7 +809,7 @@ export type BacktestTrade = {
   strategy: string;
   direction: string;
   entry_timing_scenario: string;
-  entry_at: string;
+  entry_at: string | null;
   entry_price?: number | null;
   exit_at?: string | null;
   exit_price?: number | null;
@@ -797,6 +817,12 @@ export type BacktestTrade = {
   return_pct?: number | null;
   exit_reason?: string | null;
   risk_block_rule?: string | null;
+  decision_at?: string | null;
+  decision_stage?: string | null;
+  decision_reason?: string | null;
+  decision_details_json?: BacktestDecisionDetails | null;
+  decision_details_available?: boolean;
+  decision_details_message?: string | null;
   news_fetch_delay_seconds?: number | null;
   thesis_build_delay_seconds?: number | null;
   total_pipeline_delay_seconds?: number | null;
@@ -812,6 +838,7 @@ export type BacktestTradesResponse = {
   limit: number;
   offset: number;
   total_count: number;
+  blocked_candidate_breakdown: BacktestBlockedCandidateBreakdown;
   generated_at: string;
 };
 
@@ -820,6 +847,8 @@ export type BacktestTradeFilters = {
   strategy?: string;
   exit_reason?: string;
   card_status?: string;
+  decision_stage?: string;
+  decision_reason?: string;
   limit?: number;
   offset?: number;
 };
@@ -854,6 +883,12 @@ export type BacktestCardTrade = {
   return_pct: number | null;
   exit_reason: string | null;
   risk_block_rule: string | null;
+  decision_at?: string | null;
+  decision_stage?: string | null;
+  decision_reason?: string | null;
+  decision_details_json?: BacktestDecisionDetails | null;
+  decision_details_available?: boolean;
+  decision_details_message?: string | null;
 };
 
 export type BacktestCard = {
@@ -1240,6 +1275,8 @@ export function fetchBacktestTrades(
   if (filters.strategy) params.set("strategy", filters.strategy);
   if (filters.exit_reason) params.set("exit_reason", filters.exit_reason);
   if (filters.card_status) params.set("card_status", filters.card_status);
+  if (filters.decision_stage) params.set("decision_stage", filters.decision_stage);
+  if (filters.decision_reason) params.set("decision_reason", filters.decision_reason);
   params.set("limit", String(filters.limit ?? 50));
   params.set("offset", String(filters.offset ?? 0));
   return getJson<BacktestTradesResponse>(

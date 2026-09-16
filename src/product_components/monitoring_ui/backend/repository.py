@@ -1090,6 +1090,8 @@ class PostgresRedisMonitoringDataSource:
         strategy: str | None = None,
         exit_reason: str | None = None,
         card_status: str | None = None,
+        decision_stage: str | None = None,
+        decision_reason: str | None = None,
         limit: int,
         offset: int,
     ) -> list["BacktestTradeRow"]:
@@ -1099,11 +1101,14 @@ class PostgresRedisMonitoringDataSource:
             strategy=strategy,
             exit_reason=exit_reason,
             card_status=card_status,
+            decision_stage=decision_stage,
+            decision_reason=decision_reason,
         )
         sql = (
             f"SELECT trade_id, ticker, exchange_code, strategy, direction, entry_timing_scenario, "
             f"entry_at, entry_price, exit_at, exit_price, net_pnl, return_pct, exit_reason, "
-            f"risk_block_rule, news_fetch_delay_seconds, thesis_build_delay_seconds, "
+            f"risk_block_rule, decision_at, decision_stage, decision_reason, decision_details_json, "
+            f"news_fetch_delay_seconds, thesis_build_delay_seconds, "
             f"total_pipeline_delay_seconds, card_decision_state, card_was_live_expired "
             f"FROM {self._backtester_schema}.t_backtest_trades "
             f"WHERE {where} "
@@ -1121,6 +1126,8 @@ class PostgresRedisMonitoringDataSource:
         strategy: str | None = None,
         exit_reason: str | None = None,
         card_status: str | None = None,
+        decision_stage: str | None = None,
+        decision_reason: str | None = None,
     ) -> int:
         where, params = self._backtest_trade_filters(
             run_id=run_id,
@@ -1128,6 +1135,8 @@ class PostgresRedisMonitoringDataSource:
             strategy=strategy,
             exit_reason=exit_reason,
             card_status=card_status,
+            decision_stage=decision_stage,
+            decision_reason=decision_reason,
         )
         sql = (
             f"SELECT COUNT(*) AS total "
@@ -1136,6 +1145,42 @@ class PostgresRedisMonitoringDataSource:
         )
         rows = self._fetch_backtest_rows(sql, tuple(params))
         return int(rows[0]["total"]) if rows else 0
+
+    def list_backtest_blocked_decision_counts(
+        self,
+        *,
+        run_id: str,
+        timing_scenario: str | None = None,
+        strategy: str | None = None,
+        card_status: str | None = None,
+    ) -> list["BacktestBlockedDecisionCountRow"]:
+        where, params = self._backtest_trade_filters(
+            run_id=run_id,
+            timing_scenario=timing_scenario,
+            strategy=strategy,
+            exit_reason="risk_blocked",
+            card_status=card_status,
+            decision_stage=None,
+            decision_reason=None,
+        )
+        sql = (
+            f"SELECT COALESCE(decision_stage, 'legacy') AS stage, "
+            f"COALESCE(decision_reason, risk_block_rule, 'unknown') AS reason, COUNT(*) AS total "
+            f"FROM {self._backtester_schema}.t_backtest_trades "
+            f"WHERE {where} "
+            f"GROUP BY COALESCE(decision_stage, 'legacy'), "
+            f"COALESCE(decision_reason, risk_block_rule, 'unknown') "
+            f"ORDER BY stage, reason"
+        )
+        rows = self._fetch_backtest_rows(sql, tuple(params))
+        return [
+            BacktestBlockedDecisionCountRow(
+                stage=str(row["stage"]),
+                reason=str(row["reason"]),
+                count=int(row["total"]),
+            )
+            for row in rows
+        ]
 
     def list_backtest_equity_points(self, *, run_id: str) -> list["BacktestEquityRow"]:
         sql = (
@@ -1152,7 +1197,8 @@ class PostgresRedisMonitoringDataSource:
             f"SELECT cs.thesis_card_id, cs.ticker, cs.exchange_code, cs.direction, cs.strategy, "
             f"cs.time_horizon, cs.confidence, cs.decision_state, cs.card_created_at, cs.card_expires_at, "
             f"t.trade_id, t.entry_timing_scenario, t.entry_at, t.entry_price, "
-            f"t.exit_at, t.exit_price, t.net_pnl, t.return_pct, t.exit_reason, t.risk_block_rule "
+            f"t.exit_at, t.exit_price, t.net_pnl, t.return_pct, t.exit_reason, t.risk_block_rule, "
+            f"t.decision_at, t.decision_stage, t.decision_reason, t.decision_details_json "
             f"FROM {self._backtester_schema}.t_backtest_card_snapshots cs "
             f"LEFT JOIN {self._backtester_schema}.t_backtest_trades t "
             f"ON t.run_id = cs.run_id AND t.thesis_card_id = cs.thesis_card_id "
@@ -1170,6 +1216,8 @@ class PostgresRedisMonitoringDataSource:
         strategy: str | None,
         exit_reason: str | None,
         card_status: str | None,
+        decision_stage: str | None,
+        decision_reason: str | None,
     ) -> tuple[str, list[Any]]:
         clauses = ["run_id = %s"]
         params: list[Any] = [run_id]
@@ -1185,6 +1233,15 @@ class PostgresRedisMonitoringDataSource:
         if card_status:
             clauses.append("card_decision_state = %s")
             params.append(card_status)
+        if decision_stage:
+            if decision_stage == "legacy":
+                clauses.append("decision_stage IS NULL")
+            else:
+                clauses.append("decision_stage = %s")
+                params.append(decision_stage)
+        if decision_reason:
+            clauses.append("COALESCE(decision_reason, risk_block_rule) = %s")
+            params.append(decision_reason)
         return " AND ".join(clauses), params
 
     def _fetch_backtest_rows(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -1968,6 +2025,17 @@ class BacktestTradeRow:
     total_pipeline_delay_seconds: float | None
     card_decision_state: str
     card_was_live_expired: bool
+    decision_at: datetime | None = None
+    decision_stage: str | None = None
+    decision_reason: str | None = None
+    decision_details_json: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class BacktestBlockedDecisionCountRow:
+    stage: str
+    reason: str
+    count: int
 
 
 @dataclass(frozen=True)
@@ -1990,6 +2058,10 @@ class BacktestCardTradeRow:
     return_pct: float | None
     exit_reason: str | None
     risk_block_rule: str | None
+    decision_at: datetime | None = None
+    decision_stage: str | None = None
+    decision_reason: str | None = None
+    decision_details_json: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -2105,6 +2177,14 @@ def _backtest_trade_row(row: dict[str, Any]) -> BacktestTradeRow:
         total_pipeline_delay_seconds=_optional_float(row.get("total_pipeline_delay_seconds")),
         card_decision_state=str(row["card_decision_state"]),
         card_was_live_expired=bool(row.get("card_was_live_expired")),
+        decision_at=_to_utc(row["decision_at"]) if row.get("decision_at") else None,
+        decision_stage=(str(row["decision_stage"]) if row.get("decision_stage") else None),
+        decision_reason=(str(row["decision_reason"]) if row.get("decision_reason") else None),
+        decision_details_json=(
+            dict(row["decision_details_json"])
+            if isinstance(row.get("decision_details_json"), dict)
+            else None
+        ),
     )
 
 
@@ -2149,6 +2229,14 @@ def _group_backtest_cards(rows: list[dict[str, Any]]) -> list[BacktestCardRow]:
                 return_pct=_optional_float(row.get("return_pct")),
                 exit_reason=str(row["exit_reason"]) if row.get("exit_reason") else None,
                 risk_block_rule=row.get("risk_block_rule"),
+                decision_at=_to_utc(row["decision_at"]) if row.get("decision_at") else None,
+                decision_stage=(str(row["decision_stage"]) if row.get("decision_stage") else None),
+                decision_reason=(str(row["decision_reason"]) if row.get("decision_reason") else None),
+                decision_details_json=(
+                    dict(row["decision_details_json"])
+                    if isinstance(row.get("decision_details_json"), dict)
+                    else None
+                ),
             )
             # BacktestCardRow is frozen so we rebuild with the appended trade
             existing = seen[cid]

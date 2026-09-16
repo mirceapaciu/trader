@@ -124,6 +124,13 @@ outcomes, **not** failures):
 - `time_horizon` has no entry in `TIME_HORIZON_DAYS_MAP` (`horizon_unmapped`) — an exit window must
   be derivable before entry.
 
+The pure pipeline returns rejected admission and portfolio gates as a versioned
+`DecisionExplanation`, shared with the Backtester. The contract identifies the decision stage,
+stable reason and check, failed comparison, bounded input/derived operands with units, binding
+constraint, and safe related-record identifiers. It excludes arbitrary provider messages and
+request metadata. Existing `GateOutcome.reason` and `details` remain available for compatibility;
+the explanation adds audit context without changing check order or pass/fail behavior.
+
 `direction = sell` cards are admitted and open **short** positions, symmetric with buys; all
 notional caps apply to absolute exposure. Short-specific constraints (borrow availability, margin)
 are delegated to IBKR at submission; a rejection for unavailable borrow is recorded like any other
@@ -160,6 +167,11 @@ Because the stop distance equals `k · atr_20d`, a wider (more volatile) stop yi
 position, holding per-trade dollar risk near `max_loss_usd`. The quantity is then clamped so notional
 does not exceed `MAX_POSITION_SIZE` or the remaining portfolio headroom (Section 3.6). If the
 resulting `qty < 1`, the card is rejected (reason `size_below_one_share`).
+
+The sizing result also reports the independently calculated risk-budget, per-position-cap, and
+portfolio-headroom quantities, the final quantity, all tying constraints, and the selected binding
+constraint. A zero-share result carries the shared structured explanation, including the entry,
+ATR, ATR multiplier, stop, stop distance, risk budget, caps, and derived quantities.
 
 ### 3.6 Risk gate (portfolio guardrails)
 

@@ -808,6 +808,14 @@ def test_risk_gate_max_daily_trades():
     blocked = [t for t in result.trades if t.exit_reason == ExitReason.RISK_BLOCKED]
     assert len(blocked) == 1
     assert blocked[0].risk_block_rule == "max_daily_trades"
+    assert blocked[0].decision_stage == "portfolio_risk"
+    assert blocked[0].decision_reason == "max_daily_trades_reached"
+    assert blocked[0].decision_details_json is not None
+    assert blocked[0].decision_details_json["schema_version"] == 1
+    assert (
+        blocked[0].decision_details_json["comparison"]["expected"]["value"]
+        == 1
+    )
     assert result.metrics.trades_risk_blocked == 1
 
 

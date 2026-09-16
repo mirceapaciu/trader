@@ -910,6 +910,30 @@ class BacktestRunDetailResponse(BaseModel):
     generated_at: datetime
 
 
+class BacktestBlockedReasonCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    reason: str
+    count: int
+
+
+class BacktestBlockedStageCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    stage: str
+    count: int
+    reasons: list[BacktestBlockedReasonCount] = Field(default_factory=list)
+
+
+class BacktestBlockedCandidateBreakdown(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    total: int = 0
+    candidate_total: int = 0
+    percentage: float = 0.0
+    by_stage: list[BacktestBlockedStageCount] = Field(default_factory=list)
+
+
 class BacktestTrade(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -927,6 +951,12 @@ class BacktestTrade(BaseModel):
     return_pct: float | None = None
     exit_reason: str
     risk_block_rule: str | None = None
+    decision_at: datetime | None = None
+    decision_stage: str | None = None
+    decision_reason: str | None = None
+    decision_details_json: dict[str, Any] | None = None
+    decision_details_available: bool = False
+    decision_details_message: str | None = None
     news_fetch_delay_seconds: float | None = None
     thesis_build_delay_seconds: float | None = None
     total_pipeline_delay_seconds: float | None = None
@@ -944,6 +974,9 @@ class BacktestTradesResponse(BaseModel):
     limit: int
     offset: int
     total_count: int
+    blocked_candidate_breakdown: BacktestBlockedCandidateBreakdown = Field(
+        default_factory=BacktestBlockedCandidateBreakdown
+    )
     generated_at: datetime
 
 
@@ -985,6 +1018,12 @@ class BacktestCardTrade(BaseModel):
     return_pct: float | None = None
     exit_reason: str | None = None
     risk_block_rule: str | None = None
+    decision_at: datetime | None = None
+    decision_stage: str | None = None
+    decision_reason: str | None = None
+    decision_details_json: dict[str, Any] | None = None
+    decision_details_available: bool = False
+    decision_details_message: str | None = None
 
 
 class BacktestCard(BaseModel):

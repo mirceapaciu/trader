@@ -121,7 +121,18 @@ Logical fields:
 - `gross_pnl`, `commission`, `slippage`, `net_pnl`, `return_pct`: trade economics.
 - `exit_reason`: `take_profit`, `stop_loss`, `time_stop`, `reversal`, `window_end`, `not_filled`, or
   `risk_blocked`.
-- `risk_block_rule`: nullable binding rule name when `exit_reason = risk_blocked`.
+- `risk_block_rule`: legacy-compatible reason/rule name when `exit_reason = risk_blocked`.
+- `decision_at`: simulated UTC timestamp at which a blocked candidate was evaluated.
+- `decision_stage`: stable stage identifier for blocked candidates: `admission`, `market_data`,
+  `sizing`, or `portfolio_risk`.
+- `decision_reason`: stable machine-readable rejection reason. This remains separate from
+  `risk_block_rule` so legacy simulator rule names can stay API-compatible.
+- `decision_details_json`: versioned decision-time explanation copied from the shared
+  TradeExecutor contract. Version 1 contains `schema_version`, `stage`, `reason`, `check_id`, a
+  failed `comparison`, bounded `inputs` and `derived_values`, optional `binding_constraint`, and
+  bounded `related_records`. Values carry units where applicable. The payload accepts only
+  explicit decision operands and record identifiers; provider errors, request metadata, and
+  secrets are not part of the contract.
 - `holding_period_seconds`: nullable realized holding period for closed trades.
 - Excursion diagnostics (computed during the simulation bar walk; null for `not_filled` and
   `risk_blocked` trades; consumed by the backtest verification workflow,
@@ -144,6 +155,9 @@ Behavioral constraints:
   cross-schema foreign keys.
 - A trade counts as closed only when `exit_reason` is terminal and not in
   (`not_filled`, `risk_blocked`).
+- New `risk_blocked` rows populate all four decision-explanation fields at evaluation time. The
+  fields are nullable so existing rows remain readable; consumers must use `risk_block_rule` as a
+  legacy fallback and must not reconstruct missing historical operands from current configuration.
 - Delay fields are copied from the ThesisBuilder export and are independent of `entry_timing_scenario`
   (the same card carries identical delays in both its `ideal` and `actual` rows).
 - At most one trade row per `(run_id, thesis_card_id, entry_timing_scenario)`, so a `both` run stores
