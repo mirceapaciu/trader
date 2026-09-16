@@ -560,6 +560,50 @@ describe("BacktesterTab", () => {
     );
   });
 
+  it.each([
+    ["portfolio_risk.max_positions", "portfolio had reached its open-position limit"],
+    ["portfolio_risk.max_sector_exposure", "would exceed the sector exposure limit"]
+  ])("uses the recorded check for exact portfolio-risk prose", (checkId, expectedText) => {
+    const run = makeRun();
+    const trade = {
+      trade_id: `blocked-${checkId}`,
+      ticker: "AAPL",
+      exchange_code: "XNAS",
+      strategy: "event_driven",
+      direction: "buy",
+      entry_timing_scenario: "ideal",
+      entry_at: null,
+      exit_at: null,
+      exit_reason: "risk_blocked",
+      risk_block_rule: "portfolio_cap_exceeded",
+      decision_stage: "portfolio_risk",
+      decision_reason: "portfolio_cap_exceeded",
+      decision_details_json: {
+        schema_version: 1,
+        check_id: checkId,
+        comparison: {
+          operator: "<=",
+          observed: { name: "observed", value: 2 },
+          expected: { name: "limit", value: 1 }
+        }
+      },
+      card_decision_state: "approved"
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) },
+      trades: {
+        ...emptyResult,
+        data: { available: true, run_id: run.run_id, trades: [trade], limit: 50, offset: 0, total_count: 1 }
+      }
+    });
+    render(<BacktesterTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Portfolio risk · portfolio cap exceeded/i }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(expectedText);
+  });
+
   it("uses explicit fallbacks for unknown future decisions and legacy rows", () => {
     const run = makeRun();
     const baseTrade = {

@@ -1485,7 +1485,9 @@ function DecisionDrawer({ trade, onClose }: { trade: DecisionTrade; onClose: () 
               {trade.decision_details_message ?? "This is a legacy result. Detailed operands were not recorded for this run; only the block reason code is available."}
             </div>
           ) : (
-            <p className="decision-explanation">{decisionExplanation(trade.decision_stage, reason)}</p>
+            <p className="decision-explanation">
+              {decisionExplanation(trade.decision_stage, reason, stringValue(details?.check_id))}
+            </p>
           )}
 
           {condition != null || observed != null || threshold != null ? (
@@ -1593,7 +1595,19 @@ function decisionStageLabel(stage?: string | null): string {
   return stage ? formatToken(stage) : "Not recorded";
 }
 
-function decisionExplanation(stage: string | null | undefined, reason: string | null): string {
+function decisionExplanation(
+  stage: string | null | undefined,
+  reason: string | null,
+  checkId: string | null
+): string {
+  const checks: Record<string, string> = {
+    "portfolio_risk.max_positions": "The candidate was not entered because the portfolio had reached its open-position limit.",
+    "portfolio_risk.max_portfolio_exposure": "The candidate was not entered because the proposed position would exceed the portfolio exposure limit.",
+    "portfolio_risk.max_sector_exposure": "The candidate was not entered because the proposed position would exceed the sector exposure limit.",
+    "portfolio_risk.daily_loss_limit": "The candidate was not entered because combined daily P&L newly triggered the daily-loss guardrail.",
+    "portfolio_risk.daily_loss_halt_latched": "The candidate was not entered because the daily-loss guardrail had already latched earlier that trading day."
+  };
+  if (checkId && checks[checkId]) return checks[checkId];
   const known: Record<string, string> = {
     review_not_approved: "The candidate was not entered because its recorded review state did not satisfy the admission requirement.",
     card_expired: "The candidate was not entered because the thesis card had expired before the attempted entry.",
