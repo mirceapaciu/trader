@@ -411,6 +411,28 @@ describe("BacktesterTab", () => {
                 return_pct: 0.0079,
                 exit_reason: "take_profit",
                 risk_block_rule: null
+              },
+              {
+                trade_id: "trade-blocked",
+                entry_timing_scenario: "ideal",
+                entry_at: null,
+                entry_price: null,
+                exit_at: null,
+                exit_price: null,
+                net_pnl: null,
+                return_pct: null,
+                exit_reason: "risk_blocked",
+                risk_block_rule: "atr_unavailable",
+                decision_at: "2026-06-16T09:08:00Z",
+                decision_stage: "market_data",
+                decision_reason: "atr_unavailable",
+                decision_details_json: {
+                  schema_version: 1,
+                  check_id: "atr_required",
+                  observed: "unavailable",
+                  expected: "available",
+                  inputs: { required_metric: "ATR" }
+                }
               }
             ]
           }
@@ -433,6 +455,202 @@ describe("BacktesterTab", () => {
     expect(screen.getByText("card-abc")).toBeInTheDocument();
     expect(screen.getByText("take profit")).toBeInTheDocument();
     expect(screen.queryByText("Select a card to see details.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "atr unavailable" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("ATR market-data input required for sizing was unavailable");
+  });
+
+  it("shows blocked-candidate counts and filters candidate rows from breakdown buckets", () => {
+    const run = makeRun();
+    const detail = {
+      ...makeDetail(run),
+      metrics: { ...makeDetail(run).metrics, cards_considered: 10, trades_risk_blocked: 4 }
+    };
+    const trades = {
+      ...emptyResult,
+      data: {
+        available: true,
+        run_id: run.run_id,
+        trades: [],
+        limit: 50,
+        offset: 0,
+        total_count: 10,
+        blocked_candidate_breakdown: {
+          total: 4,
+          candidate_total: 10,
+          percentage: 40,
+          by_stage: [
+            { stage: "sizing", count: 2, reasons: [{ reason: "size_below_one_share", count: 2 }] },
+            { stage: "admission", count: 2, reasons: [{ reason: "review_not_approved", count: 2 }] }
+          ]
+        },
+        generated_at: "2026-06-16T08:10:00Z"
+      }
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: detail },
+      trades
+    });
+    render(<BacktesterTab />);
+
+    expect(screen.getAllByText("Blocked candidates").length).toBeGreaterThan(0);
+    expect(screen.getByText("40.0%")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /size below one share.*2/i }));
+
+    expect(screen.getByLabelText("Decision stage")).toHaveValue("sizing");
+    expect(screen.getByLabelText("Block reason")).toHaveValue("size_below_one_share");
+    const tradeCalls = useQuery.mock.calls.filter((call) => call[0]?.queryKey?.includes("trades"));
+    expect(tradeCalls.at(-1)?.[0].queryKey[3]).toMatchObject({
+      decision_stage: "sizing",
+      decision_reason: "size_below_one_share"
+    });
+  });
+
+  it("renders a structured blocked-candidate explanation with operands and a related link", () => {
+    const run = makeRun();
+    const trade = {
+      trade_id: "blocked-1",
+      ticker: "AAPL",
+      exchange_code: "XNAS",
+      strategy: "event_driven",
+      direction: "buy",
+      entry_timing_scenario: "ideal",
+      entry_at: "2026-06-16T09:10:00Z",
+      exit_at: null,
+      exit_reason: "risk_blocked",
+      risk_block_rule: "size_below_one_share",
+      decision_at: "2026-06-16T09:09:59Z",
+      decision_stage: "sizing",
+      decision_reason: "size_below_one_share",
+      decision_details_json: {
+        schema_version: 1,
+        check_id: "minimum_whole_share",
+        comparison: {
+          operator: "gte",
+          observed: { name: "final quantity", value: 0, unit: "shares" },
+          expected: { name: "minimum quantity", value: 1, unit: "shares" }
+        },
+        inputs: { candidate_entry: { value: 190.5, unit: "USD" }, atr: { value: 4.2, unit: "USD" } },
+        derived_values: { risk_budget_quantity: { value: 0.7, unit: "shares" }, final_quantity: { value: 0, unit: "shares" } },
+        binding_constraint: "risk_budget",
+        related_records: [{ record_type: "simulated_trade", record_id: "blocked-1" }]
+      },
+      card_decision_state: "approved"
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) },
+      trades: {
+        ...emptyResult,
+        data: { available: true, run_id: run.run_id, trades: [trade], limit: 50, offset: 0, total_count: 1 }
+      }
+    });
+    render(<BacktesterTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Sizing · size below one share/i }));
+    const drawer = screen.getByRole("dialog", { name: "Blocked candidate explanation" });
+    expect(drawer).toHaveTextContent("calculated position size was below one whole share");
+    expect(drawer).toHaveTextContent("0 shares");
+    expect(drawer).toHaveTextContent("1 shares");
+    expect(drawer).toHaveTextContent(/risk budget quantity/i);
+    expect(drawer).toHaveTextContent("risk_budget");
+    expect(screen.getByRole("link", { name: "simulated_trade blocked-1" })).toHaveAttribute(
+      "href", "#backtest-trade-blocked-1"
+    );
+  });
+
+  it.each([
+    ["portfolio_risk.max_positions", "portfolio had reached its open-position limit"],
+    ["portfolio_risk.max_sector_exposure", "would exceed the sector exposure limit"]
+  ])("uses the recorded check for exact portfolio-risk prose", (checkId, expectedText) => {
+    const run = makeRun();
+    const trade = {
+      trade_id: `blocked-${checkId}`,
+      ticker: "AAPL",
+      exchange_code: "XNAS",
+      strategy: "event_driven",
+      direction: "buy",
+      entry_timing_scenario: "ideal",
+      entry_at: null,
+      exit_at: null,
+      exit_reason: "risk_blocked",
+      risk_block_rule: "portfolio_cap_exceeded",
+      decision_stage: "portfolio_risk",
+      decision_reason: "portfolio_cap_exceeded",
+      decision_details_json: {
+        schema_version: 1,
+        check_id: checkId,
+        comparison: {
+          operator: "<=",
+          observed: { name: "observed", value: 2 },
+          expected: { name: "limit", value: 1 }
+        }
+      },
+      card_decision_state: "approved"
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) },
+      trades: {
+        ...emptyResult,
+        data: { available: true, run_id: run.run_id, trades: [trade], limit: 50, offset: 0, total_count: 1 }
+      }
+    });
+    render(<BacktesterTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Portfolio risk · portfolio cap exceeded/i }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(expectedText);
+  });
+
+  it("uses explicit fallbacks for unknown future decisions and legacy rows", () => {
+    const run = makeRun();
+    const baseTrade = {
+      ticker: "AAPL",
+      exchange_code: "XNAS",
+      strategy: "event_driven",
+      direction: "buy",
+      entry_timing_scenario: "ideal",
+      entry_at: "2026-06-16T09:10:00Z",
+      exit_at: null,
+      exit_reason: "risk_blocked",
+      card_decision_state: "approved"
+    };
+    const rows = [
+      {
+        ...baseTrade,
+        trade_id: "future-1",
+        risk_block_rule: "future_guardrail",
+        decision_stage: "portfolio_risk",
+        decision_reason: "future_guardrail",
+        decision_details_json: { schema_version: 2, check_id: "future_check", inputs: { safe_value: 3 } }
+      },
+      {
+        ...baseTrade,
+        trade_id: "legacy-1",
+        risk_block_rule: "review_not_approved",
+        decision_stage: null,
+        decision_reason: null,
+        decision_details_json: null
+      }
+    ];
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) },
+      trades: {
+        ...emptyResult,
+        data: { available: true, run_id: run.run_id, trades: rows, limit: 50, offset: 0, total_count: 2 }
+      }
+    });
+    render(<BacktesterTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Portfolio risk · future guardrail/i }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("does not recognize the future reason code");
+    fireEvent.click(screen.getByRole("button", { name: "Close candidate explanation" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Not recorded · review not approved/i }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Detailed operands were not recorded for this run");
   });
 
   it("flags a budget-exhausted run in the runs table with a partial chip", () => {

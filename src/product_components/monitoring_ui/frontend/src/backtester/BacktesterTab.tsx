@@ -11,7 +11,10 @@ import {
   fetchBacktests,
   startBacktest,
   type BacktestCard,
+  type BacktestCardTrade,
   type BacktestCardStatusBucket,
+  type BacktestBlockedCandidateBreakdown,
+  type BacktestDecisionDetails,
   type BacktestCardsResponse,
   type BacktestDelays,
   type BacktestDetailResponse,
@@ -21,6 +24,7 @@ import {
   type BacktestRunSummary,
   type BacktestStrategyMetrics,
   type BacktestTradeFilters,
+  type BacktestTrade,
   type BacktestTradesResponse,
   type StartBacktestRequest,
   type ThroughputPresetWindow
@@ -542,7 +546,10 @@ function RunDetail({ runId }: { runId: string }) {
       <DelaysPanel delays={data.delays} />
       <GapPanel run={data.run} gap={data.gap} isBoth={isBoth} />
       <CardsPanel runId={runId} />
-      <TradesPanel runId={runId} />
+      <TradesPanel
+        runId={runId}
+        metrics={data.metrics}
+      />
     </>
   );
 }
@@ -771,7 +778,7 @@ function PerStrategyPanel({ rows }: { rows: BacktestStrategyMetrics[] }) {
                 <th>Strategy</th>
                 <th>Opened</th>
                 <th>Closed</th>
-                <th>Risk blocked</th>
+                <th>Blocked candidates</th>
                 <th>Net P&amp;L</th>
                 <th>Win rate</th>
                 <th>Avg win</th>
@@ -822,7 +829,7 @@ function CardStatusPanel({ rows }: { rows: BacktestCardStatusBucket[] }) {
                 <th>Bucket</th>
                 <th>Opened</th>
                 <th>Closed</th>
-                <th>Risk blocked</th>
+                <th>Blocked candidates</th>
                 <th>Net P&amp;L</th>
                 <th>Win rate</th>
                 <th>Avg win</th>
@@ -950,11 +957,13 @@ function CardsPanel({ runId }: { runId: string }) {
   const data = cards.data as BacktestCardsResponse | undefined;
   const rows = data?.cards ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDecision, setSelectedDecision] = useState<BacktestCardTrade | null>(null);
   const selectedCard = rows.find((card) => card.thesis_card_id === selectedId) ?? null;
 
   // Reset the selection when switching runs so we never show a stale card.
   useEffect(() => {
     setSelectedId(null);
+    setSelectedDecision(null);
   }, [runId]);
 
   return (
@@ -982,7 +991,7 @@ function CardsPanel({ runId }: { runId: string }) {
                   <th>Direction</th>
                   <th>Confidence</th>
                   <th>Decision</th>
-                  <th>Trades</th>
+                  <th>Candidates</th>
                   <th>Created</th>
                 </tr>
               </thead>
@@ -1011,18 +1020,27 @@ function CardsPanel({ runId }: { runId: string }) {
           </div>
           <div className="pending-detail">
             {selectedCard ? (
-              <CardDetail card={selectedCard} />
+              <CardDetail card={selectedCard} onExplain={setSelectedDecision} />
             ) : (
               <div className="empty">Select a card to see details.</div>
             )}
           </div>
         </div>
       )}
+      {selectedDecision ? (
+        <DecisionDrawer trade={selectedDecision} onClose={() => setSelectedDecision(null)} />
+      ) : null}
     </section>
   );
 }
 
-function CardDetail({ card }: { card: BacktestCard }) {
+function CardDetail({
+  card,
+  onExplain
+}: {
+  card: BacktestCard;
+  onExplain: (trade: BacktestCardTrade) => void;
+}) {
   return (
     <div className="pending-detail-grid">
       <div className="pending-detail-row">
@@ -1064,8 +1082,8 @@ function CardDetail({ card }: { card: BacktestCard }) {
         <strong>{card.card_expires_at ? formatDate(card.card_expires_at) : "—"}</strong>
       </div>
       <div className="pending-detail-row">
-        <span>Trades</span>
-        <strong>{card.trades.length} trade{card.trades.length === 1 ? "" : "s"}</strong>
+        <span>Candidate outcomes</span>
+        <strong>{card.trades.length} candidate{card.trades.length === 1 ? "" : "s"}</strong>
       </div>
       {card.trades.length > 0 && (
         <div className="table-wrap">
@@ -1077,12 +1095,13 @@ function CardDetail({ card }: { card: BacktestCard }) {
                 <th>Exit</th>
                 <th>Net P&amp;L</th>
                 <th>Return</th>
-                <th>Exit reason</th>
+                <th>Outcome</th>
+                <th>Block reason</th>
               </tr>
             </thead>
             <tbody>
               {card.trades.map((trade) => (
-                <tr key={trade.trade_id}>
+                <tr key={trade.trade_id} id={tradeAnchorId(trade.trade_id)}>
                   <td>{formatToken(trade.entry_timing_scenario)}</td>
                   <td>
                     {formatDate(trade.entry_at)}
@@ -1094,7 +1113,14 @@ function CardDetail({ card }: { card: BacktestCard }) {
                   </td>
                   <td>{formatCurrency(trade.net_pnl)}</td>
                   <td>{formatPercent(trade.return_pct)}</td>
-                  <td>{trade.exit_reason ? formatToken(trade.exit_reason) : "—"}</td>
+                  <td>{trade.exit_reason ? outcomeLabel(trade.exit_reason) : "—"}</td>
+                  <td>
+                    {decisionReason(trade) ? (
+                      <button type="button" className="table-link-button" onClick={() => onExplain(trade)}>
+                        {formatToken(decisionReason(trade)!)}
+                      </button>
+                    ) : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1105,14 +1131,30 @@ function CardDetail({ card }: { card: BacktestCard }) {
   );
 }
 
-function TradesPanel({ runId }: { runId: string }) {
+function TradesPanel({
+  runId,
+  metrics
+}: {
+  runId: string;
+  metrics: BacktestMetrics;
+}) {
   const [filters, setFilters] = useState<{
     timing_scenario: string;
     strategy: string;
     exit_reason: string;
     card_status: string;
-  }>({ timing_scenario: "", strategy: "", exit_reason: "", card_status: "" });
+    decision_stage: string;
+    decision_reason: string;
+  }>({
+    timing_scenario: "",
+    strategy: "",
+    exit_reason: "",
+    card_status: "",
+    decision_stage: "",
+    decision_reason: ""
+  });
   const [offset, setOffset] = useState(0);
+  const [selectedDecision, setSelectedDecision] = useState<BacktestTrade | null>(null);
 
   // Reset pagination when the run or filters change.
   useEffect(() => {
@@ -1124,6 +1166,8 @@ function TradesPanel({ runId }: { runId: string }) {
     strategy: filters.strategy || undefined,
     exit_reason: filters.exit_reason || undefined,
     card_status: filters.card_status || undefined,
+    decision_stage: filters.decision_stage || undefined,
+    decision_reason: filters.decision_reason || undefined,
     limit: TRADES_PAGE_SIZE,
     offset
   };
@@ -1136,16 +1180,29 @@ function TradesPanel({ runId }: { runId: string }) {
   const totalCount = data?.total_count ?? 0;
   const hasPrev = offset > 0;
   const hasNext = offset + TRADES_PAGE_SIZE < totalCount;
+  const blockedCandidates = data?.blocked_candidate_breakdown ?? null;
 
   const updateFilter = (key: keyof typeof filters, value: string) =>
     setFilters((current) => ({ ...current, [key]: value }));
 
+  const applyDecisionFilter = (stage: string, reason = "") => {
+    setFilters((current) => ({ ...current, decision_stage: stage, decision_reason: reason }));
+  };
+
   return (
-    <section className="panel panel-large">
+    <>
+      <BlockedCandidatesPanel
+        breakdown={blockedCandidates}
+        metrics={metrics}
+        selectedStage={filters.decision_stage}
+        selectedReason={filters.decision_reason}
+        onSelect={applyDecisionFilter}
+      />
+      <section className="panel panel-large">
       <div className="panel-heading">
         <div>
-          <h2>Trades</h2>
-          <span>{totalCount} trade{totalCount === 1 ? "" : "s"}</span>
+          <h2>Trades and candidates</h2>
+          <span>{totalCount} row{totalCount === 1 ? "" : "s"}</span>
         </div>
       </div>
       <div className="filter-editor-row">
@@ -1165,7 +1222,7 @@ function TradesPanel({ runId }: { runId: string }) {
           />
         </label>
         <label>
-          Exit reason
+          Outcome code
           <input
             value={filters.exit_reason}
             onChange={(event) => updateFilter("exit_reason", event.target.value)}
@@ -1177,6 +1234,32 @@ function TradesPanel({ runId }: { runId: string }) {
             value={filters.card_status}
             onChange={(event) => updateFilter("card_status", event.target.value)}
           />
+        </label>
+        <label>
+          Decision stage
+          <select
+            aria-label="Decision stage"
+            value={filters.decision_stage}
+            onChange={(event) => applyDecisionFilter(event.target.value)}
+          >
+            <option value="">All stages</option>
+            {decisionStages(blockedCandidates).map((stage) => (
+              <option value={stage} key={stage}>{decisionStageLabel(stage)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Block reason
+          <select
+            aria-label="Block reason"
+            value={filters.decision_reason}
+            onChange={(event) => updateFilter("decision_reason", event.target.value)}
+          >
+            <option value="">All reasons</option>
+            {decisionReasons(blockedCandidates, filters.decision_stage).map((reason) => (
+              <option value={reason} key={reason}>{formatToken(reason)}</option>
+            ))}
+          </select>
         </label>
       </div>
       {trades.isError && <div className="inline-error">{trades.error.message}</div>}
@@ -1198,7 +1281,8 @@ function TradesPanel({ runId }: { runId: string }) {
                 <th>Exit</th>
                 <th>Net P&amp;L</th>
                 <th>Return</th>
-                <th>Exit reason</th>
+                <th>Outcome</th>
+                <th>Decision</th>
                 <th>News delay</th>
                 <th>Thesis delay</th>
                 <th>Pipeline delay</th>
@@ -1225,7 +1309,18 @@ function TradesPanel({ runId }: { runId: string }) {
                   </td>
                   <td>{formatCurrency(trade.net_pnl)}</td>
                   <td>{formatPercent(trade.return_pct)}</td>
-                  <td>{trade.exit_reason ? formatToken(trade.exit_reason) : "—"}</td>
+                  <td>{trade.exit_reason ? outcomeLabel(trade.exit_reason) : "—"}</td>
+                  <td>
+                    {decisionReason(trade) ? (
+                      <button
+                        type="button"
+                        className="table-link-button"
+                        onClick={() => setSelectedDecision(trade)}
+                      >
+                        {decisionStageLabel(trade.decision_stage)} · {formatToken(decisionReason(trade)!)}
+                      </button>
+                    ) : "—"}
+                  </td>
                   <td>{formatDuration(trade.news_fetch_delay_seconds)}</td>
                   <td>{formatDuration(trade.thesis_build_delay_seconds)}</td>
                   <td>{formatDuration(trade.total_pipeline_delay_seconds)}</td>
@@ -1259,8 +1354,332 @@ function TradesPanel({ runId }: { runId: string }) {
           Next
         </button>
       </div>
+      {selectedDecision ? (
+        <DecisionDrawer trade={selectedDecision} onClose={() => setSelectedDecision(null)} />
+      ) : null}
+      </section>
+    </>
+  );
+}
+
+function BlockedCandidatesPanel({
+  breakdown,
+  metrics,
+  selectedStage,
+  selectedReason,
+  onSelect
+}: {
+  breakdown: BacktestBlockedCandidateBreakdown | null;
+  metrics: BacktestMetrics;
+  selectedStage: string;
+  selectedReason: string;
+  onSelect: (stage: string, reason?: string) => void;
+}) {
+  const total = breakdown?.total ?? metrics.trades_risk_blocked ?? 0;
+  const decidedCandidateTotal = metrics.trades_opened == null ? null : metrics.trades_opened + total;
+  const denominator = breakdown?.candidate_total ?? decidedCandidateTotal ?? metrics.cards_considered ?? null;
+  const serverPercentage = breakdown?.percentage;
+  const percentage = serverPercentage != null
+    ? serverPercentage <= 1 ? serverPercentage * 100 : serverPercentage
+    : denominator && denominator > 0 ? total / denominator * 100 : null;
+
+  return (
+    <section className="panel panel-large blocked-candidates-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Blocked candidates</h2>
+          <span>Candidates that were not entered, grouped by the stage that made the decision</span>
+        </div>
+      </div>
+      <div className="blocked-candidates-summary">
+        <div className="metric">
+          <span>Blocked candidates</span>
+          <strong>{formatInteger(total)}</strong>
+        </div>
+        <div className="metric">
+          <span>Share of candidates</span>
+          <strong>{percentage == null ? "—" : `${percentage.toFixed(1)}%`}</strong>
+        </div>
+      </div>
+      {breakdown?.by_stage.length ? (
+        <div className="blocked-breakdown" aria-label="Blocked candidates by stage and reason">
+          <button
+            type="button"
+            className={!selectedStage && !selectedReason ? "blocked-bucket active" : "blocked-bucket"}
+            onClick={() => onSelect("", "")}
+          >
+            <span>All blocked candidates</span><strong>{total}</strong>
+          </button>
+          {breakdown.by_stage.map((stage) => (
+            <div className="blocked-stage" key={stage.stage}>
+              <button
+                type="button"
+                className={selectedStage === stage.stage && !selectedReason ? "blocked-bucket active" : "blocked-bucket"}
+                onClick={() => onSelect(stage.stage, "")}
+              >
+                <span>{decisionStageLabel(stage.stage)}</span><strong>{stage.count}</strong>
+              </button>
+              <div className="blocked-reasons">
+                {stage.reasons.map((reason) => (
+                  <button
+                    type="button"
+                    key={`${stage.stage}:${reason.reason}`}
+                    className={selectedStage === stage.stage && selectedReason === reason.reason ? "blocked-reason active" : "blocked-reason"}
+                    onClick={() => onSelect(stage.stage, reason.reason)}
+                  >
+                    <span>{formatToken(reason.reason)}</span><strong>{reason.count}</strong>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : total > 0 ? (
+        <div className="inline-warning compact">
+          A stage and reason breakdown was not recorded for this run.
+        </div>
+      ) : (
+        <div className="empty">No blocked candidates in this run.</div>
+      )}
     </section>
   );
+}
+
+type DecisionTrade = Pick<
+  BacktestTrade,
+  "trade_id" | "decision_at" | "decision_stage" | "decision_reason" | "decision_details_json" | "decision_details_message" | "risk_block_rule"
+>;
+
+function DecisionDrawer({ trade, onClose }: { trade: DecisionTrade; onClose: () => void }) {
+  const details = recordValue(trade.decision_details_json);
+  const reason = decisionReason(trade);
+  const legacy = !trade.decision_stage && !details && Boolean(trade.risk_block_rule);
+  const comparison = recordValue(details?.comparison);
+  const observed = comparison?.observed ?? details?.observed;
+  const threshold = comparison?.expected ?? details?.threshold ?? details?.expected;
+  const comparator = stringValue(comparison?.operator) ?? stringValue(details?.comparator);
+  const condition = details?.condition;
+
+  return (
+    <div className="taxonomy-drawer-backdrop decision-drawer-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="taxonomy-drawer decision-drawer" role="dialog" aria-modal="true" aria-label="Blocked candidate explanation">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Candidate decision</p>
+            <h3>{reason ? formatToken(reason) : "Not entered"}</h3>
+          </div>
+          <button type="button" className="modal-close" aria-label="Close candidate explanation" onClick={onClose}>×</button>
+        </div>
+        <div className="taxonomy-drawer-body decision-drawer-body">
+          <dl className="taxonomy-gap-facts">
+            <DecisionFact label="Stage" value={decisionStageLabel(trade.decision_stage)} />
+            <DecisionFact label="Reason code" value={reason ?? "Not recorded"} code />
+            <DecisionFact label="Check" value={stringValue(details?.check_id) ?? stringValue(details?.failed_check) ?? "Not recorded"} code />
+            <DecisionFact label="Decided" value={formatDate(trade.decision_at)} />
+          </dl>
+
+          {legacy ? (
+            <div className="inline-warning" role="note">
+              {trade.decision_details_message ?? "This is a legacy result. Detailed operands were not recorded for this run; only the block reason code is available."}
+            </div>
+          ) : (
+            <p className="decision-explanation">
+              {decisionExplanation(trade.decision_stage, reason, stringValue(details?.check_id))}
+            </p>
+          )}
+
+          {condition != null || observed != null || threshold != null ? (
+            <section className="decision-section">
+              <h4>Failed comparison</h4>
+              {condition != null ? <p>{formatDecisionValue(condition)}</p> : null}
+              {observed != null || threshold != null ? (
+                <div className="decision-comparison">
+                  <span><small>{operandLabel(observed, "Observed")}</small>{formatDecisionValue(observed)}</span>
+                  <strong>{comparatorSymbol(comparator)}</strong>
+                  <span><small>{operandLabel(threshold, "Required threshold")}</small>{formatDecisionValue(threshold)}</span>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          <DecisionValueSection title="Inputs" values={details?.inputs} />
+          <DecisionValueSection title="Derived values" values={details?.derived_values} />
+          {details?.binding_constraint != null ? (
+            <section className="decision-section">
+              <h4>Binding constraint</h4>
+              <p>{formatDecisionValue(details.binding_constraint)}</p>
+            </section>
+          ) : null}
+          <RelatedRecords value={details?.related_records ?? details?.related_record} />
+          {details ? (
+            <p className="decision-schema-version">
+              Explanation schema {formatDecisionValue(details.schema_version ?? "unknown")}
+            </p>
+          ) : !legacy ? (
+            <div className="inline-warning compact">No structured decision operands were recorded.</div>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function DecisionFact({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
+  return <div><dt>{label}</dt><dd className={code ? "decision-code" : undefined}>{value}</dd></div>;
+}
+
+function DecisionValueSection({ title, values }: { title: string; values: unknown }) {
+  const record = recordValue(values);
+  if (!record || Object.keys(record).length === 0) return null;
+  return (
+    <section className="decision-section">
+      <h4>{title}</h4>
+      <dl className="decision-values">
+        {Object.entries(record).map(([key, value]) => (
+          <div key={key}><dt>{formatToken(key)}</dt><dd>{formatDecisionValue(value)}</dd></div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function RelatedRecords({ value }: { value: unknown }) {
+  const records = Array.isArray(value) ? value : value == null ? [] : [value];
+  if (records.length === 0) return null;
+  return (
+    <section className="decision-section">
+      <h4>Related records</h4>
+      <ul className="decision-related-records">
+        {records.map((item, index) => {
+          const record = recordValue(item);
+          const label = record
+            ? stringValue(record.label) ?? [
+                stringValue(record.record_type) ?? stringValue(record.type),
+                record.id != null ? formatDecisionValue(record.id) : record.record_id != null ? formatDecisionValue(record.record_id) : null
+              ].filter(Boolean).join(" ")
+            : formatDecisionValue(item);
+          const href = record ? stringValue(record.href) ?? stringValue(record.url) : null;
+          const recordType = record
+            ? stringValue(record.record_type) ?? stringValue(record.type)
+            : null;
+          const recordId = record
+            ? stringValue(record.record_id) ?? stringValue(record.id)
+            : null;
+          const relatedHref = href ?? (
+            recordType === "simulated_trade" && recordId
+              ? `#${tradeAnchorId(recordId)}`
+              : null
+          );
+          return <li key={`${label}-${index}`}>{relatedHref ? <a href={relatedHref}>{label || "Open related record"}</a> : label || "Related record"}</li>;
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function tradeAnchorId(tradeId: string): string {
+  return `backtest-trade-${encodeURIComponent(tradeId)}`;
+}
+
+function decisionReason(trade: Pick<DecisionTrade, "decision_reason" | "risk_block_rule">): string | null {
+  return trade.decision_reason || trade.risk_block_rule || null;
+}
+
+function decisionStageLabel(stage?: string | null): string {
+  if (stage === "admission") return "Admission";
+  if (stage === "market_data") return "Market data";
+  if (stage === "sizing") return "Sizing";
+  if (stage === "portfolio_risk") return "Portfolio risk";
+  return stage ? formatToken(stage) : "Not recorded";
+}
+
+function decisionExplanation(
+  stage: string | null | undefined,
+  reason: string | null,
+  checkId: string | null
+): string {
+  const checks: Record<string, string> = {
+    "portfolio_risk.max_positions": "The candidate was not entered because the portfolio had reached its open-position limit.",
+    "portfolio_risk.max_portfolio_exposure": "The candidate was not entered because the proposed position would exceed the portfolio exposure limit.",
+    "portfolio_risk.max_sector_exposure": "The candidate was not entered because the proposed position would exceed the sector exposure limit.",
+    "portfolio_risk.daily_loss_limit": "The candidate was not entered because combined daily P&L newly triggered the daily-loss guardrail.",
+    "portfolio_risk.daily_loss_halt_latched": "The candidate was not entered because the daily-loss guardrail had already latched earlier that trading day."
+  };
+  if (checkId && checks[checkId]) return checks[checkId];
+  const known: Record<string, string> = {
+    review_not_approved: "The candidate was not entered because its recorded review state did not satisfy the admission requirement.",
+    card_expired: "The candidate was not entered because the thesis card had expired before the attempted entry.",
+    below_min_confidence: "The candidate was not entered because its confidence was below the configured admission threshold.",
+    not_in_watchlist: "The candidate was not entered because its instrument was not on the eligible watchlist.",
+    horizon_unmapped: "The candidate was not entered because its time horizon could not be mapped to an execution duration.",
+    atr_unavailable: "The candidate was not entered because the ATR market-data input required for sizing was unavailable.",
+    size_below_one_share: "The candidate was not entered because the calculated position size was below one whole share.",
+    position_exists: "The candidate was not entered because a position for this instrument already existed.",
+    confidence_below_threshold: "The candidate was not entered because its confidence was below the configured admission threshold.",
+    portfolio_cap_exceeded: "The candidate was not entered because the proposed position would exceed the portfolio exposure limit.",
+    sector_cap_exceeded: "The candidate was not entered because the proposed position would exceed the sector exposure limit.",
+    max_positions: "The candidate was not entered because the portfolio had reached its open-position limit.",
+    max_daily_trades: "The candidate was not entered because the daily trade-count limit had been reached.",
+    max_daily_trades_reached: "The candidate was not entered because the daily trade-count limit had been reached.",
+    daily_loss_halt: "The candidate was not entered because the daily-loss guardrail was active."
+  };
+  if (reason && known[reason]) return known[reason];
+  if (reason) return `The candidate was not entered at the ${decisionStageLabel(stage).toLowerCase()} stage. This UI does not recognize the future reason code “${reason}”; the recorded details are shown below.`;
+  return "The candidate was not entered, but no stable reason code was recorded.";
+}
+
+function decisionStages(breakdown: BacktestBlockedCandidateBreakdown | null): string[] {
+  return breakdown?.by_stage.map((bucket) => bucket.stage) ?? [];
+}
+
+function decisionReasons(breakdown: BacktestBlockedCandidateBreakdown | null, stage: string): string[] {
+  const stages = stage ? breakdown?.by_stage.filter((bucket) => bucket.stage === stage) : breakdown?.by_stage;
+  return Array.from(new Set((stages ?? []).flatMap((bucket) => bucket.reasons.map((reason) => reason.reason))));
+}
+
+function outcomeLabel(reason: string): string {
+  return reason === "risk_blocked" ? "Not entered" : formatToken(reason);
+}
+
+function comparatorSymbol(comparator: string | null): string {
+  const symbols: Record<string, string> = {
+    lt: "<", lte: "≤", gt: ">", gte: "≥", eq: "=", ne: "≠",
+    less_than: "<", less_than_or_equal: "≤", greater_than: ">", greater_than_or_equal: "≥",
+    equals: "=", not_equals: "≠"
+  };
+  return comparator ? symbols[comparator] ?? comparator : "compared with";
+}
+
+function operandLabel(value: unknown, fallback: string): string {
+  const operand = recordValue(value);
+  return operand ? stringValue(operand.name) ?? fallback : fallback;
+}
+
+function formatDecisionValue(value: unknown): string {
+  if (value == null) return "Not recorded";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(formatDecisionValue).join(", ");
+  const record = recordValue(value);
+  if (!record) return String(value);
+  if ("value" in record) {
+    const unit = stringValue(record.unit);
+    return `${formatDecisionValue(record.value)}${unit ? ` ${unit}` : ""}`;
+  }
+  return Object.entries(record).map(([key, nested]) => `${formatToken(key)}: ${formatDecisionValue(nested)}`).join("; ");
+}
+
+function recordValue(value: unknown): BacktestDecisionDetails | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as BacktestDecisionDetails
+    : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function MetricTile({ label, value }: { label: string; value: string }) {

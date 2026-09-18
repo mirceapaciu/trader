@@ -28,6 +28,7 @@ from .models import (
 from .pipeline import (
     DailyRiskState,
     PortfolioState,
+    atr_unavailable_outcome,
     construct_levels,
     entry_limit_price,
     evaluate_admission_gate,
@@ -253,7 +254,15 @@ class TradeExecutorRunner:
         atr = getattr(context, "atr_20d", None) if context is not None else None
         if atr is None or atr <= 0:
             self._persist_and_ack(
-                card, GateOutcome.reject(DecisionReason.ATR_UNAVAILABLE), message, now
+                card,
+                atr_unavailable_outcome(
+                    atr_20d=atr,
+                    source_status=getattr(context, "source_status", None),
+                    as_of=getattr(context, "as_of", None),
+                    bars_fetched_at=getattr(context, "bars_fetched_at", None),
+                ),
+                message,
+                now,
             )
             return
 
@@ -279,10 +288,18 @@ class TradeExecutorRunner:
             stop=levels.stop,
             max_position_size=self._settings.max_position_size,
             portfolio_headroom=headroom,
+            atr_20d=atr,
+            atr_stop_mult=self._settings.atr_stop_mult,
         )
         if order.quantity < 1:
             self._persist_and_ack(
-                card, GateOutcome.reject(DecisionReason.SIZE_BELOW_ONE_SHARE), message, now,
+                card,
+                GateOutcome.reject(
+                    DecisionReason.SIZE_BELOW_ONE_SHARE,
+                    explanation=order.explanation,
+                ),
+                message,
+                now,
                 entry=entry, levels=levels, atr=atr,
             )
             return

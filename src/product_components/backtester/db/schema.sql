@@ -206,6 +206,10 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_trades (
     return_pct NUMERIC(18, 6),
     exit_reason TEXT NOT NULL,
     risk_block_rule TEXT,
+    decision_at TIMESTAMPTZ,
+    decision_stage TEXT,
+    decision_reason TEXT,
+    decision_details_json JSONB,
     holding_period_seconds NUMERIC(18, 3),
     mfe_pct NUMERIC(18, 6),
     mae_pct NUMERIC(18, 6),
@@ -271,10 +275,18 @@ ALTER TABLE backtester.t_backtest_trades
     ADD COLUMN IF NOT EXISTS time_to_mae_seconds NUMERIC(18, 3),
     ADD COLUMN IF NOT EXISTS horizon_returns_json JSONB,
     ADD COLUMN IF NOT EXISTS both_brackets_in_one_bar BOOLEAN,
-    ADD COLUMN IF NOT EXISTS bar_coverage_ratio NUMERIC(8, 6);
+    ADD COLUMN IF NOT EXISTS bar_coverage_ratio NUMERIC(8, 6),
+    ADD COLUMN IF NOT EXISTS decision_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS decision_stage TEXT,
+    ADD COLUMN IF NOT EXISTS decision_reason TEXT,
+    ADD COLUMN IF NOT EXISTS decision_details_json JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_scenario_strategy
     ON backtester.t_backtest_trades (run_id, entry_timing_scenario, strategy, thesis_card_id);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_decision_stage_reason
+    ON backtester.t_backtest_trades (run_id, decision_stage, decision_reason)
+    WHERE exit_reason = 'risk_blocked';
 
 CREATE TABLE IF NOT EXISTS backtester.t_backtest_equity_points (
     point_id TEXT PRIMARY KEY,

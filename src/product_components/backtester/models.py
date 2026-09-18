@@ -205,6 +205,10 @@ class SimulatedTrade:
     horizon_returns_json: dict[str, float | None] | None = None
     both_brackets_in_one_bar: bool | None = None
     bar_coverage_ratio: float | None = None
+    decision_at: datetime | None = None
+    decision_stage: str | None = None
+    decision_reason: str | None = None
+    decision_details_json: dict[str, Any] | None = None
 
     @property
     def is_closed(self) -> bool:

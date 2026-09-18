@@ -20,12 +20,18 @@ from src.core_components.backtest_engine import (
 )
 from src.product_components.thesis_builder.export import ExportedThesisCard
 from src.product_components.trade_executor.models import (
+    DecisionComparison,
+    DecisionExplanation,
+    DecisionOperand,
     DecisionReason,
+    DecisionRelatedRecord,
+    DecisionStage,
     ThesisCard,
 )
 from src.product_components.trade_executor.pipeline import (
     DailyRiskState,
     PortfolioState,
+    atr_unavailable_outcome,
     construct_levels,
     entry_limit_price,
     evaluate_admission_gate,
@@ -86,6 +92,7 @@ def _to_trade_executor_card(card: ExportedThesisCard) -> ThesisCard:
 
 @dataclass(frozen=True)
 class _OpenPosition:
+    trade_id: str
     notional: float
     exit_at: datetime
     ticker_key: str
@@ -114,6 +121,15 @@ class _ExecutionPlan:
 
 
 @dataclass(frozen=True)
+class _AtrResult:
+    value: float | None
+    available_bars: int
+    required_source_bars: int
+    coverage_start: datetime | None
+    coverage_end: datetime | None
+
+
+@dataclass(frozen=True)
 class _ExcursionDiagnostics:
     mfe_pct: float
     mae_pct: float
@@ -122,6 +138,33 @@ class _ExcursionDiagnostics:
     horizon_returns_json: dict[str, float | None]
     both_brackets_in_one_bar: bool
     bar_coverage_ratio: float
+
+
+def _legacy_explanation(
+    *,
+    reason: DecisionReason,
+    check_id: str,
+    observed: tuple[str, object, str | None],
+    operator: str,
+    expected: tuple[str, object, str | None],
+    inputs: tuple[DecisionOperand, ...] = (),
+    derived: tuple[DecisionOperand, ...] = (),
+    binding_constraint: str | None = None,
+) -> DecisionExplanation:
+    """Adapt legacy simulator guardrails to the shared public contract."""
+    return DecisionExplanation(
+        stage=DecisionStage.PORTFOLIO_RISK,
+        reason=reason,
+        check_id=check_id,
+        comparison=DecisionComparison(
+            observed=DecisionOperand(*observed),
+            operator=operator,
+            expected=DecisionOperand(*expected),
+        ),
+        inputs=inputs,
+        derived_values=derived,
+        binding_constraint=binding_constraint,
+    )
 
 
 class BacktesterEngine:
@@ -405,24 +448,87 @@ class BacktesterEngine:
             execution_mode = execution.execution_mode
 
             # Portfolio/risk gates (binding constraint => risk_blocked).
-            block_rule = None
+            block_explanation: DecisionExplanation | None = None
+            legacy_block_rule: str | None = None
             prev_trade = last_trade_at.get(ticker_key)
             current_exposure = sum(p.notional for p in open_positions)
             has_open_or_working_position = any(
                 p.ticker_key == ticker_key for p in open_positions
             )
             if execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and prev_trade is not None and t_entry - prev_trade < cooldown:
-                block_rule = "ticker_cooldown"
+                legacy_block_rule = "ticker_cooldown"
+                block_explanation = _legacy_explanation(
+                    reason=DecisionReason.TICKER_COOLDOWN,
+                    check_id="portfolio_risk.ticker_cooldown",
+                    observed=(
+                        "seconds_since_previous_trade",
+                        (t_entry - prev_trade).total_seconds(),
+                        "seconds",
+                    ),
+                    operator=">=",
+                    expected=("ticker_cooldown", cooldown.total_seconds(), "seconds"),
+                    inputs=(DecisionOperand("previous_trade_at", prev_trade, "timestamp"),),
+                    binding_constraint="ticker_cooldown",
+                )
             elif execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and daily_trade_count.get(day_key, 0) >= risk.max_daily_trades:
-                block_rule = "max_daily_trades"
+                legacy_block_rule = "max_daily_trades"
+                block_explanation = _legacy_explanation(
+                    reason=DecisionReason.MAX_DAILY_TRADES_REACHED,
+                    check_id="portfolio_risk.max_daily_trades",
+                    observed=(
+                        "daily_trade_count",
+                        daily_trade_count.get(day_key, 0),
+                        "trades",
+                    ),
+                    operator="<",
+                    expected=("maximum_daily_trades", risk.max_daily_trades, "trades"),
+                    binding_constraint="max_daily_trades",
+                )
             elif execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and daily_realized_pnl.get(day_key, 0.0) <= -risk.daily_loss_limit_usd:
-                block_rule = "daily_loss_limit"
+                legacy_block_rule = "daily_loss_limit"
+                day_pnl = daily_realized_pnl.get(day_key, 0.0)
+                block_explanation = _legacy_explanation(
+                    reason=DecisionReason.DAILY_LOSS_HALT,
+                    check_id="portfolio_risk.daily_loss_limit",
+                    observed=("combined_daily_pnl", day_pnl, "usd"),
+                    operator=">",
+                    expected=(
+                        "minimum_daily_pnl",
+                        -risk.daily_loss_limit_usd,
+                        "usd",
+                    ),
+                    inputs=(
+                        DecisionOperand("realized_pnl", day_pnl, "usd"),
+                        DecisionOperand("unrealized_pnl", 0.0, "usd"),
+                        DecisionOperand("halt_was_latched", False, "boolean"),
+                    ),
+                    derived=(DecisionOperand("combined_daily_pnl", day_pnl, "usd"),),
+                    binding_constraint="daily_loss_limit",
+                )
             elif execution_mode == ExecutionMode.LEGACY_FLAT_PERCENT and current_exposure >= risk.max_portfolio_exposure_usd:
-                block_rule = "max_portfolio_exposure"
+                legacy_block_rule = "max_portfolio_exposure"
+                block_explanation = _legacy_explanation(
+                    reason=DecisionReason.PORTFOLIO_CAP_EXCEEDED,
+                    check_id="portfolio_risk.max_portfolio_exposure",
+                    observed=("deployed_capital", current_exposure, "usd"),
+                    operator="<",
+                    expected=(
+                        "maximum_portfolio_exposure",
+                        risk.max_portfolio_exposure_usd,
+                        "usd",
+                    ),
+                    binding_constraint="max_portfolio_exposure",
+                )
 
-            if block_rule is not None:
+            if block_explanation is not None:
                 trades.append(
-                    self._risk_blocked_trade(card, scenario, timing, block_rule)
+                    self._risk_blocked_trade(
+                        card,
+                        scenario,
+                        timing,
+                        block_explanation,
+                        legacy_rule=legacy_block_rule,
+                    )
                 )
                 continue
 
@@ -443,7 +549,7 @@ class BacktesterEngine:
                     daily_halted=daily_halted,
                     day_key=day_key,
                 )
-                if isinstance(plan_or_rule, str):
+                if isinstance(plan_or_rule, DecisionExplanation):
                     trades.append(
                         self._risk_blocked_trade(card, scenario, timing, plan_or_rule)
                     )
@@ -456,7 +562,37 @@ class BacktesterEngine:
                     # Per-position portfolio share cap binds for this candidate.
                     trades.append(
                         self._risk_blocked_trade(
-                            card, scenario, timing, "max_portfolio_exposure"
+                            card,
+                            scenario,
+                            timing,
+                            _legacy_explanation(
+                                reason=DecisionReason.PORTFOLIO_CAP_EXCEEDED,
+                                check_id="portfolio_risk.max_portfolio_exposure",
+                                observed=(
+                                    "portfolio_exposure_after_order",
+                                    current_exposure + notional,
+                                    "usd",
+                                ),
+                                operator="<=",
+                                expected=(
+                                    "maximum_portfolio_exposure",
+                                    risk.max_portfolio_exposure_usd,
+                                    "usd",
+                                ),
+                                inputs=(
+                                    DecisionOperand("deployed_capital", current_exposure, "usd"),
+                                    DecisionOperand("proposed_notional", notional, "usd"),
+                                ),
+                                derived=(
+                                    DecisionOperand(
+                                        "portfolio_exposure_after_order",
+                                        current_exposure + notional,
+                                        "usd",
+                                    ),
+                                ),
+                                binding_constraint="max_portfolio_exposure",
+                            ),
+                            legacy_rule="max_portfolio_exposure",
                         )
                     )
                     continue
@@ -570,6 +706,7 @@ class BacktesterEngine:
             trades.append(trade)
             open_positions.append(
                 _OpenPosition(
+                    trade_id=trade.trade_id,
                     notional=notional,
                     exit_at=_to_utc(exit_bar.start_at),
                     ticker_key=ticker_key,
@@ -613,8 +750,17 @@ class BacktesterEngine:
         daily_realized_pnl: dict[str, float],
         daily_halted: dict[str, bool],
         day_key: str,
-    ) -> _ExecutionPlan | str:
+    ) -> _ExecutionPlan | DecisionExplanation:
         thesis_card = _to_trade_executor_card(card)
+        ticker_key = f"{card.ticker}|{card.exchange_code}"
+        blocking_position = next(
+            (
+                position
+                for position in open_positions
+                if position.ticker_key == ticker_key
+            ),
+            None,
+        )
         admission = evaluate_admission_gate(
             card=thesis_card,
             now=t_entry,
@@ -623,9 +769,15 @@ class BacktesterEngine:
             review_state="approved" if _decision_state(card) == "approved" else "rejected",
             has_open_or_working_position=has_open_or_working_position,
             horizon_map=execution.time_horizon_days_map,
+            related_position=(
+                DecisionRelatedRecord("simulated_trade", blocking_position.trade_id)
+                if blocking_position is not None
+                else None
+            ),
         )
         if not admission.passed:
-            return admission.reason.value
+            assert admission.explanation is not None
+            return admission.explanation
 
         entry = entry_limit_price(
             direction=card.direction,
@@ -633,9 +785,23 @@ class BacktesterEngine:
             ask=entry_bar.open,
             slippage_bps=execution.entry_limit_slippage_bps,
         )
-        atr_20d = self._atr_20d_before_entry(card, t_entry)
+        atr_result = self._atr_20d_before_entry(card, t_entry)
+        atr_20d = atr_result.value
         if atr_20d is None:
-            return DecisionReason.ATR_UNAVAILABLE.value
+            outcome = atr_unavailable_outcome(
+                atr_20d=None,
+                source_status="historical_bars_returned",
+                as_of=t_entry,
+                required_lookback_bars=20,
+                available_bars=atr_result.available_bars,
+                required_source_bars=atr_result.required_source_bars,
+                availability_status="insufficient_coverage",
+                failure_category="insufficient_history",
+                coverage_start=atr_result.coverage_start,
+                coverage_end=atr_result.coverage_end,
+            )
+            assert outcome.explanation is not None
+            return outcome.explanation
 
         levels = construct_levels(
             direction=card.direction,
@@ -650,9 +816,12 @@ class BacktesterEngine:
             stop=levels.stop,
             max_position_size=risk.max_position_usd,
             portfolio_headroom=risk.max_portfolio_exposure_usd - current_exposure,
+            atr_20d=atr_20d,
+            atr_stop_mult=execution.atr_stop_mult,
         )
         if order.quantity < 1:
-            return DecisionReason.SIZE_BELOW_ONE_SHARE.value
+            assert order.explanation is not None
+            return order.explanation
 
         daily = DailyRiskState(
             realized_pnl=daily_realized_pnl.get(day_key, 0.0),
@@ -680,7 +849,8 @@ class BacktesterEngine:
         if not risk_gate.passed:
             if risk_gate.details.get("halt_triggered"):
                 daily_halted[day_key] = True
-            return risk_gate.reason.value
+            assert risk_gate.explanation is not None
+            return risk_gate.explanation
 
         trading_days = execution.time_horizon_days_map[card.time_horizon]
         return _ExecutionPlan(
@@ -697,7 +867,7 @@ class BacktesterEngine:
 
     def _atr_20d_before_entry(
         self, card: ExportedThesisCard, t_entry: datetime
-    ) -> float | None:
+    ) -> _AtrResult:
         end = _to_utc(t_entry)
         bars = self._bars.historical_bars(
             ticker=card.ticker,
@@ -715,8 +885,16 @@ class BacktesterEngine:
             ),
             key=lambda bar: _to_utc(bar.start_at),
         )
+        coverage_start = _to_utc(ordered[0].start_at) if ordered else None
+        coverage_end = _to_utc(ordered[-1].start_at) if ordered else None
         if len(ordered) < 21:
-            return None
+            return _AtrResult(
+                value=None,
+                available_bars=len(ordered),
+                required_source_bars=21,
+                coverage_start=coverage_start,
+                coverage_end=coverage_end,
+            )
         true_ranges: list[float] = []
         for previous, current in zip(ordered[-21:-1], ordered[-20:]):
             true_ranges.append(
@@ -726,7 +904,13 @@ class BacktesterEngine:
                     abs(current.low - previous.close),
                 )
             )
-        return sum(true_ranges) / 20
+        return _AtrResult(
+            value=sum(true_ranges) / 20,
+            available_bars=len(ordered),
+            required_source_bars=21,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+        )
 
     def _target_price(
         self, entry_price: float, direction: str, execution: ExecutionModel
@@ -1017,7 +1201,9 @@ class BacktesterEngine:
         card: ExportedThesisCard,
         scenario: str,
         timing: _CardTiming,
-        rule: str,
+        explanation: DecisionExplanation,
+        *,
+        legacy_rule: str | None = None,
     ) -> SimulatedTrade:
         t_entry = self._entry_time(scenario, timing)
         return SimulatedTrade(
@@ -1048,8 +1234,12 @@ class BacktesterEngine:
             net_pnl=None,
             return_pct=None,
             exit_reason=ExitReason.RISK_BLOCKED,
-            risk_block_rule=rule,
+            risk_block_rule=legacy_rule or explanation.reason.value,
             holding_period_seconds=None,
+            decision_at=_to_utc(t_entry),
+            decision_stage=explanation.stage.value,
+            decision_reason=explanation.reason.value,
+            decision_details_json=explanation.as_dict(),
         )
 
     # ----- metrics --------------------------------------------------------
