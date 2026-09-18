@@ -1459,6 +1459,7 @@ function DecisionDrawer({ trade, onClose }: { trade: DecisionTrade; onClose: () 
   const threshold = comparison?.expected ?? details?.threshold ?? details?.expected;
   const comparator = stringValue(comparison?.operator) ?? stringValue(details?.comparator);
   const condition = details?.condition;
+  const blockerSummary = sizingBlockerSummary(details);
 
   return (
     <div className="taxonomy-drawer-backdrop decision-drawer-backdrop" onMouseDown={(event) => {
@@ -1490,6 +1491,13 @@ function DecisionDrawer({ trade, onClose }: { trade: DecisionTrade; onClose: () 
             </p>
           )}
 
+          {blockerSummary ? (
+            <section className="decision-section decision-blocker-summary" role="note">
+              <h4>What blocked this trade</h4>
+              <p>{blockerSummary}</p>
+            </section>
+          ) : null}
+
           {condition != null || observed != null || threshold != null ? (
             <section className="decision-section">
               <h4>Failed comparison</h4>
@@ -1508,8 +1516,8 @@ function DecisionDrawer({ trade, onClose }: { trade: DecisionTrade; onClose: () 
           <DecisionValueSection title="Derived values" values={details?.derived_values} />
           {details?.binding_constraint != null ? (
             <section className="decision-section">
-              <h4>Binding constraint</h4>
-              <p>{formatDecisionValue(details.binding_constraint)}</p>
+              <h4>Limiting constraint</h4>
+              <p>{formatToken(formatDecisionValue(details.binding_constraint))}</p>
             </section>
           ) : null}
           <RelatedRecords value={details?.related_records ?? details?.related_record} />
@@ -1680,6 +1688,52 @@ function recordValue(value: unknown): BacktestDecisionDetails | null {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function operandNumber(container: BacktestDecisionDetails | null, key: string): number | null {
+  const operand = recordValue(container?.[key]);
+  const value = operand?.value ?? container?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function sizingBlockerSummary(details: BacktestDecisionDetails | null): string | null {
+  const constraint = stringValue(details?.binding_constraint);
+  if (!constraint) return null;
+
+  const inputs = recordValue(details?.inputs);
+  const derived = recordValue(details?.derived_values);
+  const entryPrice = operandNumber(inputs, "entry_price");
+
+  if (constraint === "portfolio_headroom") {
+    const headroom = operandNumber(inputs, "portfolio_headroom");
+    const allowedShares = operandNumber(derived, "portfolio_headroom_quantity");
+    if (headroom != null && entryPrice != null && allowedShares != null) {
+      return `Portfolio headroom was the blocking factor. Only ${formatCurrency(headroom)} remained, `
+        + `which allowed ${formatNumber(allowedShares)} shares at the ${formatCurrency(entryPrice)} entry price.`;
+    }
+    return "Portfolio headroom was the blocking factor: the remaining exposure allowance was insufficient for one share.";
+  }
+
+  if (constraint === "risk_budget") {
+    const budget = operandNumber(inputs, "risk_budget");
+    const stopDistance = operandNumber(derived, "stop_distance");
+    if (budget != null && stopDistance != null) {
+      return `The per-trade risk budget was the blocking factor. A ${formatCurrency(budget)} budget `
+        + `could not cover one share's ${formatCurrency(stopDistance)} stop distance.`;
+    }
+    return "The per-trade risk budget was the blocking factor: it allowed fewer than one whole share.";
+  }
+
+  if (constraint === "per_position_notional") {
+    const cap = operandNumber(inputs, "per_position_cap");
+    if (cap != null && entryPrice != null) {
+      return `The per-position cap was the blocking factor. The ${formatCurrency(cap)} cap `
+        + `was below the ${formatCurrency(entryPrice)} price of one share.`;
+    }
+    return "The per-position cap was the blocking factor: it was insufficient for one whole share.";
+  }
+
+  return `${formatToken(constraint)} was the blocking factor and limited the calculated position to zero shares.`;
 }
 
 function MetricTile({ label, value }: { label: string; value: string }) {

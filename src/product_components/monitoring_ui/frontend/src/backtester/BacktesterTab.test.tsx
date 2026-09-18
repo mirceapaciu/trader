@@ -554,10 +554,63 @@ describe("BacktesterTab", () => {
     expect(drawer).toHaveTextContent("0 shares");
     expect(drawer).toHaveTextContent("1 shares");
     expect(drawer).toHaveTextContent(/risk budget quantity/i);
-    expect(drawer).toHaveTextContent("risk_budget");
+    expect(drawer).toHaveTextContent(/per-trade risk budget was the blocking factor/i);
+    expect(drawer).toHaveTextContent(/Limiting constraint/i);
+    expect(drawer).toHaveTextContent(/Risk budget/i);
     expect(screen.getByRole("link", { name: "simulated_trade blocked-1" })).toHaveAttribute(
       "href", "#backtest-trade-blocked-1"
     );
+  });
+
+  it("explains portfolio headroom as the blocking sizing constraint in plain language", () => {
+    const run = makeRun();
+    const trade = {
+      trade_id: "blocked-headroom",
+      ticker: "ORCL",
+      exchange_code: "XNYS",
+      strategy: "event_driven",
+      direction: "buy",
+      entry_timing_scenario: "ideal",
+      entry_at: null,
+      exit_at: null,
+      exit_reason: "risk_blocked",
+      risk_block_rule: "size_below_one_share",
+      decision_stage: "sizing",
+      decision_reason: "size_below_one_share",
+      decision_details_json: {
+        schema_version: 1,
+        check_id: "sizing.minimum_quantity",
+        inputs: {
+          entry_price: { value: 163.20156, unit: "usd_per_share" },
+          risk_budget: { value: 150, unit: "usd" },
+          portfolio_headroom: { value: 1.34317, unit: "usd" }
+        },
+        derived_values: {
+          risk_budget_quantity: { value: 14, unit: "shares" },
+          portfolio_headroom_quantity: { value: 0, unit: "shares" },
+          final_quantity: { value: 0, unit: "shares" }
+        },
+        binding_constraint: "portfolio_headroom"
+      },
+      card_decision_state: "approved"
+    };
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) },
+      trades: {
+        ...emptyResult,
+        data: { available: true, run_id: run.run_id, trades: [trade], limit: 50, offset: 0, total_count: 1 }
+      }
+    });
+    render(<BacktesterTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Sizing .* size below one share/i }));
+    const drawer = screen.getByRole("dialog", { name: "Blocked candidate explanation" });
+    expect(drawer).toHaveTextContent(/Portfolio headroom was the blocking factor/i);
+    expect(drawer).toHaveTextContent(/Only.*1[,.]34.*remained/i);
+    expect(drawer).toHaveTextContent(/allowed 0 shares at the.*163[,.]20.*entry price/i);
+    expect(drawer).toHaveTextContent(/Limiting constraint/i);
+    expect(drawer).toHaveTextContent(/Portfolio headroom/i);
   });
 
   it.each([

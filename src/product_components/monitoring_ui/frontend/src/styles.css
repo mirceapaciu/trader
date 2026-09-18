@@ -1773,6 +1773,17 @@ th {
   min-width: 0;
 }
 
+.decision-blocker-summary {
+  padding: 12px 14px;
+  border: 1px solid #e1b85b;
+  border-radius: 8px;
+  background: #fff8e7;
+}
+
+.decision-blocker-summary h4 {
+  margin-top: 0;
+}
+
 .decision-comparison {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
