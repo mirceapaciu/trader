@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -34,6 +34,23 @@ class _FakeBars:
         for index, (ticker, _exchange) in enumerate(instruments, start=1):
             if progress is not None:
                 progress(index, len(instruments), ticker, "fetched")
+
+
+class _Calendar:
+    def __init__(self, cutoff: datetime) -> None:
+        self.cutoff = cutoff
+
+    def last_completed_session_close(self, now: datetime) -> datetime:
+        return self.cutoff
+
+    def time_exit_at(self, *, fill_time: datetime, trading_days: int) -> datetime:
+        return fill_time + timedelta(days=trading_days)
+
+    def is_rth(self, now: datetime) -> bool:
+        return True
+
+    def next_session_open(self, now: datetime) -> datetime:
+        return now
 
 
 def _outcome(
@@ -90,6 +107,67 @@ def test_prefetch_without_sink_is_noop() -> None:
     service = _service(None)
     # No progress sink and no instruments: must not raise.
     service._prefetch_market_data([], _params())
+
+
+def test_prefetch_uses_each_selected_cards_horizon_not_window_end() -> None:
+    cutoff = datetime(2026, 7, 10, tzinfo=timezone.utc)
+
+    class _RecordingBars(_FakeBars):
+        end_by_instrument: dict[tuple[str, str], datetime] | None = None
+
+        def warm(
+            self,
+            instruments,
+            *,
+            interval,
+            start,
+            end,
+            end_by_instrument=None,
+            progress=None,
+        ):
+            self.end_by_instrument = end_by_instrument
+            return super().warm(
+                instruments, interval=interval, start=start, end=end, progress=progress
+            )
+
+    bars = _RecordingBars()
+    service = BacktesterService(
+        settings=None,  # type: ignore[arg-type]
+        repository=None,  # type: ignore[arg-type]
+        cards_provider=None,  # type: ignore[arg-type]
+        bars_provider=bars,
+        trading_calendar=_Calendar(cutoff),
+        now_factory=lambda: cutoff,
+    )
+    params = _params()
+    cards = [
+        SimpleNamespace(
+            ticker="AAPL",
+            exchange_code="XNAS",
+            validation_status="valid",
+            strategy="sentiment_momentum",
+            time_horizon="swing_1d_5d",
+            news_ready_at=_END - timedelta(minutes=3),
+            created_at=_END - timedelta(minutes=2),
+        ),
+        SimpleNamespace(
+            ticker="MSFT",
+            exchange_code="XNAS",
+            validation_status="valid",
+            strategy="sentiment_momentum",
+            time_horizon="swing_1d_5d",
+            news_ready_at=_END - timedelta(days=2),
+            created_at=_END - timedelta(days=2),
+        ),
+    ]
+
+    bounded = service._with_market_data_bounds(cards, params)
+    service._prefetch_market_data(cards, bounded)
+
+    assert bars.end_by_instrument is not None
+    assert bars.end_by_instrument[("AAPL", "XNAS")] > params.window_end_at
+    assert bars.end_by_instrument[("MSFT", "XNAS")] < bars.end_by_instrument[("AAPL", "XNAS")]
+    assert max(bars.end_by_instrument.values()) == bounded.simulation_end_at
 
 
 def test_prefetch_fails_when_market_data_provider_reports_unavailable() -> None:

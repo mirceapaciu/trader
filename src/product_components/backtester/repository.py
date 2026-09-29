@@ -74,12 +74,13 @@ class BacktesterRepository:
         # check constraints).
         sql = (
             f"INSERT INTO {self._backtester_schema}.t_backtest_runs "
-            f"(run_id, window_start_at, window_end_at, mode, timing_scenario, "
+            f"(run_id, window_start_at, window_end_at, market_data_cutoff_at, simulation_end_at, "
+            f"mode, timing_scenario, "
             f"ideal_fetch_delay_seconds, ideal_thesis_delay_seconds, dataset_snapshot_hash, "
             f"card_population, strategies_requested, initial_capital, "
             f"execution_model_snapshot_json, risk_model_snapshot_json, "
             f"thesis_config_snapshot_json, llm_token_budget_limit, llm_model, run_note, status) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')"
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')"
         )
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -88,6 +89,8 @@ class BacktesterRepository:
                     params.run_id,
                     _to_utc(params.window_start_at),
                     _to_utc(params.window_end_at),
+                    _opt_utc(params.market_data_cutoff_at),
+                    _opt_utc(params.simulation_end_at),
                     params.mode.value,
                     params.timing_scenario.value,
                     params.ideal_fetch_delay_seconds,
@@ -102,6 +105,28 @@ class BacktesterRepository:
                     llm_token_budget_limit,
                     llm_model,
                     params.run_note,
+                ),
+            )
+            conn.commit()
+
+    def update_run_market_data_bounds(
+        self,
+        *,
+        run_id: str,
+        market_data_cutoff_at: datetime | None,
+        simulation_end_at: datetime | None,
+    ) -> None:
+        sql = (
+            f"UPDATE {self._backtester_schema}.t_backtest_runs SET "
+            f"market_data_cutoff_at = %s, simulation_end_at = %s WHERE run_id = %s"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    _opt_utc(market_data_cutoff_at),
+                    _opt_utc(simulation_end_at),
+                    run_id,
                 ),
             )
             conn.commit()

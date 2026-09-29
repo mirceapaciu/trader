@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.core_components.backtest_engine import Bar
-from src.product_components.backtester.engine import BacktesterEngine
+from src.product_components.backtester.engine import BacktesterEngine, MarketDataCoverageError
 from src.product_components.backtester.models import (
     BacktestRunParams,
     CardPopulation,
@@ -260,6 +260,8 @@ def _params(
     window_start_at: datetime | None = None,
     window_end_at: datetime | None = None,
     run_id: str = "run-test",
+    simulation_end_at: datetime | None = None,
+    market_data_end_by_instrument: dict[str, datetime] | None = None,
 ) -> BacktestRunParams:
     return BacktestRunParams(
         run_id=run_id,
@@ -271,6 +273,8 @@ def _params(
         ideal_thesis_delay_seconds=ideal_thesis_delay_seconds,
         execution_model=execution_model or _default_exec(),
         risk_model=risk_model or _default_risk(),
+        simulation_end_at=simulation_end_at,
+        market_data_end_by_instrument=market_data_end_by_instrument or {},
     )
 
 
@@ -287,6 +291,8 @@ def _run(
     window_end_at: datetime | None = None,
     run_id: str = "run-test",
     trading_calendar=None,
+    simulation_end_at: datetime | None = None,
+    market_data_end_by_instrument: dict[str, datetime] | None = None,
 ):
     engine = BacktesterEngine(
         params=_params(
@@ -298,6 +304,8 @@ def _run(
             ideal_thesis_delay_seconds=ideal_thesis_delay_seconds,
             window_end_at=window_end_at,
             run_id=run_id,
+            simulation_end_at=simulation_end_at,
+            market_data_end_by_instrument=market_data_end_by_instrument,
         ),
         cards_provider=FakeCardsProvider(cards),
         bars_provider=FakeBarsProvider(bars_by_key),
@@ -647,6 +655,77 @@ def test_window_end_exit():
     )
     trade = result.trades[0]
     assert trade.exit_reason == ExitReason.WINDOW_END
+
+
+def test_explicit_execution_boundary_allows_time_stop_after_selection_window():
+    card = make_card(card_id="c-post-window")
+    entry = T0 + timedelta(seconds=180)
+    selection_end = entry + timedelta(minutes=3)
+    execution_end = entry + timedelta(minutes=10)
+    bars = make_bars(entry, count=10, path=[100.0] * 10)
+
+    result = _run(
+        [card],
+        {"AAPL|NASDAQ": bars},
+        execution_model=_default_exec(
+            time_stop_seconds=10 * 60,
+            take_profit_pct=0.50,
+            stop_loss_pct=0.50,
+        ),
+        window_end_at=selection_end,
+        simulation_end_at=execution_end,
+        market_data_end_by_instrument={"AAPL|NASDAQ": execution_end},
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason == ExitReason.TIME_STOP
+    assert trade.exit_at is not None and trade.exit_at > selection_end
+    assert [point.as_of for point in result.equity_points] == sorted(
+        point.as_of for point in result.equity_points
+    )
+
+
+def test_completed_market_data_cutoff_before_strategy_horizon_has_distinct_reason():
+    card = make_card(card_id="c-market-cutoff")
+    entry = T0 + timedelta(seconds=180)
+    cutoff = entry + timedelta(minutes=10)
+    bars = make_bars(entry, count=10, path=[100.0] * 10)
+
+    result = _run(
+        [card],
+        {"AAPL|NASDAQ": bars},
+        execution_model=_default_exec(
+            time_stop_seconds=20 * 60,
+            take_profit_pct=0.50,
+            stop_loss_pct=0.50,
+        ),
+        window_end_at=entry + timedelta(minutes=3),
+        simulation_end_at=cutoff,
+        market_data_end_by_instrument={"AAPL|NASDAQ": cutoff},
+    )
+
+    assert result.trades[0].exit_reason == ExitReason.MARKET_DATA_END
+
+
+def test_incomplete_bars_do_not_masquerade_as_market_data_cutoff():
+    card = make_card(card_id="c-incomplete")
+    entry = T0 + timedelta(seconds=180)
+    cutoff = entry + timedelta(minutes=10)
+    bars = make_bars(entry, count=5, path=[100.0] * 5)
+
+    with pytest.raises(MarketDataCoverageError, match="market_data_incomplete"):
+        _run(
+            [card],
+            {"AAPL|NASDAQ": bars},
+            execution_model=_default_exec(
+                time_stop_seconds=20 * 60,
+                take_profit_pct=0.50,
+                stop_loss_pct=0.50,
+            ),
+            window_end_at=entry + timedelta(minutes=3),
+            simulation_end_at=cutoff,
+            market_data_end_by_instrument={"AAPL|NASDAQ": cutoff},
+        )
 
 
 # ---------------------------------------------------------------------------

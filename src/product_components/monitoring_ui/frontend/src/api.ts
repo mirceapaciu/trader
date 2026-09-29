@@ -651,6 +651,8 @@ export type BacktestRunSummary = {
   status: BacktestRunStatus;
   window_start_at: string;
   window_end_at: string;
+  simulation_end_at?: string | null;
+  market_data_cutoff_at?: string | null;
   mode: string;
   timing_scenario: string;
   card_population: string;

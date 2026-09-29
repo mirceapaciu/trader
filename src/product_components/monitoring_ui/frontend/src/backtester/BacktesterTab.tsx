@@ -432,7 +432,7 @@ function RunListPanel({
               <tr>
                 <th>Run</th>
                 <th>Status</th>
-                <th>Window</th>
+                <th>Card selection</th>
                 <th>Mode</th>
                 <th>LLM</th>
                 <th>Timing</th>
@@ -469,6 +469,11 @@ function RunListPanel({
                   <td>
                     {formatDate(run.window_start_at)}
                     <span className="table-subtext">to {formatDate(run.window_end_at)}</span>
+                    {run.simulation_end_at ? (
+                      <span className="table-subtext">
+                        Execution data through {formatDate(run.simulation_end_at)}
+                      </span>
+                    ) : null}
                     {run.budget_exhausted ? (
                       <span className="table-subtext">{budgetExhaustionNote(run)}</span>
                     ) : null}
@@ -581,6 +586,20 @@ function SummaryTilesPanel({
           <MarketDataFailureDetails run={run} />
         </div>
       ) : null}
+      <div className="thesis-kpi-grid">
+        <MetricTile
+          label="Card selection window"
+          value={`${formatDate(run.window_start_at)} to ${formatDate(run.window_end_at)}`}
+        />
+        <MetricTile
+          label="Execution data through"
+          value={formatRunBoundary(run.simulation_end_at)}
+        />
+        <MetricTile
+          label="Last completed market session"
+          value={formatRunBoundary(run.market_data_cutoff_at)}
+        />
+      </div>
       <div className="thesis-kpi-grid">
         <MetricTile label="Total return" value={formatPercent(metrics.total_return)} />
         <MetricTile label="Net P&L" value={formatCurrency(metrics.net_pnl)} />
@@ -1648,7 +1667,13 @@ function decisionReasons(breakdown: BacktestBlockedCandidateBreakdown | null, st
 }
 
 function outcomeLabel(reason: string): string {
-  return reason === "risk_blocked" ? "Not entered" : formatToken(reason);
+  if (reason === "risk_blocked") return "Not entered";
+  if (reason === "window_end") return "Window end (legacy)";
+  return formatToken(reason);
+}
+
+function formatRunBoundary(value?: string | null): string {
+  return value ? formatDate(value) : "Not recorded (legacy run)";
 }
 
 function comparatorSymbol(comparator: string | null): string {

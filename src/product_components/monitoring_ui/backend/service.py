@@ -1413,6 +1413,8 @@ def _backtest_run_summary(
         status=row.status,
         window_start_at=row.window_start_at,
         window_end_at=row.window_end_at,
+        market_data_cutoff_at=row.market_data_cutoff_at,
+        simulation_end_at=row.simulation_end_at,
         mode=row.mode,
         timing_scenario=row.timing_scenario,
         card_population=row.card_population,

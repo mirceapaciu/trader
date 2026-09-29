@@ -4,7 +4,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.product_components.backtester import repository as repo_module
-from src.product_components.backtester.models import ExitReason, SimulatedTrade
+from src.product_components.backtester.models import (
+    BacktestRunParams,
+    ExitReason,
+    SimulatedTrade,
+)
 from src.product_components.backtester.repository import (
     BacktesterRepository,
     backtester_schema_file,
@@ -71,6 +75,10 @@ def test_bootstrap_backtester_schema_applies_schema_sql(monkeypatch) -> None:
     assert "ADD COLUMN IF NOT EXISTS decision_stage" in applied
     assert "ADD COLUMN IF NOT EXISTS decision_reason" in applied
     assert "ADD COLUMN IF NOT EXISTS decision_details_json" in applied
+    assert "ADD COLUMN IF NOT EXISTS market_data_cutoff_at" in applied
+    assert "ADD COLUMN IF NOT EXISTS simulation_end_at" in applied
+    assert "'market_data_end'" in applied
+    assert "DROP CONSTRAINT IF EXISTS ck_backtest_trades_exit_reason" in applied
     assert "CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_decision_stage_reason" in applied
 
 
@@ -104,6 +112,36 @@ class _RecordingConnection:
 
     def commit(self) -> None:
         self.committed = True
+
+
+def test_create_run_persists_execution_boundaries(monkeypatch) -> None:
+    executions: list[tuple[str, tuple | None]] = []
+    connection = _RecordingConnection(executions)
+    repository = BacktesterRepository(
+        dsn="",
+        backtester_schema="backtester",
+        market_data_schema="market_data",
+        thesis_builder_schema="thesis_builder",
+        shared_schema="shared",
+    )
+    monkeypatch.setattr(repository, "_connect", lambda: connection)
+    cutoff = datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc)
+    simulation_end = datetime(2026, 9, 28, 20, 0, tzinfo=timezone.utc)
+    params = BacktestRunParams(
+        run_id="bt-boundaries",
+        window_start_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        window_end_at=datetime(2026, 9, 20, tzinfo=timezone.utc),
+        market_data_cutoff_at=cutoff,
+        simulation_end_at=simulation_end,
+    )
+
+    repository.create_run(params=params, dataset_snapshot_hash="snapshot")
+
+    assert connection.committed is True
+    sql, values = executions[0]
+    assert "market_data_cutoff_at, simulation_end_at" in sql
+    assert values is not None
+    assert values[3:5] == (cutoff, simulation_end)
 
 
 def _blocked_trade(

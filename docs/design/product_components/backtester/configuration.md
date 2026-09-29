@@ -83,6 +83,10 @@ BACKTESTER_LOG_LEVEL=INFO
 - `BACKTESTER_BAR_INTERVAL` selects the historical bar granularity requested from MarketData. The
   default and required minimum resolution is 1-minute (`1m`) so entries and exits are simulated
   accurately; MarketData fetches missing ranges on demand and stores them durably for reuse.
+- The card-selection window is not an execution-data configuration limit. Warmup derives a bounded
+  end per selected instrument from the cards' simulated entry timestamps, `TIME_HORIZON_DAYS_MAP`,
+  and the trading calendar, capped at the latest completed session captured for the run. No separate
+  environment variable controls this derived boundary.
 - `BACKTESTER_DEFAULT_TIMING_SCENARIO` selects ideal/actual/both entry timing; `both` runs the
   actual-timing simulation alongside ideal and reports the latency P&L gap.
 - `BACKTESTER_IDEAL_FETCH_DELAY_SECONDS` and `BACKTESTER_IDEAL_THESIS_DELAY_SECONDS` define the
@@ -94,13 +98,14 @@ BACKTESTER_LOG_LEVEL=INFO
   `ENTRY_LIMIT_SLIPPAGE_BPS`, `TIME_HORIZON_DAYS_MAP`, `MAX_POSITION_SIZE`, `MAX_POSITIONS`,
   `MAX_PORTFOLIO_EXPOSURE`, `MAX_SECTOR_EXPOSURE`, `DAILY_LOSS_LIMIT`, and `MAX_DAILY_TRADES`
   intentionally mirror the live TradeExecutor env names so live-parity runs use the same rule
-  defaults. The Backtester does not start the TradeExecutor service or touch its schema.
+  defaults. `TIME_HORIZON_DAYS_MAP` also determines how far market-data warmup must extend for each
+  selected thesis card. The Backtester does not start the TradeExecutor service or touch its schema.
 - `BACKTESTER_EXCURSION_HORIZON_MINUTES` lists the post-entry horizons for the per-trade
   fixed-horizon gross returns persisted on trade rows (behavior spec Section 7), counted in
   regular-trading-hours minutes (390 per trading day), so 390/1170/1950 are 1/3/5 trading days —
   the horizons that match the default `swing_1d_5d` card `time_horizon`. Excursion diagnostics
-  are always computed for filled trades; a horizon return is null when the run window ends before
-  the horizon is reached.
+  are always computed for filled trades; a horizon return is null when the effective execution-data
+  boundary is reached before the horizon.
 - Confidence calibration is an operator report, not an environment setting. Run it with
   `uv run python -m src.product_components.backtester.confidence_calibration_report` and optional
   CLI arguments such as `--run-id`, `--entry-timing-scenario`, `--bucket-edges`, and

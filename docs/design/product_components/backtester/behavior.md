@@ -178,6 +178,18 @@ Look-ahead bias invalidates a backtest, so the following are hard rules.
   bars with `bar_start_at <= t_entry`.
 - Historical bars must be requested with explicit `[start, end]` bounds and the simulator must never
   read a bar whose interval has not closed by the simulated clock.
+- `window_start_at` and `window_end_at` bound thesis-card selection only. They do not bound the
+  execution bars available to a selected card and do not force an open position to close.
+- At run start the Backtester captures `market_data_cutoff_at`, the close of the latest completed
+  market session on the shared trading calendar. An in-progress session and its bars are excluded.
+- Before simulation, each selected card's simulated entry timestamp and `time_horizon` are mapped to
+  a last required trading session with the same calendar and `TIME_HORIZON_DAYS_MAP` used for the
+  exact fill-derived time stop. Market-data warmup requests each instrument through the latest such
+  card deadline, capped by `market_data_cutoff_at`; `simulation_end_at` records the latest resulting
+  execution-data boundary for the run.
+- A response that ends before its expected effective boundary is incomplete market data, not a
+  legitimate end-of-market-data exit. The coverage failure must remain distinguishable from a run
+  whose captured last completed session is genuinely earlier than a card's strategy deadline.
 - Survivorship bias is recorded as a known limitation: only instruments with available historical
   bars are simulated, and delisted instruments may be absent. The run summary reports the count of
   cards skipped for missing price history.
@@ -221,8 +233,12 @@ Exit rules are evaluated per bar in chronological order:
 
 First-touch wins. When a single bar's range touches both the stop and the target (intrabar
 ambiguity), the simulator resolves conservatively and assumes the stop filled first. Exit fills
-apply configured exit slippage in the adverse direction. If no rule triggers before the window ends,
-the position is closed at the last available bar with `exit_reason = window_end`.
+apply configured exit slippage in the adverse direction. Exit evaluation continues past the
+card-selection `window_end_at` through the selected card's strategy deadline. Reaching that deadline
+produces `exit_reason = time_stop`. When the captured `market_data_cutoff_at` is earlier than the
+strategy deadline, the position is valued and closed on the last eligible completed bar with
+`exit_reason = market_data_end`. The legacy `window_end` reason remains readable for historical runs
+but is not produced merely because a new run reaches its card-selection boundary.
 
 ### 5.3 Costs
 
@@ -349,6 +365,8 @@ Triggering:
 
 Trigger payload:
 - `window_start_at` (UTC), `window_end_at` (UTC), with `window_start_at < window_end_at`.
+  These bounds select cards; the execution-data horizon is derived after selection and is not an
+  additional trigger input.
 - `mode` (`replay` default, or `regeneration`).
 - `timing_scenario` (`ideal` default, `actual`, or `both`).
 - `ideal_fetch_delay_seconds`, `ideal_thesis_delay_seconds` (override the configured ideal pipeline
@@ -370,6 +388,9 @@ Lifecycle states:
 
 Run policy:
 - A direct CLI invocation creates exactly one run request and one `run_id`.
+- The run captures and persists `market_data_cutoff_at` once, then persists the derived
+  `simulation_end_at`, so a completed result can be interpreted without substituting the current
+  market date on read.
 - The selected card set and bar set form an immutable snapshot; `dataset_snapshot_hash` is the
   deterministic hash of that membership.
 - Retries create a new `run_id`; completed results are never mutated.
@@ -416,6 +437,11 @@ Producer components and required read contracts:
   fetched from IBKR first when a Gateway/TWS is reachable, falling back to Polygon/Alpha Vantage when
   IBKR is unavailable (see MarketData behavior Section 2). The session is best-effort: if IBKR cannot
   be reached, warmup proceeds on the fallback providers.
+- Warmup groups selected cards by instrument and requests each instrument only through its latest
+  card-derived strategy horizon, capped at the run's captured completed-session cutoff. Fallback
+  reads during simulation use the same per-instrument boundary. Post-selection-window price bars are
+  execution inputs only: they do not expand the selected card population or introduce later evidence
+  or reversal cards.
 - In regeneration mode the Backtester invokes ThesisBuilder analysis through a ThesisBuilder-owned
   replay entry point with an immutable, run-scoped config snapshot; it must not mutate global
   ThesisBuilder configuration or production tables.

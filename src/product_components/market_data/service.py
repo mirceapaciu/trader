@@ -265,6 +265,7 @@ class MarketDataService:
         interval: str,
         start: datetime,
         end: datetime,
+        end_by_instrument: dict[tuple[str, str], datetime] | None = None,
         progress: PrefetchProgress | None = None,
     ) -> dict[tuple[str, str], HistoricalBarsPrefetchOutcome]:
         """Warm the DB with bars for many instruments, rate-limited for the free tier.
@@ -280,6 +281,11 @@ class MarketDataService:
             self._max_requests_per_minute, clock=self._clock, sleep=self._sleep
         )
         for index, (ticker, exchange_code) in enumerate(unique, start=1):
+            requested_end = (
+                end_by_instrument.get((ticker, exchange_code), end)
+                if end_by_instrument is not None
+                else end
+            )
             existing = self._load_provider_symbol_map(
                 ticker=ticker, exchange_code=exchange_code
             )
@@ -309,10 +315,16 @@ class MarketDataService:
                 exchange_code=exchange_code,
                 bar_interval=interval,
                 start=start,
-                end=end,
+                end=requested_end,
                 adjusted=False,
             )
-            if self._is_covered(stored, mapping=mapping, interval=interval, start=start, end=end):
+            if self._is_covered(
+                stored,
+                mapping=mapping,
+                interval=interval,
+                start=start,
+                end=requested_end,
+            ):
                 self._emit_progress(progress, index, total, ticker, "cached")
                 status = "cached" if stored else "unavailable"
                 outcomes[(ticker, exchange_code)] = HistoricalBarsPrefetchOutcome(
@@ -330,7 +342,7 @@ class MarketDataService:
                 self._provider_clients[mapping.provider],
                 interval=interval,
                 start=start,
-                end=end,
+                end=requested_end,
             )
             status = (
                 "fetched"

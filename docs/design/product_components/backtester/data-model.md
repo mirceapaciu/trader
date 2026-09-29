@@ -12,8 +12,13 @@ Purpose:
 
 Logical fields:
 - `run_id` (primary key): stable run identity created at trigger time.
-- `window_start_at`: simulated window lower bound (UTC).
-- `window_end_at`: simulated window upper bound (UTC).
+- `window_start_at`, `window_end_at`: inclusive thesis-card selection bounds (UTC). These fields do
+  not cap execution bars or force positions to close.
+- `market_data_cutoff_at`: run-start snapshot of the latest completed market-session close available
+  to the simulation. Null only for legacy rows created before this boundary was persisted.
+- `simulation_end_at`: latest effective execution-data boundary required by the selected cards after
+  applying their strategy horizons and capping them at `market_data_cutoff_at`. Null for legacy rows
+  and when no selected card establishes an execution horizon.
 - `mode`: `replay` or `regeneration`.
 - `timing_scenario`: entry timing simulated (`ideal`, `actual`, or `both`).
 - `ideal_fetch_delay_seconds`, `ideal_thesis_delay_seconds`: feasible pipeline delays used to compute
@@ -62,6 +67,8 @@ Logical fields:
 
 Behavioral constraints:
 - One immutable row per `run_id`; status transitions are monotonic and audit-safe.
+- New runs persist their completed-session cutoff and effective execution-data boundary; readers must
+  tolerate null boundary fields on historical rows.
 - Count fields must be non-negative; ratio metrics are stored only when their denominator is defined,
   following `docs/design/product_components/backtester/behavior.md` Section 7.1.
 - `thesis_config_snapshot_json` and `llm_token_budget_limit` are required when `mode = regeneration`
@@ -119,8 +126,10 @@ Logical fields:
   `entry_timing_scenario`).
 - `exit_at`, `exit_price`: exit fill (null when not filled or risk blocked).
 - `gross_pnl`, `commission`, `slippage`, `net_pnl`, `return_pct`: trade economics.
-- `exit_reason`: `take_profit`, `stop_loss`, `time_stop`, `reversal`, `window_end`, `not_filled`, or
-  `risk_blocked`.
+- `exit_reason`: `take_profit`, `stop_loss`, `time_stop`, `reversal`, `market_data_end`, legacy
+  `window_end`, `not_filled`, or `risk_blocked`. `market_data_end` means the captured last completed
+  market session preceded the strategy deadline; `window_end` remains valid only so historical rows
+  can be read unchanged.
 - `risk_block_rule`: legacy-compatible reason/rule name when `exit_reason = risk_blocked`.
 - `decision_at`: simulated UTC timestamp at which a blocked candidate was evaluated.
 - `decision_stage`: stable stage identifier for blocked candidates: `admission`, `market_data`,
@@ -142,8 +151,8 @@ Logical fields:
   - `time_to_mfe_seconds`, `time_to_mae_seconds`.
   - `horizon_returns_json`: signed gross returns at the configured post-entry horizons
     (default 30/60/120/240 trading minutes plus 1/3/5 trading days, matching the card
-    `time_horizon` scale), cost-free and exit-free; a horizon is null when the window ends
-    before it.
+    `time_horizon` scale), cost-free and exit-free; a horizon is null when the effective execution
+    data ends before it.
   - `both_brackets_in_one_bar`: whether any bar in the trade spanned both the stop and the target
     (the trade's outcome depends on the intrabar tie-break assumption).
   - `bar_coverage_ratio`: bars present / bars expected over the holding period.
@@ -180,6 +189,9 @@ Logical fields:
 Behavioral constraints:
 - `run_id` must reference an existing run.
 - Points are append-only and ordered by `as_of` within a `(run_id, timing_scenario)` curve.
+- A curve may continue beyond `window_end_at`; its terminal point is at the later of the selection
+  window end and effective simulation boundary (and never precedes a recorded trade exit), so
+  post-window exits remain time-ordered.
 - A `both` run produces two curves; `max_drawdown` on the run row is from the `ideal` curve, and the
   gap metrics compare the `ideal` and `actual` curves.
 

@@ -319,6 +319,30 @@ def test_prefetch_reports_progress_and_dedupes() -> None:
     assert len(polygon.calls) == 2
 
 
+def test_prefetch_uses_per_instrument_end_boundaries() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    aapl_end = _END - timedelta(days=3)
+    msft_end = _END - timedelta(days=1)
+
+    service.prefetch_historical_bars(
+        [("AAPL", "XNAS"), ("MSFT", "XNAS")],
+        interval="1m",
+        start=_START,
+        end=_END,
+        end_by_instrument={
+            ("AAPL", "XNAS"): aapl_end,
+            ("MSFT", "XNAS"): msft_end,
+        },
+    )
+
+    assert {ticker: end for ticker, _start, end in polygon.calls} == {
+        "AAPL": aapl_end,
+        "MSFT": msft_end,
+    }
+
+
 def test_prefetch_reports_unavailable_when_provider_fetch_fails() -> None:
     class _FailingClient(_CountingClient):
         def fetch_historical_bars(self, symbol, *, interval, start, end):

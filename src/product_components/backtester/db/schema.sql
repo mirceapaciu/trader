@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_runs (
     run_id TEXT PRIMARY KEY,
     window_start_at TIMESTAMPTZ NOT NULL,
     window_end_at TIMESTAMPTZ NOT NULL,
+    market_data_cutoff_at TIMESTAMPTZ,
+    simulation_end_at TIMESTAMPTZ,
     mode TEXT NOT NULL,
     timing_scenario TEXT NOT NULL,
     ideal_fetch_delay_seconds INTEGER NOT NULL DEFAULT 0,
@@ -141,6 +143,10 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_runs (
 ALTER TABLE backtester.t_backtest_runs
     ADD COLUMN IF NOT EXISTS llm_model TEXT;
 
+ALTER TABLE backtester.t_backtest_runs
+    ADD COLUMN IF NOT EXISTS market_data_cutoff_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS simulation_end_at TIMESTAMPTZ;
+
 -- Token-budget coverage facts for regeneration runs. A run whose LLM token budget
 -- is exhausted mid-window only analyzed part of the window; these columns make the
 -- partial coverage a first-class, queryable fact instead of a buried summary_json
@@ -237,6 +243,7 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_trades (
             'stop_loss',
             'time_stop',
             'reversal',
+            'market_data_end',
             'window_end',
             'not_filled',
             'risk_blocked'
@@ -280,6 +287,24 @@ ALTER TABLE backtester.t_backtest_trades
     ADD COLUMN IF NOT EXISTS decision_stage TEXT,
     ADD COLUMN IF NOT EXISTS decision_reason TEXT,
     ADD COLUMN IF NOT EXISTS decision_details_json JSONB;
+
+-- Existing installations retain the original check constraint created before
+-- market_data_end existed, so replace it idempotently while keeping legacy
+-- window_end rows valid.
+ALTER TABLE backtester.t_backtest_trades
+    DROP CONSTRAINT IF EXISTS ck_backtest_trades_exit_reason;
+ALTER TABLE backtester.t_backtest_trades
+    ADD CONSTRAINT ck_backtest_trades_exit_reason
+    CHECK (exit_reason IN (
+        'take_profit',
+        'stop_loss',
+        'time_stop',
+        'reversal',
+        'market_data_end',
+        'window_end',
+        'not_filled',
+        'risk_blocked'
+    ));
 
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_scenario_strategy
     ON backtester.t_backtest_trades (run_id, entry_timing_scenario, strategy, thesis_card_id);

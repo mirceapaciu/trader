@@ -63,7 +63,8 @@ _THESIS_BUILDER_RECENT_DEAD_LETTER_LIMIT = 10
 _DLQ_SCAN_BATCH_SIZE = 500
 
 _BACKTEST_RUN_COLUMNS = (
-    "run_id, status, window_start_at, window_end_at, mode, timing_scenario, card_population, "
+    "run_id, status, window_start_at, window_end_at, market_data_cutoff_at, simulation_end_at, "
+    "mode, timing_scenario, card_population, "
     "strategies_requested, initial_capital, net_pnl, total_return, win_rate, profit_factor, "
     "max_drawdown, created_at, started_at, finished_at, error_code, error_details_json, gross_profit, gross_loss, "
     "total_commission, total_slippage, avg_win, avg_loss, expectancy, "
@@ -2002,6 +2003,8 @@ class BacktestRunRow:
     analysis_coverage_until_at: datetime | None
     summary_json: dict[str, Any]
     error_details: dict[str, Any] | None = None
+    market_data_cutoff_at: datetime | None = None
+    simulation_end_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -2086,6 +2089,16 @@ def _backtest_run_row(row: dict[str, Any]) -> BacktestRunRow:
         status=str(row["status"]),
         window_start_at=_to_utc(row["window_start_at"]),
         window_end_at=_to_utc(row["window_end_at"]),
+        market_data_cutoff_at=(
+            _to_utc(row["market_data_cutoff_at"])
+            if row.get("market_data_cutoff_at")
+            else None
+        ),
+        simulation_end_at=(
+            _to_utc(row["simulation_end_at"])
+            if row.get("simulation_end_at")
+            else None
+        ),
         mode=str(row["mode"]),
         timing_scenario=str(row["timing_scenario"]),
         card_population=str(row["card_population"]),

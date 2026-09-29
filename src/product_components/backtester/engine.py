@@ -140,6 +140,29 @@ class _ExcursionDiagnostics:
     bar_coverage_ratio: float
 
 
+class MarketDataCoverageError(RuntimeError):
+    """Raised when cached bars stop before the boundary promised to the run."""
+
+    def __init__(
+        self,
+        *,
+        ticker_key: str,
+        required_through: datetime,
+        covered_through: datetime,
+    ) -> None:
+        self.details = {
+            "message": "Historical bars ended before the required trade simulation boundary.",
+            "instrument": ticker_key,
+            "required_through": _to_utc(required_through).isoformat(),
+            "covered_through": _to_utc(covered_through).isoformat(),
+        }
+        super().__init__(
+            f"market_data_incomplete: {ticker_key} covered through "
+            f"{_to_utc(covered_through).isoformat()}, required "
+            f"{_to_utc(required_through).isoformat()}"
+        )
+
+
 def _legacy_explanation(
     *,
     reason: DecisionReason,
@@ -425,12 +448,16 @@ class BacktesterEngine:
 
             series = bars_cache.get(ticker_key)
             if series is None:
+                market_data_end_at = params.market_data_end_by_instrument.get(
+                    ticker_key,
+                    params.simulation_end_at or params.window_end_at,
+                )
                 bars = self._bars.historical_bars(
                     ticker=card.ticker,
                     exchange_code=card.exchange_code,
                     interval=execution.bar_interval,
                     start=t_entry,
-                    end=params.window_end_at,
+                    end=market_data_end_at,
                 )
                 series = BarSeries(bars)
                 bars_cache[ticker_key] = series
@@ -627,6 +654,14 @@ class BacktesterEngine:
                 time_exit_at=plan.time_exit_at,
                 ticker_key=ticker_key,
                 reversal_after=reversal_after,
+                market_data_end_at=params.market_data_end_by_instrument.get(
+                    ticker_key,
+                    params.simulation_end_at or params.window_end_at,
+                ),
+                execution_boundary_is_explicit=(
+                    ticker_key in params.market_data_end_by_instrument
+                    or params.simulation_end_at is not None
+                ),
             )
             diagnostics = self._excursion_diagnostics(
                 series=series,
@@ -938,12 +973,15 @@ class BacktesterEngine:
         time_exit_at: datetime,
         ticker_key: str,
         reversal_after: dict[str, list[tuple[datetime, str]]],
+        market_data_end_at: datetime,
+        execution_boundary_is_explicit: bool,
     ) -> tuple[Bar, ExitReason]:
         opposing = self._opposing_reversal_at(
             ticker_key, direction, reversal_after, after=_to_utc(entry_bar.start_at)
         )
 
         last_bar = entry_bar
+        interval = _bar_interval_delta(execution.bar_interval)
         for bar in series.iter_after(_to_utc(entry_bar.start_at)):
             last_bar = bar
             bar_at = _to_utc(bar.start_at)
@@ -961,10 +999,23 @@ class BacktesterEngine:
                 return bar, ExitReason.TAKE_PROFIT
             if opposing is not None and bar_at >= opposing:
                 return bar, ExitReason.REVERSAL
-            if bar_at >= _to_utc(time_exit_at):
+            if bar_at + interval >= _to_utc(time_exit_at):
                 return bar, ExitReason.TIME_STOP
 
-        return last_bar, ExitReason.WINDOW_END
+        if not execution_boundary_is_explicit:
+            return last_bar, ExitReason.WINDOW_END
+
+        required_through = min(_to_utc(time_exit_at), _to_utc(market_data_end_at))
+        covered_through = _to_utc(last_bar.start_at) + interval
+        if covered_through < required_through:
+            raise MarketDataCoverageError(
+                ticker_key=ticker_key,
+                required_through=required_through,
+                covered_through=covered_through,
+            )
+        if _to_utc(time_exit_at) <= _to_utc(market_data_end_at):
+            return last_bar, ExitReason.TIME_STOP
+        return last_bar, ExitReason.MARKET_DATA_END
 
     def _excursion_diagnostics(
         self,
@@ -1044,7 +1095,8 @@ class BacktesterEngine:
         returns: dict[str, float | None] = {}
         for horizon_minutes in execution.excursion_horizon_minutes:
             target_at = self._rth_minutes_after(entry_at, horizon_minutes)
-            if target_at > _to_utc(self._params.window_end_at):
+            simulation_end = self._params.simulation_end_at or self._params.window_end_at
+            if target_at > _to_utc(simulation_end):
                 returns[str(horizon_minutes)] = None
                 continue
             horizon_bar: Bar | None = None
@@ -1141,13 +1193,19 @@ class BacktesterEngine:
                     open_positions=0,
                 )
             )
-        # Final point at window end.
+        # Final point at the execution-data boundary. This remains chronological
+        # when selected trades exit after the card-selection window.
+        final_at = max(
+            _to_utc(params.window_end_at),
+            _to_utc(params.simulation_end_at or params.window_end_at),
+            *(_to_utc(t.exit_at) for t in closed if t.exit_at is not None),
+        )
         points.append(
             EquityPoint(
                 point_id=_point_id(params.run_id, scenario, len(closed) + 1),
                 run_id=params.run_id,
                 timing_scenario=scenario,
-                as_of=_to_utc(params.window_end_at),
+                as_of=final_at,
                 equity=equity,
                 open_positions=0,
             )
@@ -1278,7 +1336,9 @@ class BacktesterEngine:
 
         delays = _delay_aggregates(population, self._card_timing)
         exposure = _exposure_fraction(
-            primary_trades, self._params.window_start_at, self._params.window_end_at
+            primary_trades,
+            self._params.window_start_at,
+            self._params.simulation_end_at or self._params.window_end_at,
         )
         signal_accuracy = _signal_accuracy(primary_trades)
 

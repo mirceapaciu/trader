@@ -198,7 +198,8 @@ must not embed simulation logic, which is owned by the Backtester component.
 #### Trigger control
 
 A `Run backtest` control starts one bounded Backtester run with operator-selected parameters:
-- `window_start_at` and `window_end_at` (UTC),
+- `window_start_at` and `window_end_at` (UTC), which select thesis cards but do not force-close
+  positions,
 - `mode` (`replay` default, or `regeneration`),
 - `timing_scenario` (`ideal` default, `actual`, or `both`),
 - `card_population` (`all` default, `approved_only`, or `rejected_only`),
@@ -214,9 +215,10 @@ Trigger behavior mirrors the Filter Quality control:
 
 #### Run list
 
-A list of recent runs shows, per run: `run_id`, status (`running`, `completed`, `failed`), window,
+A list of recent runs shows, per run: `run_id`, status (`running`, `completed`, `failed`), card-selection window,
 `mode`, `timing_scenario`, `card_population`, and headline metrics (net P&L, total return, win rate,
-profit factor, max drawdown), with created and finished timestamps. Selecting a run opens its detail.
+profit factor, max drawdown), with created and finished timestamps. When recorded, it also shows the
+effective execution-data end separately from the card-selection window. Selecting a run opens its detail.
 Failed runs retain their machine-readable error code and structured error details.
 
 #### Run detail
@@ -229,7 +231,11 @@ The detail view keeps the run list visible and shows:
   payloads that contain only a message retain a summary-only fallback.
 - Summary tiles: total return, net P&L, win rate, profit factor, expectancy, max drawdown, Sharpe
   ratio, number of trades, exposure fraction, and signal accuracy.
-- Equity curve chart. For a `both` run, the ideal and actual equity curves are overlaid.
+- Boundary metadata: the card-selection window, effective execution-data end, and captured last
+  completed market session are labeled separately. Historical runs without the latter two fields
+  are identified as legacy metadata rather than having a boundary inferred at display time.
+- Equity curve chart, including exits after the card-selection end. For a `both` run, the ideal and
+  actual equity curves are overlaid.
 - Per-strategy breakdown table of the same trade-level metrics for each strategy in the run.
 - Card-status breakdown: metrics restricted to `approved` and `rejected` cards, the
   `card_was_live_expired` (expired-at-entry) slice, and its complementary live-executable slice
@@ -242,6 +248,8 @@ The detail view keeps the run list visible and shows:
 - Per-trade table with bounded pagination: ticker, exchange, strategy, direction,
   `entry_timing_scenario`, entry/exit time and price, net P&L, return, `exit_reason`, the three delay
   values, and card status. Filterable by scenario, strategy, exit reason, and card status.
+  New `market_data_end` outcomes and historical `window_end` outcomes are both rendered; the latter
+  is labeled as legacy so operators do not confuse it with the captured market-data cutoff.
 
 Time windows for the run list follow the standard `15m`, `1h`, `1d`, `7d`, and `30d` presets over run
 `created_at`.
@@ -292,8 +300,12 @@ Required read endpoints:
 - `GET /api/filter-quality` returns the current running evaluator run, latest terminal run, and generated timestamp.
 - `GET /api/filter-quality/runs/{run_id}/incorrectly-rejected` returns review-oriented incorrectly rejected article details for one run.
 - `GET /api/filter-quality/runs/{run_id}/incorrectly-accepted` returns review-oriented incorrectly accepted article details for one run.
-- `GET /api/backtests` returns recent backtest runs with status, parameters, and headline metrics for a `15m`, `1h`, `1d`, `7d`, or `30d` window, plus the currently running run when present.
-- `GET /api/backtests/{run_id}` returns one run's full summary: scalar metrics, per-strategy breakdown, card-status breakdown, delay aggregates, and ideal-vs-actual gap metrics.
+- `GET /api/backtests` returns recent backtest runs with status, parameters, card-selection bounds,
+  nullable `simulation_end_at` and `market_data_cutoff_at`, and headline metrics for a `15m`, `1h`,
+  `1d`, `7d`, or `30d` window, plus the currently running run when present.
+- `GET /api/backtests/{run_id}` returns one run's full summary, including the same selection and
+  execution boundaries: scalar metrics, per-strategy breakdown, card-status breakdown, delay
+  aggregates, and ideal-vs-actual gap metrics.
 - `GET /api/backtests/{run_id}/trades` returns per-trade rows with bounded pagination and optional filters on timing scenario, strategy, exit reason, and card status.
 - `GET /api/backtests/{run_id}/equity` returns equity-curve points for the run, separated by `timing_scenario`.
 

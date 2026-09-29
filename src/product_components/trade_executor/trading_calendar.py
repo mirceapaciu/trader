@@ -22,6 +22,9 @@ class TradingCalendar(Protocol):
     def next_session_open(self, now: datetime) -> datetime:
         """Open time of the next regular session at/after ``now``."""
 
+    def last_completed_session_close(self, now: datetime) -> datetime:
+        """Close time of the latest regular session completed by ``now``."""
+
 
 class ExchangeCalendarsTradingCalendar:
     """NYSE-backed calendar using the ``exchange-calendars`` package."""
@@ -48,6 +51,10 @@ class ExchangeCalendarsTradingCalendar:
         open_ts = self._cal.next_open(_to_utc(now))
         return _to_utc(open_ts.to_pydatetime())
 
+    def last_completed_session_close(self, now: datetime) -> datetime:
+        close_ts = self._cal.previous_close(_to_utc(now))
+        return _to_utc(close_ts.to_pydatetime())
+
 
 class NaiveTradingCalendar:
     """Fallback calendar: calendar days, always-RTH. Used if the package is absent."""
@@ -59,6 +66,9 @@ class NaiveTradingCalendar:
         return True
 
     def next_session_open(self, now: datetime) -> datetime:
+        return _to_utc(now)
+
+    def last_completed_session_close(self, now: datetime) -> datetime:
         return _to_utc(now)
 
 

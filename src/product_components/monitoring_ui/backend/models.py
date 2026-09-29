@@ -761,6 +761,8 @@ class BacktestRunSummary(BaseModel):
     status: BacktestRunStatus
     window_start_at: datetime
     window_end_at: datetime
+    market_data_cutoff_at: datetime | None = None
+    simulation_end_at: datetime | None = None
     mode: str
     timing_scenario: str
     card_population: str

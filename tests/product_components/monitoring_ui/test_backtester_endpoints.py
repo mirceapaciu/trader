@@ -42,6 +42,8 @@ def _run_row(
     analysis_coverage_until_at: datetime | None = None,
     error_code: str | None = None,
     error_details: dict | None = None,
+    market_data_cutoff_at: datetime | None = None,
+    simulation_end_at: datetime | None = None,
 ) -> BacktestRunRow:
     return BacktestRunRow(
         run_id=run_id,
@@ -99,6 +101,8 @@ def _run_row(
         analysis_coverage_until_at=analysis_coverage_until_at,
         summary_json=summary_json or {},
         error_details=error_details,
+        market_data_cutoff_at=market_data_cutoff_at,
+        simulation_end_at=simulation_end_at,
     )
 
 
@@ -485,13 +489,23 @@ def _client(monkeypatch, data_source: FakeBacktestDataSource, runner: FakeBackte
 
 def test_route_list_backtests(monkeypatch) -> None:
     ds = FakeBacktestDataSource()
-    ds.runs = [_run_row(run_id="bt_1")]
+    cutoff = datetime(2026, 6, 28, 20, 0, tzinfo=timezone.utc)
+    simulation_end = datetime(2026, 6, 26, 20, 0, tzinfo=timezone.utc)
+    ds.runs = [
+        _run_row(
+            run_id="bt_1",
+            market_data_cutoff_at=cutoff,
+            simulation_end_at=simulation_end,
+        )
+    ]
     client = _client(monkeypatch, ds, FakeBacktestRunner())
     response = client.get("/api/backtests", params={"window": "1d"})
     assert response.status_code == 200
     body = response.json()
     assert body["window"] == "1d"
     assert body["runs"][0]["run_id"] == "bt_1"
+    assert body["runs"][0]["market_data_cutoff_at"] == "2026-06-28T20:00:00Z"
+    assert body["runs"][0]["simulation_end_at"] == "2026-06-26T20:00:00Z"
 
 
 def test_route_detail_404(monkeypatch) -> None:

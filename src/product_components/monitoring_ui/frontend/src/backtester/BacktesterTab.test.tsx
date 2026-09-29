@@ -29,6 +29,8 @@ function makeRun(overrides: Record<string, unknown> = {}) {
     status: "completed",
     window_start_at: "2026-06-16T09:00:00Z",
     window_end_at: "2026-06-16T10:00:00Z",
+    simulation_end_at: "2026-06-23T20:00:00Z",
+    market_data_cutoff_at: "2026-06-30T20:00:00Z",
     mode: "replay",
     timing_scenario: "ideal",
     card_population: "all",
@@ -189,6 +191,9 @@ describe("BacktesterTab", () => {
     render(<BacktesterTab />);
 
     expect(screen.getByText("Run Summary")).toBeInTheDocument();
+    expect(screen.getByText("Card selection window")).toBeInTheDocument();
+    expect(screen.getByText("Execution data through")).toBeInTheDocument();
+    expect(screen.getByText("Last completed market session")).toBeInTheDocument();
     expect(screen.getByText("Sharpe ratio")).toBeInTheDocument();
     expect(screen.getByText("Ideal vs Actual Gap")).toBeInTheDocument();
     expect(screen.getByText(/Gap metrics require a/)).toBeInTheDocument();
@@ -433,6 +438,30 @@ describe("BacktesterTab", () => {
                   expected: "available",
                   inputs: { required_metric: "ATR" }
                 }
+              },
+              {
+                trade_id: "trade-market-data-end",
+                entry_timing_scenario: "ideal",
+                entry_at: "2026-06-16T09:10:00Z",
+                entry_price: 190.5,
+                exit_at: "2026-06-20T20:00:00Z",
+                exit_price: 191.0,
+                net_pnl: 40,
+                return_pct: 0.002,
+                exit_reason: "market_data_end",
+                risk_block_rule: null
+              },
+              {
+                trade_id: "trade-window-end-legacy",
+                entry_timing_scenario: "actual",
+                entry_at: "2026-06-16T09:15:00Z",
+                entry_price: 190.0,
+                exit_at: "2026-06-16T10:00:00Z",
+                exit_price: 190.25,
+                net_pnl: 20,
+                return_pct: 0.001,
+                exit_reason: "window_end",
+                risk_block_rule: null
               }
             ]
           }
@@ -454,6 +483,8 @@ describe("BacktesterTab", () => {
 
     expect(screen.getByText("card-abc")).toBeInTheDocument();
     expect(screen.getByText("take profit")).toBeInTheDocument();
+    expect(screen.getByText("market data end")).toBeInTheDocument();
+    expect(screen.getByText("Window end (legacy)")).toBeInTheDocument();
     expect(screen.queryByText("Select a card to see details.")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "atr unavailable" }));
@@ -560,6 +591,18 @@ describe("BacktesterTab", () => {
     expect(screen.getByRole("link", { name: "simulated_trade blocked-1" })).toHaveAttribute(
       "href", "#backtest-trade-blocked-1"
     );
+  });
+
+  it("marks missing execution boundaries as legacy run metadata", () => {
+    const run = makeRun({ simulation_end_at: null, market_data_cutoff_at: null });
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) }
+    });
+
+    render(<BacktesterTab />);
+
+    expect(screen.getAllByText("Not recorded (legacy run)")).toHaveLength(2);
   });
 
   it("explains portfolio headroom as the blocking sizing constraint in plain language", () => {

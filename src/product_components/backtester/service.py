@@ -7,10 +7,15 @@ import inspect
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.product_components.market_data.models import HistoricalBarsPrefetchOutcome
+from src.product_components.thesis_builder.export import ExportedThesisCard
+from src.product_components.trade_executor.trading_calendar import (
+    TradingCalendar,
+    build_default_calendar,
+)
 
 from .clients import BarsProvider, CardsProvider, RegenerationProvider
 from .engine import BacktesterEngine
@@ -62,6 +67,8 @@ class BacktesterService:
         regeneration_provider: RegenerationProvider | None = None,
         progress: ProgressSink | None = None,
         repo_root: Path | None = None,
+        trading_calendar: TradingCalendar | None = None,
+        now_factory: Callable[[], datetime] | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
@@ -70,9 +77,17 @@ class BacktesterService:
         self._regeneration = regeneration_provider
         self._progress = progress
         self._repo_root = repo_root or _repo_root_default()
+        self._calendar = trading_calendar or build_default_calendar()
+        self._now = now_factory or (lambda: datetime.now(timezone.utc))
 
     def run(self, params: BacktestRunParams) -> None:
         self._validate_params(params)
+        params = replace(
+            params,
+            market_data_cutoff_at=self._calendar.last_completed_session_close(
+                _to_utc(self._now())
+            ),
+        )
         if params.mode == BacktestMode.REGENERATION:
             self._run_regeneration(params)
         else:
@@ -85,6 +100,7 @@ class BacktesterService:
             window_start_at=params.window_start_at,
             window_end_at=params.window_end_at,
         )
+        params = self._with_market_data_bounds(cards, params)
         snapshot_hash = dataset_snapshot_hash(cards)
         self._repository.create_run(params=params, dataset_snapshot_hash=snapshot_hash)
 
@@ -189,6 +205,14 @@ class BacktesterService:
                 window_start_at=params.window_start_at,
                 window_end_at=params.window_end_at,
             )
+            params = self._with_market_data_bounds(cards, params)
+            update_bounds = getattr(self._repository, "update_run_market_data_bounds", None)
+            if update_bounds is not None:
+                update_bounds(
+                    run_id=params.run_id,
+                    market_data_cutoff_at=params.market_data_cutoff_at,
+                    simulation_end_at=params.simulation_end_at,
+                )
             LOGGER.info(
                 "regeneration prewarming market data run_id=%s cards=%d", params.run_id, len(cards)
             )
@@ -264,6 +288,7 @@ class BacktesterService:
             params=params,
             cards_provider=cards_provider,
             bars_provider=self._bars,
+            trading_calendar=self._calendar,
         ).run()
 
         if extra_summary:
@@ -302,9 +327,13 @@ class BacktesterService:
         warm = getattr(self._bars, "warm", None)
         if warm is None:
             return
-        instruments = sorted(
-            {(card.ticker, card.exchange_code) for card in cards}
-        )
+        instrument_ends = dict(params.market_data_end_by_instrument)
+        if not instrument_ends:
+            instrument_ends = {
+                f"{card.ticker}|{card.exchange_code}": params.window_end_at
+                for card in cards
+            }
+        instruments = sorted(instrument_ends)
         if not instruments:
             return
         interval = params.execution_model.bar_interval
@@ -322,14 +351,22 @@ class BacktesterService:
             LOGGER.info("market data %s %d/%d %s", status, done, total, ticker)
             self._report_progress("prewarming", done, total, ticker)
 
-        outcomes = warm(
-            instruments,
+        instrument_pairs = [tuple(key.split("|", 1)) for key in instruments]
+        end_by_instrument = {
+            pair: instrument_ends["|".join(pair)]
+            for pair in instrument_pairs
+        }
+        warm_kwargs = dict(
             interval=interval,
             start=params.window_start_at,
-            end=params.window_end_at,
+            end=max(end_by_instrument.values()),
             progress=_progress,
         )
-        if outcomes is not None:
+        if "end_by_instrument" in inspect.signature(warm).parameters:
+            warm_kwargs["end_by_instrument"] = end_by_instrument
+        result = warm(instrument_pairs, **warm_kwargs)
+        outcomes = result or {}
+        if outcomes:
             unavailable = [
                 outcome for outcome in outcomes.values() if outcome.status == "unavailable"
             ]
@@ -355,6 +392,40 @@ class BacktesterService:
                 )
         LOGGER.info("prefetch complete run_id=%s", params.run_id)
 
+    def _with_market_data_bounds(
+        self,
+        cards: list[ExportedThesisCard],
+        params: BacktestRunParams,
+    ) -> BacktestRunParams:
+        """Separate the selected-card window from the execution-data horizon."""
+        cutoff = params.market_data_cutoff_at
+        if cutoff is None:
+            cutoff = self._calendar.last_completed_session_close(_to_utc(self._now()))
+
+        deadlines: dict[str, datetime] = {}
+        for card in _selected_cards(cards, params):
+            entry_times = _planned_entry_times(card, params)
+            for entry_at in entry_times:
+                deadline = _card_market_data_deadline(
+                    card=card,
+                    entry_at=entry_at,
+                    params=params,
+                    calendar=self._calendar,
+                )
+                key = f"{card.ticker}|{card.exchange_code}"
+                previous = deadlines.get(key)
+                if previous is None or deadline > previous:
+                    deadlines[key] = deadline
+
+        bounded = {key: min(deadline, cutoff) for key, deadline in deadlines.items()}
+        simulation_end = max(bounded.values()) if bounded else min(params.window_end_at, cutoff)
+        return replace(
+            params,
+            market_data_cutoff_at=cutoff,
+            simulation_end_at=simulation_end,
+            market_data_end_by_instrument=bounded,
+        )
+
     def _report_progress(self, phase: str, done: int, total: int, ticker: str | None) -> None:
         if self._progress is not None:
             self._progress(phase, done, total, ticker)
@@ -374,7 +445,67 @@ class BacktesterService:
 def _failure_details(error: Exception) -> dict:
     if isinstance(error, MarketDataUnavailableError):
         return error.details
+    details = getattr(error, "details", None)
+    if isinstance(details, dict):
+        return details
     return {"message": str(error)[:1000]}
+
+
+def _to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _selected_cards(
+    cards: list[ExportedThesisCard], params: BacktestRunParams
+) -> list[ExportedThesisCard]:
+    strategies = set(params.strategies) if params.strategies else None
+    selected: list[ExportedThesisCard] = []
+    for card in cards:
+        approved = getattr(card, "validation_status", "valid") == "valid"
+        if params.card_population.value == "approved_only" and not approved:
+            continue
+        if params.card_population.value == "rejected_only" and approved:
+            continue
+        if strategies is not None and card.strategy not in strategies:
+            continue
+        selected.append(card)
+    return selected
+
+
+def _planned_entry_times(
+    card: ExportedThesisCard, params: BacktestRunParams
+) -> tuple[datetime, ...]:
+    created_at = _to_utc(card.created_at)
+    ideal = _to_utc(getattr(card, "news_ready_at", created_at)) + timedelta(
+        seconds=params.ideal_fetch_delay_seconds + params.ideal_thesis_delay_seconds
+    )
+    actual = created_at
+    if params.timing_scenario.value == "both":
+        return (ideal, actual)
+    if params.timing_scenario.value == "actual":
+        return (actual,)
+    return (ideal,)
+
+
+def _card_market_data_deadline(
+    *,
+    card: ExportedThesisCard,
+    entry_at: datetime,
+    params: BacktestRunParams,
+    calendar: TradingCalendar,
+) -> datetime:
+    if params.execution_model.execution_mode.value == "legacy_flat_percent":
+        return entry_at + timedelta(seconds=params.execution_model.time_stop_seconds)
+    trading_days = params.execution_model.time_horizon_days_map.get(
+        getattr(card, "time_horizon", "")
+    )
+    if trading_days is None:
+        # Admission will persist ``horizon_unmapped``. Warm enough data to evaluate
+        # the candidate without inventing a holding horizon.
+        return entry_at
+    return calendar.time_exit_at(fill_time=entry_at, trading_days=trading_days)
 
 
 def _window_coverage_fraction(

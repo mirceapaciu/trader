@@ -33,6 +33,7 @@ class ExitReason(StrEnum):
     STOP_LOSS = "stop_loss"
     TIME_STOP = "time_stop"
     REVERSAL = "reversal"
+    MARKET_DATA_END = "market_data_end"
     WINDOW_END = "window_end"
     NOT_FILLED = "not_filled"
     RISK_BLOCKED = "risk_blocked"
@@ -145,6 +146,11 @@ class BacktestRunParams:
     # cards a wider/looser evidence policy would have produced over the window.
     required_evidence_count: int | None = None
     evidence_collection_max_minutes: int | None = None
+    # Derived after the selected card population is known. ``window_end_at`` remains
+    # the card-selection boundary; these fields bound execution-market-data reads.
+    market_data_cutoff_at: datetime | None = None
+    simulation_end_at: datetime | None = None
+    market_data_end_by_instrument: dict[str, datetime] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
