@@ -283,7 +283,7 @@ def test_non_us_instrument_routes_to_ibkr() -> None:
     assert polygon.calls == []
 
 
-def test_coverage_ledger_prevents_refetch() -> None:
+def test_partial_stored_bars_do_not_trust_coverage_ledger() -> None:
     storage = _FakeStorage()
     polygon = _CountingClient(MarketDataProvider.POLYGON)
     service = _service(storage, {MarketDataProvider.POLYGON: polygon})
@@ -292,8 +292,54 @@ def test_coverage_ledger_prevents_refetch() -> None:
     service.prefetch_historical_bars(instruments, interval="1m", start=_START, end=_END)
     service.prefetch_historical_bars(instruments, interval="1m", start=_START, end=_END)
 
-    # Second pass is fully served by the coverage ledger: no extra provider request.
-    assert len(polygon.calls) == 1
+    # _CountingClient returns just three opening bars.  Its request ledger must
+    # never certify the remainder of the requested window as present.
+    assert len(polygon.calls) == 2
+
+
+def test_cached_range_with_a_trading_day_gap_is_refetched() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    start = datetime(2026, 8, 17, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 26, 20, 0, tzinfo=timezone.utc)
+    storage.bars = [
+        MarketBar(
+            ticker="T",
+            exchange_code="XNYS",
+            provider=MarketDataProvider.POLYGON,
+            bar_interval="1m",
+            bar_start_at=start,
+            currency="USD",
+            open_price=10.0,
+            high_price=11.0,
+            low_price=9.0,
+            close_price=10.5,
+            volume=1000,
+            adjusted=False,
+            fetched_at=start,
+        ),
+        MarketBar(
+            ticker="T",
+            exchange_code="XNYS",
+            provider=MarketDataProvider.POLYGON,
+            bar_interval="1m",
+            bar_start_at=datetime(2026, 8, 22, 2, 0, tzinfo=timezone.utc),
+            currency="USD",
+            open_price=10.0,
+            high_price=11.0,
+            low_price=9.0,
+            close_price=10.5,
+            volume=1000,
+            adjusted=False,
+            fetched_at=start,
+        ),
+    ]
+    storage.coverage[("T", "XNYS", "polygon", "1m")] = (start, end)
+
+    service.prefetch_historical_bars([("T", "XNYS")], interval="1m", start=start, end=end)
+
+    assert polygon.calls == [("T", start, end)]
 
 
 def test_prefetch_reports_progress_and_dedupes() -> None:

@@ -117,6 +117,9 @@ Historical bars are a permanent, reusable store, not a request cache:
 - This durability lets repeated backtests reuse previously fetched 1-minute history without
   re-querying providers. The rolling quote and derived-context cache semantics in Sections 3 and 4
   are unchanged; durability applies to the bar store.
+- A provider-request coverage record is only a fallback for ranges with no stored bars. When bars
+  exist but do not reach both requested boundaries, MarketData refetches the range rather than
+  allowing that record to conceal a partial historical response.
 
 The bulk prefetch contract returns one `HistoricalBarsPrefetchOutcome` per canonical instrument.
 Every outcome contains `ticker`, `exchange_code`, and `status`; unavailable outcomes additionally

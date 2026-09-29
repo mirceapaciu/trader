@@ -494,8 +494,12 @@ class MarketDataService:
         if bars:
             earliest = min(bar.bar_start_at for bar in bars)
             latest = max(bar.bar_start_at for bar in bars)
-            if earliest <= start and latest >= end:
-                return True
+            # A coverage-ledger entry records a provider request, not an assertion that
+            # every expected bar was returned.  In particular, an interrupted paged
+            # response can leave real bars before a gap while its ledger range extends
+            # beyond it.  Stored bars therefore take precedence whenever present: do
+            # not allow that ledger entry to conceal an incomplete range.
+            return earliest <= start and latest >= end
         coverage = self._storage.load_bar_coverage(
             ticker=mapping.ticker,
             exchange_code=mapping.exchange_code,
