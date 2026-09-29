@@ -626,6 +626,9 @@ function backtestFailureMessage(run: BacktestRunSummary): string {
 }
 
 function MarketDataFailureDetails({ run }: { run: BacktestRunSummary }) {
+  if (run.error_code === "MarketDataCoverageError") {
+    return <MarketDataCoverageFailureDetails details={run.error_details} />;
+  }
   if (run.error_code !== "MarketDataUnavailableError") return null;
   const rawOutcomes = run.error_details?.unavailable_instruments;
   if (!Array.isArray(rawOutcomes)) return null;
@@ -661,6 +664,27 @@ function MarketDataFailureDetails({ run }: { run: BacktestRunSummary }) {
         );
       })}
     </ul>
+  );
+}
+
+function MarketDataCoverageFailureDetails({
+  details
+}: {
+  details?: Record<string, unknown> | null;
+}) {
+  const instrument = details ? stringField(details, "instrument") : null;
+  const requiredThrough = details ? stringField(details, "required_through") : null;
+  const coveredThrough = details ? stringField(details, "covered_through") : null;
+
+  if (!instrument && !requiredThrough && !coveredThrough) return null;
+
+  return (
+    <dl className="failure-details" aria-label="Historical market data coverage details">
+      {instrument ? <><dt>Instrument</dt><dd>{instrument}</dd></> : null}
+      {requiredThrough ? <><dt>Simulation boundary</dt><dd>{formatDate(requiredThrough)}</dd></> : null}
+      {coveredThrough ? <><dt>Historical bars available through</dt><dd>{formatDate(coveredThrough)}</dd></> : null}
+      {coveredThrough ? <><dt>First missing market-data day</dt><dd>{firstMissingMarketDataDay(coveredThrough)}</dd></> : null}
+    </dl>
   );
 }
 
@@ -1670,6 +1694,24 @@ function outcomeLabel(reason: string): string {
   if (reason === "risk_blocked") return "Not entered";
   if (reason === "window_end") return "Window end (legacy)";
   return formatToken(reason);
+}
+
+function firstMissingMarketDataDay(coveredThrough: string): string {
+  const covered = new Date(coveredThrough);
+  if (Number.isNaN(covered.getTime())) return "Not recorded";
+
+  // Coverage ends at a bar boundary. Advance to the next weekday so a closed
+  // weekend is not presented as the failed market-data day.
+  covered.setUTCDate(covered.getUTCDate() + 1);
+  while (covered.getUTCDay() === 0 || covered.getUTCDay() === 6) {
+    covered.setUTCDate(covered.getUTCDate() + 1);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "short",
+    day: "2-digit"
+  }).format(covered);
 }
 
 function formatRunBoundary(value?: string | null): string {

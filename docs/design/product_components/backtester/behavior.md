@@ -404,6 +404,10 @@ Run policy:
 - Partial per-instrument simulation failures after a successful prewarm are recorded per trade and
   do not invalidate completed trades; other hard failures (e.g. unreadable inputs or exhausted LLM
   budget in regeneration mode) also finalize the run as `failed` with a machine-readable `error_code`.
+- A `MarketDataCoverageError` records the affected instrument, the required simulation boundary,
+  and the final covered bar boundary. The Monitoring UI presents these values together with the
+  first subsequent weekday as the first missing market-data day, so operators can distinguish an
+  incomplete history from the run-wide simulation cutoff.
 
 ## 9. Integration Boundaries
 

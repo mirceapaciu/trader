@@ -593,6 +593,31 @@ describe("BacktesterTab", () => {
     );
   });
 
+  it("shows the simulation boundary and first missing market-data day for a coverage failure", () => {
+    const run = makeRun({
+      status: "failed",
+      error_code: "MarketDataCoverageError",
+      error_details: {
+        message: "Historical bars ended before the required trade simulation boundary.",
+        instrument: "T|XNYS",
+        covered_through: "2026-08-22T00:00:00+00:00",
+        required_through: "2026-08-26T20:00:00+00:00"
+      }
+    });
+    installQueryRouter({
+      backtests: backtestsResult([run]),
+      detail: { ...emptyResult, data: makeDetail(run) }
+    });
+    render(<BacktesterTab />);
+
+    const details = screen.getByLabelText("Historical market data coverage details");
+    expect(details).toHaveTextContent("InstrumentT|XNYS");
+    expect(details).toHaveTextContent("Simulation boundary");
+    expect(details).toHaveTextContent("Historical bars available through");
+    expect(details).toHaveTextContent("First missing market-data day");
+    expect(details).toHaveTextContent(/24.*2026/);
+  });
+
   it("marks missing execution boundaries as legacy run metadata", () => {
     const run = makeRun({ simulation_end_at: null, market_data_cutoff_at: null });
     installQueryRouter({
