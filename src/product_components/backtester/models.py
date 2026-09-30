@@ -170,6 +170,7 @@ class CardSnapshot:
     evidence_json: list[dict[str, Any]]
     news_ready_at: datetime
     risk_box_json: dict[str, Any]
+    story_narrative: str | None = None
     source_export_ref: str | None = None
 
 

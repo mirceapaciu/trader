@@ -404,6 +404,17 @@ describe("BacktesterTab", () => {
             decision_state: "approved",
             card_created_at: "2026-06-16T09:05:00Z",
             card_expires_at: "2026-06-16T11:05:00Z",
+            story_narrative: "A demand catalyst is improving the outlook.\nThe move is expected to persist.",
+            evidence_articles: [
+              {
+                article_id: "article-1",
+                headline: "Demand accelerates",
+                url: "https://example.com/demand",
+                source: "Example News",
+                summary: "Demand is accelerating.",
+                published_at: "2026-06-16T09:00:00Z"
+              }
+            ],
             trades: [
               {
                 trade_id: "trade-1",
@@ -483,6 +494,11 @@ describe("BacktesterTab", () => {
 
     expect(screen.getByText("card-abc")).toBeInTheDocument();
     expect(screen.getByText("take profit")).toBeInTheDocument();
+    expect(screen.getByText(/A demand catalyst is improving the outlook/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View 1 evidence article →" }));
+    expect(screen.getByRole("dialog", { name: "Evidence articles" })).toHaveTextContent("Demand accelerates");
+    expect(screen.getByRole("dialog", { name: "Evidence articles" })).toHaveTextContent("Demand is accelerating.");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByText("market data end")).toBeInTheDocument();
     expect(screen.getByText("Window end (legacy)")).toBeInTheDocument();
     expect(screen.queryByText("Select a card to see details.")).not.toBeInTheDocument();

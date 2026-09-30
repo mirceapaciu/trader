@@ -348,6 +348,7 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_card_snapshots (
     card_created_at TIMESTAMPTZ NOT NULL,
     card_expires_at TIMESTAMPTZ NOT NULL,
     evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    story_narrative TEXT NULL,
     news_ready_at TIMESTAMPTZ NOT NULL,
     risk_box_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     source_export_ref TEXT,
@@ -365,6 +366,9 @@ CREATE TABLE IF NOT EXISTS backtester.t_backtest_card_snapshots (
     CONSTRAINT ck_backtest_card_snapshots_confidence_bounds
         CHECK (confidence >= 0 AND confidence <= 1)
 );
+
+ALTER TABLE backtester.t_backtest_card_snapshots
+    ADD COLUMN IF NOT EXISTS story_narrative TEXT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_backtest_card_snapshots_run_card
     ON backtester.t_backtest_card_snapshots (run_id, thesis_card_id);

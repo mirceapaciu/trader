@@ -893,6 +893,15 @@ export type BacktestCardTrade = {
   decision_details_message?: string | null;
 };
 
+export type BacktestEvidenceArticle = {
+  article_id: string;
+  headline: string;
+  url: string;
+  source: string;
+  summary?: string | null;
+  published_at?: string | null;
+};
+
 export type BacktestCard = {
   thesis_card_id: string;
   ticker: string;
@@ -904,6 +913,8 @@ export type BacktestCard = {
   decision_state: string;
   card_created_at: string;
   card_expires_at: string | null;
+  story_narrative?: string | null;
+  evidence_articles?: BacktestEvidenceArticle[];
   trades: BacktestCardTrade[];
 };
 

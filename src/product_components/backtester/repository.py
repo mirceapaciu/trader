@@ -140,8 +140,8 @@ class BacktesterRepository:
             f"INSERT INTO {self._backtester_schema}.t_backtest_card_snapshots "
             f"(snapshot_id, run_id, thesis_card_id, ticker, exchange_code, direction, strategy, "
             f"time_horizon, confidence, decision_state, card_created_at, card_expires_at, "
-            f"evidence_json, news_ready_at, risk_box_json, source_export_ref) "
-            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            f"evidence_json, news_ready_at, risk_box_json, story_narrative, source_export_ref) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"ON CONFLICT (run_id, thesis_card_id) DO NOTHING"
         )
         with self._connect() as conn, conn.cursor() as cur:
@@ -164,6 +164,7 @@ class BacktesterRepository:
                         Json(snapshot.evidence_json),
                         _to_utc(snapshot.news_ready_at),
                         Json(snapshot.risk_box_json),
+                        snapshot.story_narrative,
                         snapshot.source_export_ref,
                     ),
                 )

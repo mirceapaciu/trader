@@ -19,6 +19,7 @@ from .models import (
     AliasDiscoveryResponse,
     BacklogResponse,
     BacktestCard,
+    BacktestEvidenceArticle,
     BacktestCardStatusMetrics,
     BacktestCardTrade,
     BacktestCardsResponse,
@@ -1194,6 +1195,8 @@ class MonitoringService:
                     decision_state=card.decision_state,
                     card_created_at=card.card_created_at,
                     card_expires_at=card.card_expires_at,
+                    story_narrative=card.story_narrative,
+                    evidence_articles=[BacktestEvidenceArticle(**article) for article in card.evidence_articles],
                     trades=[
                         BacktestCardTrade(
                             trade_id=t.trade_id,

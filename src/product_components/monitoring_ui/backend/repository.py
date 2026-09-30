@@ -1197,6 +1197,7 @@ class PostgresRedisMonitoringDataSource:
         sql = (
             f"SELECT cs.thesis_card_id, cs.ticker, cs.exchange_code, cs.direction, cs.strategy, "
             f"cs.time_horizon, cs.confidence, cs.decision_state, cs.card_created_at, cs.card_expires_at, "
+            f"cs.story_narrative, cs.evidence_json, "
             f"t.trade_id, t.entry_timing_scenario, t.entry_at, t.entry_price, "
             f"t.exit_at, t.exit_price, t.net_pnl, t.return_pct, t.exit_reason, t.risk_block_rule, "
             f"t.decision_at, t.decision_stage, t.decision_reason, t.decision_details_json "
@@ -2079,6 +2080,8 @@ class BacktestCardRow:
     decision_state: str
     card_created_at: datetime
     card_expires_at: datetime | None
+    story_narrative: str | None
+    evidence_articles: list[dict[str, Any]]
     trades: list[BacktestCardTradeRow]
 
 
@@ -2227,6 +2230,8 @@ def _group_backtest_cards(rows: list[dict[str, Any]]) -> list[BacktestCardRow]:
                 decision_state=str(row["decision_state"]),
                 card_created_at=_to_utc(row["card_created_at"]),
                 card_expires_at=_to_utc(row["card_expires_at"]) if row.get("card_expires_at") else None,
+                story_narrative=str(row["story_narrative"]) if row.get("story_narrative") else None,
+                evidence_articles=_backtest_evidence_articles(row.get("evidence_json")),
                 trades=[],
             )
             order.append(cid)
@@ -2264,6 +2269,14 @@ def _group_backtest_cards(rows: list[dict[str, Any]]) -> list[BacktestCardRow]:
                 decision_state=existing.decision_state,
                 card_created_at=existing.card_created_at,
                 card_expires_at=existing.card_expires_at,
+                story_narrative=existing.story_narrative,
+                evidence_articles=existing.evidence_articles,
                 trades=[*existing.trades, trade],
             )
     return [seen[cid] for cid in order]
+
+
+def _backtest_evidence_articles(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(article) for article in value if isinstance(article, dict) and article.get("article_id")]

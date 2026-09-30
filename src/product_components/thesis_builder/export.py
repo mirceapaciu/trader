@@ -16,6 +16,10 @@ class ExportedEvidenceArticle:
     article_id: str
     published_at: datetime
     fetched_at: datetime
+    headline: str = ""
+    url: str = ""
+    source: str = ""
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +243,10 @@ def build_exported_card(
                 article_id=article_id,
                 published_at=published_at,
                 fetched_at=fetched_at,
+                headline=str(snapshot.get("headline") or ""),
+                url=str(snapshot.get("url") or ""),
+                source=str(snapshot.get("source") or ""),
+                summary=str(snapshot["summary"]) if snapshot.get("summary") else None,
             )
         )
     published_times = [item.published_at for item in evidence]

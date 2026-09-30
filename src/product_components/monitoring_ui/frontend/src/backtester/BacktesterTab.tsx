@@ -15,6 +15,7 @@ import {
   type BacktestCardStatusBucket,
   type BacktestBlockedCandidateBreakdown,
   type BacktestDecisionDetails,
+  type BacktestEvidenceArticle,
   type BacktestCardsResponse,
   type BacktestDelays,
   type BacktestDetailResponse,
@@ -1084,6 +1085,8 @@ function CardDetail({
   card: BacktestCard;
   onExplain: (trade: BacktestCardTrade) => void;
 }) {
+  const [articlesOpen, setArticlesOpen] = useState(false);
+  const evidenceArticles = card.evidence_articles ?? [];
   return (
     <div className="pending-detail-grid">
       <div className="pending-detail-row">
@@ -1112,6 +1115,12 @@ function CardDetail({
         <span>Confidence</span>
         <strong>{card.confidence != null ? `${(card.confidence * 100).toFixed(0)}%` : "—"}</strong>
       </div>
+      {card.story_narrative && (
+        <div className="pending-detail-row analysis-reasoning">
+          <span>Story</span>
+          <strong className="story-narrative">{card.story_narrative}</strong>
+        </div>
+      )}
       <div className="pending-detail-row">
         <span>Decision</span>
         <strong>{formatToken(card.decision_state)}</strong>
@@ -1128,6 +1137,14 @@ function CardDetail({
         <span>Candidate outcomes</span>
         <strong>{card.trades.length} candidate{card.trades.length === 1 ? "" : "s"}</strong>
       </div>
+      <div className="pending-detail-row">
+        <span>Evidence</span>
+        <strong>{evidenceArticles.length} article{evidenceArticles.length === 1 ? "" : "s"}</strong>
+      </div>
+      <button type="button" className="quality-link" onClick={() => setArticlesOpen(true)} disabled={evidenceArticles.length === 0}>
+        View {evidenceArticles.length} evidence article{evidenceArticles.length === 1 ? "" : "s"} →
+      </button>
+      {articlesOpen && <BacktestEvidenceArticlesModal title={`Evidence articles · ${card.ticker} ${card.exchange_code}`} articles={evidenceArticles} onClose={() => setArticlesOpen(false)} />}
       {card.trades.length > 0 && (
         <div className="table-wrap">
           <table>
@@ -1694,6 +1711,26 @@ function outcomeLabel(reason: string): string {
   if (reason === "risk_blocked") return "Not entered";
   if (reason === "window_end") return "Window end (legacy)";
   return formatToken(reason);
+}
+
+function BacktestEvidenceArticlesModal({ title, articles, onClose }: { title: string; articles: BacktestEvidenceArticle[]; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Evidence articles" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body"><div className="evidence-article-list">
+          {articles.map((article) => <div key={article.article_id} className="evidence-article">
+            {article.url ? <a href={article.url} target="_blank" rel="noreferrer" className="evidence-article-headline">{article.headline || article.url}</a> : <span className="evidence-article-headline">{article.headline || "Untitled article"}</span>}
+            <div className="evidence-article-meta"><span>{article.source || "unknown source"}</span><span>{formatDate(article.published_at)}</span></div>
+            {article.summary && <p className="evidence-article-summary">{article.summary}</p>}
+          </div>)}
+        </div></div>
+      </div>
+    </div>
+  );
 }
 
 function firstMissingMarketDataDay(coveredThrough: string): string {

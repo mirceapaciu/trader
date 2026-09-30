@@ -1028,6 +1028,17 @@ class BacktestCardTrade(BaseModel):
     decision_details_message: str | None = None
 
 
+class BacktestEvidenceArticle(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    article_id: str
+    headline: str = ""
+    url: str = ""
+    source: str = ""
+    summary: str | None = None
+    published_at: datetime | None = None
+
+
 class BacktestCard(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -1041,6 +1052,8 @@ class BacktestCard(BaseModel):
     decision_state: str
     card_created_at: datetime
     card_expires_at: datetime | None = None
+    story_narrative: str | None = None
+    evidence_articles: list[BacktestEvidenceArticle] = Field(default_factory=list)
     trades: list[BacktestCardTrade] = Field(default_factory=list)
 
 

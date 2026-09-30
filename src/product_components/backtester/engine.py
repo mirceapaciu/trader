@@ -367,6 +367,10 @@ class BacktesterEngine:
                 "article_id": article.article_id,
                 "published_at": _to_utc(article.published_at).isoformat(),
                 "fetched_at": _to_utc(article.fetched_at).isoformat(),
+                "headline": article.headline,
+                "url": article.url,
+                "source": article.source,
+                "summary": article.summary,
             }
             for article in card.evidence
         ]
@@ -391,6 +395,7 @@ class BacktesterEngine:
             evidence_json=evidence_json,
             news_ready_at=timing.news_ready_at,
             risk_box_json=risk_box_json,
+            story_narrative=card.story_narrative,
             source_export_ref=None,
         )
 

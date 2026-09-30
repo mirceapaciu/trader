@@ -110,6 +110,8 @@ Logical fields:
 - `run_id`: parent run identity.
 - `thesis_card_id`: copied card id from the ThesisBuilder export (lineage only, not a cross-schema FK).
 - `ticker`, `exchange_code`: canonical instrument identity.
+- `evidence_json`: the decision-time evidence articles, including headline, source, URL, summary, and timestamps, for display and audit without rereading mutable ThesisBuilder records.
+- `story_narrative`: the decision-time thesis story shown with the evidence articles.
 - `strategy`: card strategy used for per-strategy breakdown.
 - `direction`: `buy` or `sell`.
 - `card_decision_state`: copied live decision state of the source card (`approved` or `rejected`).

@@ -732,6 +732,8 @@ def test_card_trade_exposes_same_structured_decision_and_legacy_fallback() -> No
             decision_state="approved",
             card_created_at=_now(),
             card_expires_at=None,
+            story_narrative="A durable catalyst is improving demand.",
+            evidence_articles=[{"article_id": "article-1", "headline": "Demand grows", "url": "https://example.com/article-1", "source": "Example", "summary": "Demand is growing."}],
             trades=[
                 BacktestCardTradeRow(
                     trade_id="structured",
@@ -766,6 +768,10 @@ def test_card_trade_exposes_same_structured_decision_and_legacy_fallback() -> No
     ]
 
     trades = _service(ds).list_backtest_cards(run_id="bt-1").cards[0].trades
+    card = _service(ds).list_backtest_cards(run_id="bt-1").cards[0]
+
+    assert card.story_narrative == "A durable catalyst is improving demand."
+    assert card.evidence_articles[0].headline == "Demand grows"
 
     assert trades[0].decision_details_json == {
         "schema_version": 1,
