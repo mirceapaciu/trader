@@ -56,7 +56,7 @@ class _FakeStorage:
         self.upserted: list[MarketBar] = []
         self.fetch_runs: list[FetchRun] = []
         self.api_usage: list[tuple[MarketDataProvider, str]] = []
-        self.coverage: dict[tuple[str, str, str, str], tuple[datetime, datetime]] = {}
+        self.coverage: dict[tuple[str, str, str, str, bool], tuple[datetime, datetime]] = {}
         self.mapping = ProviderSymbol(
             ticker="RHM",
             exchange_code="XETR",
@@ -84,13 +84,25 @@ class _FakeStorage:
     def record_api_usage(self, *, provider, endpoint, called_at) -> None:
         self.api_usage.append((provider, endpoint))
 
-    def load_bar_coverage(self, *, ticker, exchange_code, provider, bar_interval):
-        return self.coverage.get((ticker.upper(), exchange_code.upper(), provider.value, bar_interval))
+    def load_bar_coverage(
+        self, *, ticker, exchange_code, provider, bar_interval, adjusted=False
+    ):
+        return self.coverage.get(
+            (ticker.upper(), exchange_code.upper(), provider.value, bar_interval, adjusted)
+        )
 
     def upsert_bar_coverage(
-        self, *, ticker, exchange_code, provider, bar_interval, covered_start, covered_end
+        self,
+        *,
+        ticker,
+        exchange_code,
+        provider,
+        bar_interval,
+        covered_start,
+        covered_end,
+        adjusted=False,
     ) -> None:
-        key = (ticker.upper(), exchange_code.upper(), provider.value, bar_interval)
+        key = (ticker.upper(), exchange_code.upper(), provider.value, bar_interval, adjusted)
         existing = self.coverage.get(key)
         if existing is None:
             self.coverage[key] = (covered_start, covered_end)
@@ -110,6 +122,7 @@ def _service(storage: _FakeStorage, provider: _FakeProvider) -> MarketDataServic
 def test_get_historical_bars_returns_stored_without_provider_fetch() -> None:
     stored = [_bar(minute) for minute in range(6)]
     storage = _FakeStorage(stored=stored)
+    storage.coverage[("RHM", "XETR", "ibkr", "1m", False)] = (_START, _END)
     provider = _FakeProvider()
     service = _service(storage, provider)
 

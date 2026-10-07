@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.product_components.market_data.models import (
     FetchRun,
     HistoricalBarsPrefetchOutcome,
@@ -10,6 +12,7 @@ from src.product_components.market_data.models import (
     MarketDataProvider,
     ProviderSymbol,
 )
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
 from src.product_components.market_data.service import MarketDataService
 
 _START = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
@@ -56,7 +59,7 @@ class _FakeStorage:
         self.fetch_runs: list[FetchRun] = []
         self.api_usage: list[tuple[MarketDataProvider, str]] = []
         self.provider_symbols: list[ProviderSymbol] = []
-        self.coverage: dict[tuple[str, str, str, str], tuple[datetime, datetime]] = {}
+        self.coverage: dict[tuple[str, str, str, str, bool], tuple[datetime, datetime]] = {}
 
     def load_provider_symbols(self, *, ticker, exchange_code, provider=None):
         return [
@@ -98,13 +101,25 @@ class _FakeStorage:
     def record_api_usage(self, *, provider, endpoint, called_at) -> None:
         self.api_usage.append((provider, endpoint))
 
-    def load_bar_coverage(self, *, ticker, exchange_code, provider, bar_interval):
-        return self.coverage.get((ticker.upper(), exchange_code.upper(), provider.value, bar_interval))
+    def load_bar_coverage(
+        self, *, ticker, exchange_code, provider, bar_interval, adjusted=False
+    ):
+        return self.coverage.get(
+            (ticker.upper(), exchange_code.upper(), provider.value, bar_interval, adjusted)
+        )
 
     def upsert_bar_coverage(
-        self, *, ticker, exchange_code, provider, bar_interval, covered_start, covered_end
+        self,
+        *,
+        ticker,
+        exchange_code,
+        provider,
+        bar_interval,
+        covered_start,
+        covered_end,
+        adjusted=False,
     ) -> None:
-        key = (ticker.upper(), exchange_code.upper(), provider.value, bar_interval)
+        key = (ticker.upper(), exchange_code.upper(), provider.value, bar_interval, adjusted)
         existing = self.coverage.get(key)
         if existing is None:
             self.coverage[key] = (covered_start, covered_end)
@@ -283,7 +298,7 @@ def test_non_us_instrument_routes_to_ibkr() -> None:
     assert polygon.calls == []
 
 
-def test_partial_stored_bars_do_not_trust_coverage_ledger() -> None:
+def test_completed_sparse_response_reuses_authoritative_coverage() -> None:
     storage = _FakeStorage()
     polygon = _CountingClient(MarketDataProvider.POLYGON)
     service = _service(storage, {MarketDataProvider.POLYGON: polygon})
@@ -292,12 +307,12 @@ def test_partial_stored_bars_do_not_trust_coverage_ledger() -> None:
     service.prefetch_historical_bars(instruments, interval="1m", start=_START, end=_END)
     service.prefetch_historical_bars(instruments, interval="1m", start=_START, end=_END)
 
-    # _CountingClient returns just three opening bars.  Its request ledger must
-    # never certify the remainder of the requested window as present.
-    assert len(polygon.calls) == 2
+    # A successful provider return confirms the whole requested range even though
+    # weekends and closed-session boundaries mean only a few bars exist.
+    assert len(polygon.calls) == 1
 
 
-def test_cached_range_with_a_trading_day_gap_is_refetched() -> None:
+def test_completed_coverage_is_authoritative_when_stored_bars_are_sparse() -> None:
     storage = _FakeStorage()
     polygon = _CountingClient(MarketDataProvider.POLYGON)
     service = _service(storage, {MarketDataProvider.POLYGON: polygon})
@@ -335,11 +350,190 @@ def test_cached_range_with_a_trading_day_gap_is_refetched() -> None:
             fetched_at=start,
         ),
     ]
-    storage.coverage[("T", "XNYS", "polygon", "1m")] = (start, end)
+    storage.coverage[("T", "XNYS", "polygon", "1m", False)] = (start, end)
 
     service.prefetch_historical_bars([("T", "XNYS")], interval="1m", start=start, end=end)
 
-    assert polygon.calls == [("T", start, end)]
+    assert polygon.calls == []
+
+
+def test_sunday_to_saturday_repeat_uses_weekday_bars_and_coverage() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    start = datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc)  # Sunday
+    end = datetime(2026, 6, 6, 23, 59, tzinfo=timezone.utc)  # Saturday
+    storage.bars = [_bar(MarketDataProvider.POLYGON, "AAPL", "XNAS", minute) for minute in range(3)]
+    storage.coverage[("AAPL", "XNAS", "polygon", "1m", False)] = (start, end)
+    events: list[tuple[int, int, str, str]] = []
+
+    outcomes = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")],
+        interval="1m",
+        start=start,
+        end=end,
+        progress=lambda done, total, ticker, status: events.append(
+            (done, total, ticker, status)
+        ),
+    )
+
+    assert outcomes[("AAPL", "XNAS")].status == "cached"
+    assert events == [(1, 1, "AAPL", "cached")]
+    assert polygon.calls == []
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        # Spring daylight-saving transition weekend and the following session.
+        (
+            datetime(2026, 3, 7, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 3, 9, 23, 59, tzinfo=timezone.utc),
+        ),
+        # Independence Day observed: no XNYS session on Friday, July 3.
+        (
+            datetime(2026, 7, 3, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 3, 23, 59, tzinfo=timezone.utc),
+        ),
+        # Day after Thanksgiving early close, with bounds beyond regular hours.
+        (
+            datetime(2026, 11, 27, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 27, 23, 59, tzinfo=timezone.utc),
+        ),
+        # Ordinary session with pre-market and after-hours request bounds.
+        (
+            datetime(2026, 8, 17, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 17, 23, 59, tzinfo=timezone.utc),
+        ),
+    ],
+    ids=["dst", "holiday", "early-close", "outside-rth"],
+)
+def test_non_trading_boundaries_do_not_invalidate_completed_coverage(
+    start: datetime, end: datetime
+) -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    storage.coverage[("AAPL", "XNAS", "polygon", "1m", False)] = (start, end)
+
+    outcomes = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=start, end=end
+    )
+
+    assert outcomes[("AAPL", "XNAS")].status == "cached"
+    assert polygon.calls == []
+
+
+def test_contained_range_reuses_larger_coverage_window() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    storage.coverage[("AAPL", "XNAS", "polygon", "1m", False)] = (
+        _START - timedelta(days=1),
+        _END + timedelta(days=1),
+    )
+
+    outcomes = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )
+
+    assert outcomes[("AAPL", "XNAS")].status == "cached"
+    assert polygon.calls == []
+
+
+def test_extended_range_fetches_only_extension_then_becomes_cached() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    extended_end = _END + timedelta(days=1)
+    storage.bars = [_bar(MarketDataProvider.POLYGON, "AAPL", "XNAS", 0)]
+    storage.coverage[("AAPL", "XNAS", "polygon", "1m", False)] = (_START, _END)
+
+    first = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=extended_end
+    )
+    second = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=extended_end
+    )
+
+    assert first[("AAPL", "XNAS")].status == "fetched"
+    assert second[("AAPL", "XNAS")].status == "cached"
+    assert polygon.calls == [("AAPL", _END, extended_end)]
+    assert storage.coverage[("AAPL", "XNAS", "polygon", "1m", False)] == (
+        _START,
+        extended_end,
+    )
+
+
+def test_empty_completed_range_is_reused_as_cached() -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    weekend_start = datetime(2026, 6, 6, 0, 0, tzinfo=timezone.utc)
+    weekend_end = datetime(2026, 6, 7, 23, 59, tzinfo=timezone.utc)
+    storage.coverage[("AAPL", "XNAS", "polygon", "1m", False)] = (
+        weekend_start,
+        weekend_end,
+    )
+
+    outcome = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=weekend_start, end=weekend_end
+    )[("AAPL", "XNAS")]
+
+    assert outcome.status == "cached"
+    assert outcome.failure_category is None
+    assert polygon.calls == []
+
+
+def test_interrupted_response_persists_partial_bars_without_advancing_coverage() -> None:
+    class _InterruptedClient(_CountingClient):
+        def fetch_historical_bars(self, symbol, *, interval, start, end):
+            self.calls.append((symbol.ticker, start, end))
+            raise HistoricalBarsFetchIncomplete(
+                "pagination stopped",
+                partial_bars=[_bar(self.provider, symbol.ticker, symbol.exchange_code, 0)],
+                cause=TimeoutError("page timed out"),
+            )
+
+    storage = _FakeStorage()
+    polygon = _InterruptedClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+
+    first = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )[("AAPL", "XNAS")]
+    service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )
+
+    assert first.status == "unavailable"
+    assert first.error_code == "TimeoutError"
+    assert len(storage.bars) == 2
+    assert storage.coverage == {}
+    assert len(polygon.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "coverage_key",
+    [
+        ("AAPL", "XNAS", "ibkr", "1m", False),
+        ("AAPL", "XNAS", "polygon", "5m", False),
+        ("AAPL", "XNYS", "polygon", "1m", False),
+        ("AAPL", "XNAS", "polygon", "1m", True),
+    ],
+    ids=["provider", "interval", "exchange", "adjusted"],
+)
+def test_incompatible_coverage_identity_is_not_reused(coverage_key) -> None:
+    storage = _FakeStorage()
+    polygon = _CountingClient(MarketDataProvider.POLYGON)
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    storage.coverage[coverage_key] = (_START, _END)
+
+    service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )
+
+    assert polygon.calls == [("AAPL", _START, _END)]
 
 
 def test_prefetch_reports_progress_and_dedupes() -> None:
@@ -433,11 +627,19 @@ def test_prefetch_reports_unavailable_when_provider_fetch_fails() -> None:
     assert "<redacted>" in outcome.error_message
     assert len(outcome.error_message) <= 300
     assert storage.fetch_runs[-1].status == "failed"
+    assert storage.coverage == {}
 
 
 def test_prefetch_distinguishes_no_configured_provider() -> None:
+    events: list[tuple[int, int, str, str]] = []
     outcomes = _service(_FakeStorage(), {}).prefetch_historical_bars(
-        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+        [("AAPL", "XNAS")],
+        interval="1m",
+        start=_START,
+        end=_END,
+        progress=lambda done, total, ticker, status: events.append(
+            (done, total, ticker, status)
+        ),
     )
 
     outcome = outcomes[("AAPL", "XNAS")]
@@ -448,6 +650,7 @@ def test_prefetch_distinguishes_no_configured_provider() -> None:
         MarketDataProvider.IBKR,
         MarketDataProvider.ALPHA_VANTAGE,
     )
+    assert events == [(1, 1, "AAPL", "unavailable")]
 
 
 def test_prefetch_distinguishes_missing_symbol_mapping() -> None:
@@ -470,15 +673,22 @@ def test_prefetch_distinguishes_successful_empty_response() -> None:
             return []
 
     polygon = _EmptyClient(MarketDataProvider.POLYGON)
-    outcomes = _service(
-        _FakeStorage(), {MarketDataProvider.POLYGON: polygon}
-    ).prefetch_historical_bars([("AAPL", "XNAS")], interval="1m", start=_START, end=_END)
+    storage = _FakeStorage()
+    service = _service(storage, {MarketDataProvider.POLYGON: polygon})
+    outcomes = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )
 
     outcome = outcomes[("AAPL", "XNAS")]
     assert outcome.failure_category == "empty_response"
     assert outcome.provider is MarketDataProvider.POLYGON
     assert outcome.error_code is None
     assert outcome.error_message is None
+    cached = service.prefetch_historical_bars(
+        [("AAPL", "XNAS")], interval="1m", start=_START, end=_END
+    )[("AAPL", "XNAS")]
+    assert cached.status == "cached"
+    assert len(polygon.calls) == 1
 
 
 def test_rate_limiter_spaces_provider_calls() -> None:

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.product_components.market_data.context import build_market_context
 from src.product_components.market_data.fundamentals_provider import FinnhubFundamentalsClient
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
 from src.product_components.market_data.models import (
     ContextSourceStatus,
     FetchRun,
@@ -30,7 +31,7 @@ from src.product_components.market_data.storage_adapter import PostgresMarketDat
 _US_EXCHANGES = {"XNAS", "XNYS"}
 
 # Progress callback: (done, total, ticker, status) where status is one of
-# "fetched" | "cached" | "skipped".
+# "fetched" | "cached" | "unavailable".
 PrefetchProgress = Callable[[int, int, str, str], None]
 
 _MAX_PROVIDER_ERROR_MESSAGE_LENGTH = 300
@@ -50,6 +51,7 @@ _REQUEST_HEADERS = re.compile(
 @dataclass(frozen=True)
 class _HistoricalBarsFetchResult:
     fetched_count: int | None
+    completed: bool
     error_code: str | None = None
     error_message: str | None = None
 
@@ -233,17 +235,23 @@ class MarketDataService:
             adjusted=False,
         )
         mapping = self._resolve_bars_mapping(ticker=ticker, exchange_code=exchange_code)
-        if mapping is not None and not self._is_covered(
-            stored, mapping=mapping, interval=interval, start=start, end=end
-        ):
+        coverage = (
+            self._load_coverage(mapping=mapping, interval=interval, adjusted=False)
+            if mapping is not None
+            else None
+        )
+        if mapping is not None and not _range_is_covered(coverage, start=start, end=end):
             client = self._provider_clients.get(mapping.provider)
             if client is not None:
+                fetch_start, fetch_end = _coverage_extension_range(
+                    coverage, start=start, end=end
+                )
                 self._fetch_historical_bars(
                     mapping,
                     client,
                     interval=interval,
-                    start=start,
-                    end=end,
+                    start=fetch_start,
+                    end=fetch_end,
                 )
                 stored = self._storage.load_bars_in_range(
                     ticker=ticker,
@@ -299,7 +307,7 @@ class MarketDataService:
                 any_configured = any(
                     provider in self._provider_clients for provider in considered
                 )
-                self._emit_progress(progress, index, total, ticker, "skipped")
+                self._emit_progress(progress, index, total, ticker, "unavailable")
                 outcomes[(ticker, exchange_code)] = HistoricalBarsPrefetchOutcome(
                     ticker=ticker,
                     exchange_code=exchange_code,
@@ -318,35 +326,35 @@ class MarketDataService:
                 end=requested_end,
                 adjusted=False,
             )
-            if self._is_covered(
-                stored,
-                mapping=mapping,
-                interval=interval,
-                start=start,
-                end=requested_end,
-            ):
+            coverage = self._load_coverage(
+                mapping=mapping, interval=interval, adjusted=False
+            )
+            if _range_is_covered(coverage, start=start, end=requested_end):
                 self._emit_progress(progress, index, total, ticker, "cached")
-                status = "cached" if stored else "unavailable"
                 outcomes[(ticker, exchange_code)] = HistoricalBarsPrefetchOutcome(
                     ticker=ticker,
                     exchange_code=exchange_code,
-                    status=status,
+                    status="cached",
                     provider=mapping.provider,
-                    failure_category=None if stored else "empty_response",
                     considered_providers=considered,
                 )
                 continue
             limiter.acquire()
+            fetch_start, fetch_end = _coverage_extension_range(
+                coverage, start=start, end=requested_end
+            )
             fetch_result = self._fetch_historical_bars(
                 mapping,
                 self._provider_clients[mapping.provider],
                 interval=interval,
-                start=start,
-                end=requested_end,
+                start=fetch_start,
+                end=fetch_end,
             )
             status = (
                 "fetched"
-                if fetch_result.fetched_count is not None and fetch_result.fetched_count > 0
+                if fetch_result.completed
+                and fetch_result.fetched_count is not None
+                and (fetch_result.fetched_count > 0 or bool(stored))
                 else "unavailable"
             )
             failure_category = None
@@ -484,29 +492,36 @@ class MarketDataService:
 
     def _is_covered(
         self,
-        bars: list[MarketBar],
+        bars: list[MarketBar] | None = None,
         *,
         mapping: ProviderSymbol,
         interval: str,
         start: datetime,
         end: datetime,
+        adjusted: bool = False,
     ) -> bool:
-        if bars:
-            earliest = min(bar.bar_start_at for bar in bars)
-            latest = max(bar.bar_start_at for bar in bars)
-            # A coverage-ledger entry records a provider request, not an assertion that
-            # every expected bar was returned.  In particular, an interrupted paged
-            # response can leave real bars before a gap while its ledger range extends
-            # beyond it.  Stored bars therefore take precedence whenever present: do
-            # not allow that ledger entry to conceal an incomplete range.
-            return earliest <= start and latest >= end
-        coverage = self._storage.load_bar_coverage(
+        # ``bars`` remains accepted for compatibility with existing callers; coverage
+        # completion, not literal bar endpoints, is authoritative.
+        del bars
+        coverage = self._load_coverage(
+            mapping=mapping, interval=interval, adjusted=adjusted
+        )
+        return _range_is_covered(coverage, start=start, end=end)
+
+    def _load_coverage(
+        self,
+        *,
+        mapping: ProviderSymbol,
+        interval: str,
+        adjusted: bool,
+    ) -> tuple[datetime, datetime] | None:
+        return self._storage.load_bar_coverage(
             ticker=mapping.ticker,
             exchange_code=mapping.exchange_code,
             provider=mapping.provider,
             bar_interval=interval,
+            adjusted=adjusted,
         )
-        return coverage is not None and coverage[0] <= start and coverage[1] >= end
 
     def _fetch_historical_bars(
         self,
@@ -543,9 +558,18 @@ class MarketDataService:
                 exchange_code=mapping.exchange_code,
                 provider=mapping.provider,
                 bar_interval=interval,
+                adjusted=False,
                 covered_start=start,
                 covered_end=end,
             )
+        except HistoricalBarsFetchIncomplete as exc:
+            partial_bars = [bar for bar in exc.partial_bars if isinstance(bar, MarketBar)]
+            self._storage.upsert_bars(partial_bars)
+            fetched_count = len(partial_bars)
+            status = "failed"
+            cause = exc.cause or exc
+            error_code = cause.__class__.__name__[:100]
+            error_message = _sanitize_provider_error(cause)
         except Exception as exc:  # pragma: no cover - exercised through service tests with broad failure behavior.
             status = "failed"
             error_code = exc.__class__.__name__[:100]
@@ -565,6 +589,7 @@ class MarketDataService:
         )
         return _HistoricalBarsFetchResult(
             fetched_count=fetched_count if status == "success" else None,
+            completed=status == "success",
             error_code=error_code,
             error_message=error_message,
         )
@@ -699,6 +724,37 @@ class MarketDataService:
                 fetched_count=fetched_count,
             )
         )
+
+
+def _range_is_covered(
+    coverage: tuple[datetime, datetime] | None,
+    *,
+    start: datetime,
+    end: datetime,
+) -> bool:
+    return coverage is not None and coverage[0] <= start and coverage[1] >= end
+
+
+def _coverage_extension_range(
+    coverage: tuple[datetime, datetime] | None,
+    *,
+    start: datetime,
+    end: datetime,
+) -> tuple[datetime, datetime]:
+    """Return one continuous provider range that safely extends the ledger.
+
+    Extending from the nearest covered boundary avoids re-fetching the known range.
+    For a disjoint request it also confirms the intervening gap before the storage
+    adapter merges the two endpoints into one coverage interval.
+    """
+    if coverage is None:
+        return start, end
+    covered_start, covered_end = coverage
+    if start < covered_start and end <= covered_end:
+        return start, covered_start
+    if start >= covered_start and end > covered_end:
+        return covered_end, end
+    return start, end
 
 
 class _RateLimiter:

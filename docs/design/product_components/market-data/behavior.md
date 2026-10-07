@@ -100,8 +100,8 @@ API behavior:
 - Returns normalized OHLCV bars for the canonical instrument identity (`ticker`, `exchange_code`) at
   the requested `interval` (for example `1m`, `5m`, `1d`), covering `[start, end]`.
 - On-demand backfill: if part of the requested range is not already stored, MarketData fetches the
-  missing sub-ranges from the provider (IBKR primary for intraday), persists them, then returns the
-  full requested range. Consumers never call external providers directly.
+  missing continuous extension from the provider (IBKR primary for intraday), persists it, then
+  returns the full requested range. Consumers never call external providers directly.
 - Provider pacing, failure classification, fetch-run records, and shared API usage accounting apply
   exactly as for the rest of MarketData.
 - If a sub-range cannot be retrieved, MarketData returns the bars it has and reports the missing
@@ -117,9 +117,20 @@ Historical bars are a permanent, reusable store, not a request cache:
 - This durability lets repeated backtests reuse previously fetched 1-minute history without
   re-querying providers. The rolling quote and derived-context cache semantics in Sections 3 and 4
   are unchanged; durability applies to the bar store.
-- A provider-request coverage record is only a fallback for ranges with no stored bars. When bars
-  exist but do not reach both requested boundaries, MarketData refetches the range rather than
-  allowing that record to conceal a partial historical response.
+- `t_market_bar_coverage` is the authority for whether a provider request range completed. Its
+  identity is (`ticker`, `exchange_code`, `provider`, `bar_interval`, `adjusted`), and a contained
+  request is reusable indefinitely; coverage has no TTL.
+- Coverage stores the requested wall-clock bounds, not the first and last returned bar. A completed
+  range therefore remains covered when its bars are sparse or empty because of weekends, exchange
+  holidays, pre-market or after-hours bounds, daylight-saving changes, or early closes. No synthetic
+  boundary bars are created.
+- Providers must complete every page/chunk before MarketData advances coverage. A failed, timed-out,
+  page-limited, or otherwise interrupted response is `unavailable`; bars from completed pages may be
+  retained, but they do not certify the unvisited part of the request. A later call retries from the
+  last authoritative coverage boundary.
+- Extending a covered request fetches the continuous uncovered extension. Disjoint requests include
+  the intervening gap before their endpoints are merged, so the single stored coverage interval
+  never claims a range the provider did not confirm.
 
 The bulk prefetch contract returns one `HistoricalBarsPrefetchOutcome` per canonical instrument.
 Every outcome contains `ticker`, `exchange_code`, and `status`; unavailable outcomes additionally
@@ -128,8 +139,9 @@ contain a stable `failure_category` (`no_provider_configured`, `no_symbol_mappin
 ordered `considered_providers`. Provider failures may include a bounded `error_code` and
 `error_message`. Error messages are whitespace-normalized, secret-redacted, and limited to 300
 characters before crossing the MarketData boundary. An empty successful provider response is
-reported as `empty_response`, never as `provider_error`, and routing failures never claim that a
-provider request occurred.
+reported as `empty_response`, never as `provider_error`, on its first fetch; a subsequent request
+contained by its persisted coverage is `cached` even though the range has no bars. Routing failures
+never claim that a provider request occurred.
 
 ### 4.3 Fundamentals read API
 

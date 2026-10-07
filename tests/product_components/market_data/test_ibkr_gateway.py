@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
 from src.product_components.market_data import ibkr_gateway
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
 from src.product_components.market_data.ibkr_gateway import (
     _BAR_SIZE_SETTING,
     IbAsyncMarketDataGateway,
@@ -60,14 +63,17 @@ def _parse_duration(duration_str: str) -> timedelta:
 class _FakeIB:
     """Returns the fake series bars falling within each requested backward window."""
 
-    def __init__(self, series: list[datetime]) -> None:
+    def __init__(self, series: list[datetime], *, fail_on_call: int | None = None) -> None:
         self._series = sorted(series)
+        self._fail_on_call = fail_on_call
         self.request_windows: list[tuple[datetime, str]] = []
 
     def reqHistoricalDataAsync(
         self, contract, *, endDateTime, durationStr, barSizeSetting, whatToShow, useRTH, formatDate
     ):
         self.request_windows.append((endDateTime, durationStr))
+        if self._fail_on_call == len(self.request_windows):
+            raise TimeoutError("IBKR page timed out")
         window_start = endDateTime - _parse_duration(durationStr)
         return [_FakeBar(dt, 10.0) for dt in self._series if window_start <= dt <= endDateTime]
 
@@ -115,18 +121,39 @@ def test_historical_bars_filters_out_of_range_bars(monkeypatch) -> None:
     assert [b["bar_start_at"] for b in bars] == [end]
 
 
-def test_historical_bars_returns_empty_when_contract_unresolved(monkeypatch) -> None:
+def test_historical_bars_interruption_returns_completed_page_bars(monkeypatch) -> None:
+    monkeypatch.setattr(ibkr_gateway.time, "sleep", lambda _s: None)
+    start = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 3, 11, 0, tzinfo=timezone.utc)
+    latest_bar = datetime(2026, 6, 3, 10, 0, tzinfo=timezone.utc)
+    gateway = _gateway_with_fake_ib(_FakeIB([latest_bar], fail_on_call=2))
+
+    with pytest.raises(HistoricalBarsFetchIncomplete) as raised:
+        gateway.historical_bars(
+            provider_symbol="AAPL",
+            interval="1m",
+            start=start,
+            end=end,
+            contract_metadata={},
+        )
+
+    assert raised.value.cause is not None
+    assert isinstance(raised.value.cause, TimeoutError)
+    assert [bar["bar_start_at"] for bar in raised.value.partial_bars] == [latest_bar]
+
+
+def test_historical_bars_is_incomplete_when_contract_unresolved(monkeypatch) -> None:
     gateway = IbAsyncMarketDataGateway(host="h", port=1, client_id=9)
     gateway._qualified_contract = lambda provider_symbol, contract_metadata: None  # type: ignore[assignment]
 
-    bars = gateway.historical_bars(
-        provider_symbol="AAPL",
-        interval="1m",
-        start=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        end=datetime(2026, 6, 2, tzinfo=timezone.utc),
-        contract_metadata={},
-    )
-    assert bars == []
+    with pytest.raises(HistoricalBarsFetchIncomplete):
+        gateway.historical_bars(
+            provider_symbol="AAPL",
+            interval="1m",
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 2, tzinfo=timezone.utc),
+            contract_metadata={},
+        )
 
 
 # --- build helper ------------------------------------------------------------
