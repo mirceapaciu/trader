@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a GitHub execution trigger against the project issue registry."""
+"""Validate a GitHub execution trigger against its project issue detail."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 PROJECT_ID = re.compile(r"(?im)^Project issue:\s*(\d{6}-\d{2})\s*$")
+ISSUE_STATUS = re.compile(r"(?im)^Status:\s*(new|resolved)\s*$")
 REQUIRED_SECTIONS = (
     "Problem Statement",
     "Verified Evidence",
@@ -23,17 +24,13 @@ def validate(repo: Path, issue_body: str) -> tuple[str, Path]:
     if len(ids) != 1:
         raise ValueError("GitHub issue must contain exactly one 'Project issue: YYMMDD-XX' line")
     issue_id = ids[0]
-    index = (repo / "docs/issues/issues-index.md").read_text(encoding="utf-8")
-    row = re.search(
-        rf"(?m)^\|\s*{re.escape(issue_id)}\s*\|.*\|\s*new\s*\|\s*([^|]+?)\s*\|$",
-        index,
-    )
-    if not row:
-        raise ValueError(f"{issue_id} is absent from the index or does not have status=new")
-    detail = repo / row.group(1).strip()
-    if not detail.is_file() or not detail.resolve().is_relative_to(repo.resolve()):
-        raise ValueError(f"Invalid or missing detail file for {issue_id}")
+    detail = repo / "docs/issues/issues-detail" / f"{issue_id}.md"
+    if not detail.is_file():
+        raise ValueError(f"Missing detail file for {issue_id}")
     content = detail.read_text(encoding="utf-8")
+    status = ISSUE_STATUS.search(content)
+    if not status or status.group(1).lower() != "new":
+        raise ValueError(f"{issue_id} detail file does not have status=new")
     missing = [heading for heading in REQUIRED_SECTIONS if f"## {heading}" not in content]
     if missing:
         raise ValueError(f"Detail file is missing sections: {', '.join(missing)}")
@@ -41,16 +38,17 @@ def validate(repo: Path, issue_body: str) -> tuple[str, Path]:
 
 
 def mark_resolved(repo: Path, issue_id: str) -> None:
-    """Mark one verified project issue resolved without changing other rows."""
-    index_path = repo / "docs/issues/issues-index.md"
-    index = index_path.read_text(encoding="utf-8")
-    row = re.compile(
-        rf"(?m)^(\|\s*{re.escape(issue_id)}\s*\|[^|]*\|)\s*new(\s*\|[^|]*\|)$"
+    """Mark one verified project issue detail resolved."""
+    detail = repo / "docs/issues/issues-detail" / f"{issue_id}.md"
+    if not detail.is_file():
+        raise ValueError(f"Missing detail file for {issue_id}")
+    content = detail.read_text(encoding="utf-8")
+    resolved_content, replacements = re.subn(
+        r"(?im)^(Status:\s*)new(\s*)$", r"\1resolved\2", content
     )
-    resolved_index, replacements = row.subn(r"\1 resolved\2", index)
     if replacements != 1:
-        raise ValueError(f"{issue_id} is absent from the index or does not have status=new")
-    index_path.write_text(resolved_index, encoding="utf-8")
+        raise ValueError(f"{issue_id} detail file does not have status=new")
+    detail.write_text(resolved_content, encoding="utf-8")
 
 
 def main() -> int:

@@ -154,14 +154,14 @@ Spawn a subagent for a subtask only when it benefits from isolation or paralleli
 
 ### Creating new issues for bugs or features
 
-If the user is explicitly requesting you to create an issue for a  bug fix or a feature, create an entry in docs/issues/issues-index.md with the status=new and a detail file under docs/issues/issues-detail with:
+If the user is explicitly requesting you to create an issue for a bug fix or a feature, create a detail file under `docs/issues/issues-detail` with `Status: new` and:
 - clear problem statement
 - verified evidence
 - expected behavior
 - acceptance criteria
 - test plan
 
-The issue ID is YYMMDD-XX, where YYMMDD is the creation date and XX is a sequential number for the day. For example, the first issue created on June 10, 2024 would be 240610-01. 
+The issue ID is YYMMDD-XX, where YYMMDD is the creation date and XX is the next unused sequential number among the detail files for that day. For example, the first issue created on June 10, 2024 would be 240610-01.
 
 ### Fixing the issue
 
@@ -170,7 +170,7 @@ When fixing an issue, update the corresponding detail file with:
 - the steps taken to resolve it
 - any remaining risks or follow-up actions
 
-Once the issue is fixed, update the status in issues-index.md to resolved.
+Once the issue is fixed and verified, update its detail file to `Status: resolved`.
 
 ## Change Discipline
 - Keep edits minimal and scoped to the requested task.
@@ -182,14 +182,13 @@ Write local temporary files under the `temp` folder
 
 ### GitHub-triggered issue implementation
 
-`docs/issues` on `main` is the authoritative project issue registry. GitHub
+The issue detail files under `docs/issues/issues-detail` on `main` are the authoritative project issue registry. GitHub
 Issues are execution triggers and do not introduce a separate project issue numbering scheme.
 
 Before a GitHub issue may receive the `codex:ready` label:
 
 - A `YYMMDD-XX` project issue must already exist on `main`.
-- `docs/issues/issues-index.md` must contain the issue with `status=new`.
-- Its detail file must contain the problem statement, verified evidence,
+- Its detail file must contain `Status: new`, the problem statement, verified evidence,
   expected behavior, acceptance criteria, and test plan.
 - The GitHub issue must identify the project issue using
   `Project issue: YYMMDD-XX`.
@@ -197,7 +196,7 @@ Before a GitHub issue may receive the `codex:ready` label:
 An automated run must:
 
 - Extract and validate the project issue IDs mentioned in the GitHub issue.
-- Refuse to proceed if the index entry or detail file of the relevant project issues do not exist on `main`.
+- Refuse to proceed if the relevant project issue detail file does not exist on `main` or does not have `Status: new`.
 - Use branch `codex/YYMMDD-XX`.
 - Reuse the same branch and pull request on retries.
 - Implement the requirements from the project issue detail. The GitHub issue may provide 
@@ -205,6 +204,5 @@ An automated run must:
   acceptance criteria.
 - Update the issue detail file with the root cause or implementation rationale,
   changes made, tests and results, remaining risks, and GitHub pull request.
-- Change the index status to `resolved` only when the implementation and
-  required verification are complete.
+- Change the detail file status to `resolved` only when the implementation and required verification are complete.
 - Use `Closes #<github-number>` in the pull request body.

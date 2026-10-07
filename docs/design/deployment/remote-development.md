@@ -98,11 +98,11 @@ to this host.
 ## Issue-to-PR workflow
 
 `.github/workflows/implement-issue.yml` runs only for the `codex:ready` label or
-a manual retry. It requires exactly one `Project issue: YYMMDD-XX` line, a `new`
-index entry on `main`, a matching detail file, and all required sections. It
+a manual retry. It requires exactly one `Project issue: YYMMDD-XX` line and a
+matching detail file on `main` with `Status: new` and all required sections. It
 creates or reuses `codex/YYMMDD-XX`, asks Codex to implement the detail, verifies
-the result outside Codex's sandbox, marks the project issue resolved only after
-that verification succeeds, and creates or updates one pull request.
+the result outside Codex's sandbox, changes the detail to `Status: resolved`
+only after that verification succeeds, and creates or updates one pull request.
 
 Configure the `CI / unit-and-frontend` check as a required branch-protection
 check and require human review before merging. A merge to `main` triggers the

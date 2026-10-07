@@ -134,7 +134,7 @@ jobs:
           DETAIL_FILE: ${{ steps.issue.outputs.detail_file }}
         run: |
           rm -f codex-output.md
-          grep -Eq "^\\|[[:space:]]*$PROJECT_ISSUE[[:space:]]*\\|.*\\|[[:space:]]*new[[:space:]]*\\|" docs/issues/issues-index.md
+          grep -Eqi '^Status:[[:space:]]*new[[:space:]]*$' "$DETAIL_FILE"
           grep -q '^## Tests and Results' "$DETAIL_FILE"
           uv sync --frozen
           uv run pytest -m "not integration"

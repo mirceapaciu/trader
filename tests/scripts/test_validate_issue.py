@@ -9,9 +9,10 @@ def _registry(tmp_path: Path, *, status: str = "new", sections: bool = True) -> 
     detail = tmp_path / "docs/issues/issues-detail/260910-01.md"
     detail.parent.mkdir(parents=True)
     headings = ["Problem Statement", "Verified Evidence", "Expected Behavior", "Acceptance Criteria", "Test Plan"]
-    detail.write_text("\n".join(f"## {heading}\nvalue" for heading in headings if sections or heading != "Test Plan"))
-    (tmp_path / "docs/issues/issues-index.md").write_text(
-        f"| id | title | status | detail_file |\n| 260910-01 | Test | {status} | docs/issues/issues-detail/260910-01.md |\n"
+    detail.write_text(
+        f"# 260910-01 Test\n\nStatus: {status}\n\n"
+        + "\n".join(f"## {heading}\nvalue" for heading in headings if sections or heading != "Test Plan"),
+        encoding="utf-8",
     )
     return tmp_path
 
@@ -43,8 +44,8 @@ def test_mark_resolved_updates_only_a_new_matching_issue(tmp_path: Path) -> None
 
     mark_resolved(repo, "260910-01")
 
-    index = (repo / "docs/issues/issues-index.md").read_text(encoding="utf-8")
-    assert "| 260910-01 | Test | resolved |" in index
+    detail = (repo / "docs/issues/issues-detail/260910-01.md").read_text(encoding="utf-8")
+    assert "Status: resolved" in detail
 
 
 def test_mark_resolved_rejects_already_resolved_issue(tmp_path: Path) -> None:
@@ -58,7 +59,7 @@ def test_issue_workflow_marks_resolved_only_after_verification() -> None:
     resolve_start = workflow.index("- name: Mark verified project issue resolved")
 
     assert verify_start < resolve_start
-    assert "[[:space:]]*new[[:space:]]*" in workflow[verify_start:resolve_start]
+    assert "^Status:[[:space:]]*new[[:space:]]*$" in workflow[verify_start:resolve_start]
     assert "--mark-resolved" in workflow[resolve_start:]
 
 
