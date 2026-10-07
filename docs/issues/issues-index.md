@@ -58,3 +58,4 @@
 | 260913-01 | Include data-source failure details in backtest historical-market-data errors | resolved | docs/issues/issues-detail/260913-01.md |
 | 260915-01 | Show exact conditions and thresholds for blocked backtest candidates | resolved | docs/issues/issues-detail/260915-01.md |
 | 260929-01 | Let backtest trades run past the card-selection window through their strategy horizon | resolved | docs/issues/issues-detail/260929-01.md |
+| 261007-01 | Reuse historical market-data cache across non-trading periods | new | docs/issues/issues-detail/261007-01.md |
