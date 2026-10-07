@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
 from src.product_components.market_data.models import MarketDataProvider, QuoteDataType
 from src.product_components.market_data.provider_symbols import default_provider_symbol
 from src.product_components.market_data.providers import (
@@ -179,6 +180,89 @@ def test_polygon_fetch_quote_hits_prev_close_endpoint(monkeypatch: pytest.Monkey
     assert quote.last_price == 210.5
     assert seen["url"].endswith("/v2/aggs/ticker/AAPL/prev")
     assert seen["params"]["apiKey"] == "test-key"
+
+
+def test_polygon_interrupted_pagination_exposes_completed_page_bars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    symbol = default_provider_symbol(
+        ticker="AAPL", exchange_code="XNAS", provider=MarketDataProvider.POLYGON
+    )
+    responses = iter(
+        [
+            {
+                "results": [
+                    {
+                        "t": 1780061400000,
+                        "o": 10.0,
+                        "h": 11.0,
+                        "l": 9.5,
+                        "c": 10.5,
+                        "v": 12345,
+                    }
+                ],
+                "next_url": "https://api.polygon.io/next-page",
+            }
+        ]
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return next(responses)
+
+    calls = 0
+
+    def _fake_get(url, *, params, timeout):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise TimeoutError("second page timed out")
+        return _Response()
+
+    monkeypatch.setattr("src.product_components.market_data.providers.requests.get", _fake_get)
+
+    with pytest.raises(HistoricalBarsFetchIncomplete) as raised:
+        PolygonClient(api_key="test-key").fetch_historical_bars(
+            symbol,
+            interval="1m",
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 2, tzinfo=timezone.utc),
+        )
+
+    assert isinstance(raised.value.cause, TimeoutError)
+    assert len(raised.value.partial_bars) == 1
+
+
+def test_polygon_error_payload_is_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    symbol = default_provider_symbol(
+        ticker="AAPL", exchange_code="XNAS", provider=MarketDataProvider.POLYGON
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {"status": "ERROR", "error": "provider rejected the request"}
+
+    monkeypatch.setattr(
+        "src.product_components.market_data.providers.requests.get",
+        lambda url, *, params, timeout: _Response(),
+    )
+
+    with pytest.raises(HistoricalBarsFetchIncomplete) as raised:
+        PolygonClient(api_key="test-key").fetch_historical_bars(
+            symbol,
+            interval="1m",
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 2, tzinfo=timezone.utc),
+        )
+
+    assert isinstance(raised.value.cause, RuntimeError)
+    assert raised.value.partial_bars == []
 
 
 def test_polygon_symbol_supports_us_and_rejects_non_us() -> None:

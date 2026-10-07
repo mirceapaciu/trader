@@ -73,6 +73,28 @@ Behavioral constraints:
   (`get_historical_bars`), which backfills missing ranges on demand; consumers must not read this
   table directly.
 
+### `t_market_bar_coverage`
+
+Purpose:
+- Durable ledger of provider ranges whose complete paginated response was confirmed, including
+  successfully completed ranges with no bars.
+
+Logical fields:
+- `ticker`, `exchange_code`, `provider`, `bar_interval`, `adjusted`: coverage identity, matching the
+  compatibility dimensions of historical bars.
+- `covered_start`, `covered_end`: inclusive requested wall-clock bounds confirmed by the provider.
+- `fetched_at`: time the coverage interval was last extended.
+
+Behavioral constraints:
+- A contained range is authoritative regardless of whether stored bars touch its literal endpoints;
+  non-trading periods and session boundaries are expected gaps.
+- Coverage advances only after every provider page or chunk completes. Partial completed-page bars
+  may be retained after an interruption, but the failed request does not extend this ledger.
+- Coverage is permanent and has no application TTL. Explicit data-retention or invalidation work
+  must remove both compatible bars and their coverage record.
+- The current physical representation stores one continuous interval per identity. Extension and
+  disjoint fetches confirm the continuous gap before merging endpoints.
+
 ### `t_market_context_snapshots`
 
 Purpose:

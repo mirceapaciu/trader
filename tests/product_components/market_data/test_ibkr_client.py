@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
 from src.product_components.market_data.models import MarketDataProvider, QuoteDataType
 from src.product_components.market_data.provider_symbols import default_provider_symbol
 from src.product_components.market_data.providers import IbkrClient
@@ -47,17 +50,18 @@ def test_is_available_reflects_gateway_state() -> None:
     assert IbkrClient(gateway=_FakeGateway(connected=True, raw=[])).is_available() is True
 
 
-def test_fetch_historical_bars_returns_empty_without_gateway() -> None:
+def test_fetch_historical_bars_is_incomplete_without_gateway() -> None:
     symbol = default_provider_symbol(
         ticker="RHM", exchange_code="XETR", provider=MarketDataProvider.IBKR
     )
     client = IbkrClient(gateway=None)
-    assert client.fetch_historical_bars(
-        symbol,
-        interval="1m",
-        start=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        end=datetime(2026, 6, 2, tzinfo=timezone.utc),
-    ) == []
+    with pytest.raises(HistoricalBarsFetchIncomplete):
+        client.fetch_historical_bars(
+            symbol,
+            interval="1m",
+            start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 6, 2, tzinfo=timezone.utc),
+        )
 
 
 def test_fetch_historical_bars_normalizes_gateway_bars() -> None:
@@ -87,6 +91,44 @@ def test_fetch_historical_bars_normalizes_gateway_bars() -> None:
     # The gateway is handed the provider symbol string and its IBKR contract metadata.
     assert gateway.calls[0]["provider_symbol"] == "RHM"
     assert gateway.calls[0]["contract_metadata"]["currency"] == "EUR"
+
+
+def test_fetch_historical_bars_normalizes_partial_bars_on_interruption() -> None:
+    symbol = default_provider_symbol(
+        ticker="RHM", exchange_code="XETR", provider=MarketDataProvider.IBKR
+    )
+    bar_start = datetime(2026, 6, 1, 9, 30, tzinfo=timezone.utc)
+    raw_bar = {
+        "bar_start_at": bar_start,
+        "open": 10.0,
+        "high": 11.0,
+        "low": 9.5,
+        "close": 10.5,
+        "volume": 1000,
+    }
+
+    class _InterruptedGateway(_FakeGateway):
+        def historical_bars(self, **kwargs):
+            raise HistoricalBarsFetchIncomplete(
+                "page interrupted",
+                partial_bars=[raw_bar],
+                cause=TimeoutError("timed out"),
+            )
+
+    client = IbkrClient(gateway=_InterruptedGateway(connected=True, raw=[]))
+
+    with pytest.raises(HistoricalBarsFetchIncomplete) as raised:
+        client.fetch_historical_bars(
+            symbol,
+            interval="1m",
+            start=bar_start,
+            end=bar_start,
+        )
+
+    assert isinstance(raised.value.cause, TimeoutError)
+    assert len(raised.value.partial_bars) == 1
+    assert raised.value.partial_bars[0].provider is MarketDataProvider.IBKR
+    assert raised.value.partial_bars[0].bar_start_at == bar_start
 
 
 def _quote_symbol():

@@ -118,6 +118,35 @@ def test_record_api_usage_uses_shared_usage_writer() -> None:
     assert usage_writer.calls == [("ibkr", "quote", called_at)]
 
 
+def test_bar_coverage_upsert_includes_adjustment_mode_in_identity(monkeypatch) -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    adapter = PostgresMarketDataStorageAdapter(
+        dsn="unused",
+        market_data_schema="market_data",
+        instrument_registry=_FakeInstrumentRegistry(),
+        api_usage_writer=_FakeApiUsageWriter(),
+    )
+    monkeypatch.setattr(adapter, "_connect", lambda: connection)
+    start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 2, tzinfo=timezone.utc)
+
+    adapter.upsert_bar_coverage(
+        ticker="AAPL",
+        exchange_code="XNAS",
+        provider=MarketDataProvider.POLYGON,
+        bar_interval="1m",
+        adjusted=True,
+        covered_start=start,
+        covered_end=end,
+    )
+
+    assert cursor.sql is not None
+    assert "ON CONFLICT (ticker, exchange_code, provider, bar_interval, adjusted)" in cursor.sql
+    assert cursor.params == ("AAPL", "XNAS", "polygon", "1m", True, start, end)
+    assert connection.committed is True
+
+
 def _adapter(monkeypatch, cursor: _FakeCursor, *, latest=None) -> PostgresMarketDataStorageAdapter:
     connection = _FakeConnection(cursor)
     adapter = PostgresMarketDataStorageAdapter(
