@@ -29,6 +29,8 @@ from typing import Any, Callable
 
 from ib_async import IB, Stock
 
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
+
 LOGGER = logging.getLogger("market_data.ibkr")
 
 # Interval -> IBKR ``barSizeSetting`` string.
@@ -187,9 +189,11 @@ class IbAsyncMarketDataGateway:
     ) -> list[dict[str, Any]]:
         """Fetch OHLCV bars in ``[start, end]`` as raw dicts for ``normalize_ibkr_historical_bars``.
 
-        Best-effort: returns whatever was gathered and never raises into the warmup path. The
-        range is walked backward from ``end`` in per-interval chunks; each returned batch's
-        earliest bar becomes the next request's end, so the whole window is paged with dedupe.
+        The range is walked backward from ``end`` in bounded per-interval chunks. A successful
+        request confirms its entire chunk even when it contains no bars, so closed sessions are
+        traversed without being mistaken for the beginning of available history.
+        An interrupted walk raises with completed-page bars so they remain reusable without
+        falsely certifying the unvisited part of the range.
         """
         bar_size = _BAR_SIZE_SETTING.get(interval)
         if bar_size is None:
@@ -201,7 +205,7 @@ class IbAsyncMarketDataGateway:
 
         contract = self._qualified_contract(provider_symbol, contract_metadata)
         if contract is None:
-            return []
+            raise HistoricalBarsFetchIncomplete("IBKR contract could not be resolved")
 
         chunk = _CHUNK_DURATION[interval]
         collected: dict[datetime, dict[str, Any]] = {}
@@ -224,13 +228,22 @@ class IbAsyncMarketDataGateway:
                     ),
                     timeout=_REQUEST_TIMEOUT_SECONDS,
                 )
-            except Exception:
+            except Exception as cause:
                 LOGGER.exception(
                     "IBKR historical fetch failed for %s %s ending %s", provider_symbol, interval, cursor
                 )
-                break
+                exc = HistoricalBarsFetchIncomplete(
+                    "IBKR historical-bar pagination was interrupted",
+                    partial_bars=collected.values(),
+                    cause=cause,
+                )
+                raise exc from cause
             if not raw_bars:
-                break
+                # An empty chunk can be a weekend or holiday. The request still
+                # confirmed that chunk, so continue walking toward the start.
+                cursor = window_start
+                time.sleep(_PACING_SLEEP_SECONDS)
+                continue
 
             earliest: datetime | None = None
             for raw in raw_bars:
@@ -247,12 +260,19 @@ class IbAsyncMarketDataGateway:
                         "close": float(raw.close),
                         "volume": float(raw.volume) if getattr(raw, "volume", None) is not None else None,
                     }
-            if earliest is None or earliest >= cursor:
-                # No forward progress (would loop forever) — stop.
-                break
-            cursor = earliest
+            if earliest is None:
+                raise HistoricalBarsFetchIncomplete(
+                    "IBKR historical-bar response contained no valid timestamps",
+                    partial_bars=collected.values(),
+                )
+            cursor = window_start
             time.sleep(_PACING_SLEEP_SECONDS)
 
+        if cursor > start:
+            raise HistoricalBarsFetchIncomplete(
+                "IBKR historical-bar pagination exceeded the chunk limit",
+                partial_bars=collected.values(),
+            )
         return sorted(collected.values(), key=lambda bar: bar["bar_start_at"])
 
     # --- quote snapshot --------------------------------------------------------

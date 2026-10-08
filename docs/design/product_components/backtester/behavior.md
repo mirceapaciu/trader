@@ -446,6 +446,12 @@ Producer components and required read contracts:
   reads during simulation use the same per-instrument boundary. Post-selection-window price bars are
   execution inputs only: they do not expand the selected card population or introduce later evidence
   or reversal cards.
+- Warmup always performs the MarketData availability check and reports each instrument as `cached`,
+  `fetched`, or `unavailable`. MarketData's durable coverage ledger is authoritative for repeated or
+  contained bounds, so weekend, holiday, daylight-saving, early-close, and outside-session endpoints
+  do not trigger provider calls merely because no bar exists at the literal boundary. Only a
+  successfully completed provider response advances coverage; interrupted pagination remains
+  `unavailable` even when completed-page bars were retained.
 - In regeneration mode the Backtester invokes ThesisBuilder analysis through a ThesisBuilder-owned
   replay entry point with an immutable, run-scoped config snapshot; it must not mutate global
   ThesisBuilder configuration or production tables.

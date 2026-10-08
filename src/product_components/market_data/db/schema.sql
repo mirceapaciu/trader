@@ -87,13 +87,48 @@ CREATE TABLE IF NOT EXISTS market_data.t_market_bar_coverage (
     exchange_code TEXT NOT NULL,
     provider TEXT NOT NULL,
     bar_interval TEXT NOT NULL,
+    adjusted BOOLEAN NOT NULL DEFAULT FALSE,
     covered_start TIMESTAMPTZ NOT NULL,
     covered_end TIMESTAMPTZ NOT NULL,
     fetched_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (ticker, exchange_code, provider, bar_interval),
+    PRIMARY KEY (ticker, exchange_code, provider, bar_interval, adjusted),
     CONSTRAINT ck_market_bar_coverage_interval
         CHECK (bar_interval IN ('1m', '5m', '15m', '30m', '1h', '1d'))
 );
+
+-- Existing installations predate adjustment mode in the coverage identity.
+ALTER TABLE market_data.t_market_bar_coverage
+    ADD COLUMN IF NOT EXISTS adjusted BOOLEAN NOT NULL DEFAULT FALSE;
+
+DO $$
+DECLARE
+    coverage_primary_key_name TEXT;
+BEGIN
+    SELECT conname
+    INTO coverage_primary_key_name
+    FROM pg_constraint
+    WHERE conrelid = 'market_data.t_market_bar_coverage'::regclass
+      AND contype = 'p';
+
+    IF coverage_primary_key_name IS NULL THEN
+        ALTER TABLE market_data.t_market_bar_coverage
+            ADD PRIMARY KEY (ticker, exchange_code, provider, bar_interval, adjusted);
+    ELSIF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'market_data.t_market_bar_coverage'::regclass
+          AND contype = 'p'
+          AND pg_get_constraintdef(oid) LIKE '%adjusted%'
+    ) THEN
+        EXECUTE format(
+            'ALTER TABLE market_data.t_market_bar_coverage DROP CONSTRAINT %I',
+            coverage_primary_key_name
+        );
+        ALTER TABLE market_data.t_market_bar_coverage
+            ADD PRIMARY KEY (ticker, exchange_code, provider, bar_interval, adjusted);
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS market_data.t_market_context_snapshots (
     ticker TEXT NOT NULL,

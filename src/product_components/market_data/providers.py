@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from src.product_components.market_data.historical_bars import HistoricalBarsFetchIncomplete
 from src.product_components.market_data.models import (
     MarketBar,
     MarketDataProvider,
@@ -39,6 +40,11 @@ class MarketDataProviderClient(Protocol):
         start: datetime,
         end: datetime,
     ) -> list[MarketBar]:
+        """Return bars only after the whole range completes.
+
+        Raise ``HistoricalBarsFetchIncomplete`` with any completed-page bars when
+        pagination stops early.
+        """
         ...
 
 
@@ -81,8 +87,11 @@ class AlphaVantageClient:
         start: datetime,
         end: datetime,
     ) -> list[MarketBar]:
-        # Alpha Vantage is daily-only backfill; intraday historical bars come from IBKR.
-        return []
+        # Alpha Vantage is not a bounded historical-bars source in this component.
+        # An unsupported route must not certify an empty range as complete.
+        raise HistoricalBarsFetchIncomplete(
+            f"Alpha Vantage bounded historical bars are unsupported for {interval}"
+        )
 
 
 _POLYGON_TIMESPAN: dict[str, tuple[int, str]] = {
@@ -157,7 +166,7 @@ class PolygonClient:
         end: datetime,
     ) -> list[MarketBar]:
         if not self._api_key.strip():
-            return []
+            raise HistoricalBarsFetchIncomplete("Polygon API key is unavailable")
         timespan = _POLYGON_TIMESPAN.get(interval)
         if timespan is None:
             raise ValueError(f"unsupported_polygon_interval:{interval}")
@@ -176,26 +185,42 @@ class PolygonClient:
         }
         fetched_at = datetime.now(timezone.utc)
         bars: list[MarketBar] = []
-        # Follow ``next_url`` pagination; cap iterations to avoid runaway loops.
-        for _ in range(100):
-            response = requests.get(url, params=params, timeout=self._timeout_seconds)
-            response.raise_for_status()
-            payload = response.json()
-            bars.extend(
-                normalize_polygon_bars(
-                    payload,
-                    symbol=symbol,
-                    interval=interval,
-                    fetched_at=fetched_at,
+        # Follow ``next_url`` pagination. A page failure retains completed pages but
+        # cannot certify the requested range in the coverage ledger.
+        try:
+            for _ in range(100):
+                response = requests.get(url, params=params, timeout=self._timeout_seconds)
+                response.raise_for_status()
+                payload = response.json()
+                response_status = str(payload.get("status") or "OK").upper()
+                if response_status not in {"OK", "DELAYED"}:
+                    raise RuntimeError(
+                        f"Polygon historical-bar response status was {response_status}"
+                    )
+                bars.extend(
+                    normalize_polygon_bars(
+                        payload,
+                        symbol=symbol,
+                        interval=interval,
+                        fetched_at=fetched_at,
+                    )
                 )
-            )
-            next_url = payload.get("next_url")
-            if not next_url:
-                break
-            url = next_url
-            # ``next_url`` already carries the query string; only the key must be re-added.
-            params = {"apiKey": self._api_key}
-        return sorted(bars, key=lambda bar: bar.bar_start_at)
+                next_url = payload.get("next_url")
+                if not next_url:
+                    return sorted(bars, key=lambda bar: bar.bar_start_at)
+                url = next_url
+                # ``next_url`` already carries the query string; only the key must be re-added.
+                params = {"apiKey": self._api_key}
+        except Exception as exc:
+            raise HistoricalBarsFetchIncomplete(
+                "Polygon historical-bar pagination was interrupted",
+                partial_bars=bars,
+                cause=exc,
+            ) from exc
+        raise HistoricalBarsFetchIncomplete(
+            "Polygon historical-bar pagination exceeded the page limit",
+            partial_bars=bars,
+        )
 
 
 # IBKR ``marketDataType`` (from ``reqMarketDataType``) -> our freshness classification.
@@ -280,14 +305,25 @@ class IbkrClient:
         end: datetime,
     ) -> list[MarketBar]:
         if self._gateway is None:
-            return []
-        raw_bars = self._gateway.historical_bars(
-            provider_symbol=symbol.provider_symbol,
-            interval=interval,
-            start=start,
-            end=end,
-            contract_metadata=symbol.provider_metadata,
-        )
+            raise HistoricalBarsFetchIncomplete("IBKR gateway is unavailable")
+        try:
+            raw_bars = self._gateway.historical_bars(
+                provider_symbol=symbol.provider_symbol,
+                interval=interval,
+                start=start,
+                end=end,
+                contract_metadata=symbol.provider_metadata,
+            )
+        except HistoricalBarsFetchIncomplete as exc:
+            partial = normalize_ibkr_historical_bars(
+                exc.partial_bars,
+                symbol=symbol,
+                interval=interval,
+                fetched_at=datetime.now(timezone.utc),
+            )
+            raise HistoricalBarsFetchIncomplete(
+                str(exc), partial_bars=partial, cause=exc.cause
+            ) from exc
         fetched_at = datetime.now(timezone.utc)
         return normalize_ibkr_historical_bars(
             raw_bars,
