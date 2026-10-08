@@ -1054,6 +1054,33 @@ class PostgresRedisMonitoringDataSource:
                 return 0
             return int(cur.rowcount or 0)
 
+    def mark_orphaned_in_process_runs_failed(self) -> tuple[int, int]:
+        """Fail work whose in-process runners disappeared during a UI restart."""
+        statements = (
+            (
+                f"UPDATE {self._filter_quality_schema}.t_filter_quality_runs "
+                "SET status = 'failed', finished_at = NOW(), error_code = 'orphaned_on_restart', "
+                "error_details_json = '{\"reason\": \"monitoring_ui_restarted\"}'::jsonb "
+                "WHERE status = 'running'"
+            ),
+            (
+                f"UPDATE {self._backtester_schema}.t_backtest_runs "
+                "SET status = 'failed', finished_at = NOW(), error_code = 'orphaned_on_restart', "
+                "error_details_json = '{\"reason\": \"monitoring_ui_restarted\"}'::jsonb "
+                "WHERE status = 'running'"
+            ),
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            try:
+                counts: list[int] = []
+                for sql in statements:
+                    cur.execute(sql)
+                    counts.append(int(cur.rowcount or 0))
+                conn.commit()
+            except (errors.InvalidSchemaName, errors.UndefinedTable):
+                return (0, 0)
+        return (counts[0], counts[1])
+
     def list_backtest_runs(self, *, window_start_at: datetime) -> list["BacktestRunRow"]:
         sql = (
             f"SELECT {_BACKTEST_RUN_COLUMNS} "

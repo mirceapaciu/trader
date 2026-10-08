@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from datetime import datetime
@@ -275,7 +277,18 @@ def create_app(
         backtest_runner=BacktestRunCoordinator(),
     )
 
-    app = FastAPI(title="Trader Monitoring UI API")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        filter_quality_count, backtest_count = service.mark_orphaned_in_process_runs_failed()
+        if filter_quality_count or backtest_count:
+            logger.warning(
+                "marked orphaned in-process runs failed after restart: filter_quality=%s backtest=%s",
+                filter_quality_count,
+                backtest_count,
+            )
+        yield
+
+    app = FastAPI(title="Trader Monitoring UI API", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=_local_dev_origin_regex(),

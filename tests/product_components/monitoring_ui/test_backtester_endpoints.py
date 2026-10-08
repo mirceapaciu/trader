@@ -145,6 +145,9 @@ class FakeBacktestDataSource:
         self.last_trade_filters: dict | None = None
         self.window_start_at: datetime | None = None
 
+    def mark_orphaned_in_process_runs_failed(self) -> tuple[int, int]:
+        return (0, 0)
+
     def list_backtest_runs(self, *, window_start_at: datetime):
         if self.unavailable:
             raise BacktesterTablesUnavailable("missing")

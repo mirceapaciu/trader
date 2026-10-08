@@ -51,12 +51,27 @@ def test_frontend_dist_is_served_when_present(monkeypatch, tmp_path) -> None:
     assert client.get("/api/not-found").status_code == 404
 
 
+def test_startup_marks_orphaned_in_process_runs_failed(monkeypatch) -> None:
+    data_source = FakeMonitoringDataSource()
+    monkeypatch.setattr(
+        app_module,
+        "PostgresRedisMonitoringDataSource",
+        lambda **kwargs: data_source,
+    )
+
+    with TestClient(create_app(settings=_settings())):
+        pass
+
+    assert data_source.orphaned_run_cleanup_calls == 1
+
+
 class FakeMonitoringDataSource:
     def __init__(self, **_: object) -> None:
         self.window: str | None = None
         self.start_at: datetime | None = None
         self.end_at: datetime | None = None
         self.incorrectly_accepted_run_id: str | None = None
+        self.orphaned_run_cleanup_calls = 0
 
     def bootstrap_news_schema(self, **_: object) -> None:
         return None
@@ -181,6 +196,10 @@ class FakeMonitoringDataSource:
 
     def mark_stale_filter_quality_runs_failed(self, *, timeout_seconds: int) -> int:
         return 0
+
+    def mark_orphaned_in_process_runs_failed(self) -> tuple[int, int]:
+        self.orphaned_run_cleanup_calls += 1
+        return (0, 0)
 
     def get_filter_quality_status(self):
         raise AssertionError("get_filter_quality_status should not be called in throughput endpoint tests")

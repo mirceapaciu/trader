@@ -211,6 +211,8 @@ class MonitoringDataSource(Protocol):
 
     def mark_stale_filter_quality_runs_failed(self, *, timeout_seconds: int) -> int: ...
 
+    def mark_orphaned_in_process_runs_failed(self) -> tuple[int, int]: ...
+
     def list_backtest_runs(self, *, window_start_at: datetime) -> list[BacktestRunRow]: ...
 
     def get_active_backtest_run(self) -> BacktestRunRow | None: ...
@@ -971,6 +973,14 @@ class MonitoringService:
             raise RuntimeError("taxonomy_decision_gateway_unavailable")
         command = self._taxonomy_decision_gateway.get(command_id=command_id)
         return _taxonomy_command_response(command) if command else None
+
+    def mark_orphaned_in_process_runs_failed(self) -> tuple[int, int]:
+        """Fail persisted runs that cannot survive this process starting anew."""
+        try:
+            return self._data_source.mark_orphaned_in_process_runs_failed()
+        except _INFRASTRUCTURE_ERRORS:
+            logger.warning("could not mark orphaned in-process runs failed at startup")
+            return (0, 0)
 
     def get_backtests(self, *, window: str | None) -> BacktestRunsResponse:
         selected_window = _normalize_throughput_window(window or self._settings.ui_default_time_window)
