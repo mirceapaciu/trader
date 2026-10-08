@@ -1070,15 +1070,16 @@ class PostgresRedisMonitoringDataSource:
                 "WHERE status = 'running'"
             ),
         )
-        with self._connect() as conn, conn.cursor() as cur:
+        counts: list[int] = []
+        for sql in statements:
             try:
-                counts: list[int] = []
-                for sql in statements:
+                # Filter-quality evaluation is optional in some deployments.  Its
+                # missing table must not prevent recovery of a backtest runner.
+                with self._connect() as conn, conn.cursor() as cur:
                     cur.execute(sql)
                     counts.append(int(cur.rowcount or 0))
-                conn.commit()
             except (errors.InvalidSchemaName, errors.UndefinedTable):
-                return (0, 0)
+                counts.append(0)
         return (counts[0], counts[1])
 
     def list_backtest_runs(self, *, window_start_at: datetime) -> list["BacktestRunRow"]:

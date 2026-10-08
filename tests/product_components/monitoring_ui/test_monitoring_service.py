@@ -1070,6 +1070,53 @@ def test_get_thesis_card_articles_forwards_card_id() -> None:
     assert response.card_id == "card-1"
 
 
+def test_repository_recovers_backtests_when_filter_quality_table_is_unavailable(monkeypatch) -> None:
+    repository = PostgresRedisMonitoringDataSource(
+        dsn="",
+        news_schema="news_fetcher",
+        filter_quality_schema="filter_quality_evaluator",
+        thesis_builder_schema="thesis_builder",
+        queue_url="redis://localhost:6379/0",
+        news_raw_queue="news_raw_queue",
+        failed_messages_dlq="failed_messages_dlq",
+        query_timeout_seconds=1,
+    )
+
+    class _Cursor:
+        def __init__(self, *, table_available: bool) -> None:
+            self._table_available = table_available
+            self.rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql):
+            if not self._table_available:
+                raise psycopg.errors.UndefinedTable()
+            self.rowcount = 1
+
+    class _Connection:
+        def __init__(self, *, table_available: bool) -> None:
+            self._cursor = _Cursor(table_available=table_available)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self._cursor
+
+    connections = iter((_Connection(table_available=False), _Connection(table_available=True)))
+    monkeypatch.setattr(repository, "_connect", lambda: next(connections))
+
+    assert repository.mark_orphaned_in_process_runs_failed() == (0, 1)
+
+
 def test_repository_includes_corroboration_articles_in_thesis_card_details(monkeypatch) -> None:
     repository = PostgresRedisMonitoringDataSource(
         dsn="",
