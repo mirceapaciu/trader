@@ -136,7 +136,7 @@ class BacktestRunParams:
     run_note: str | None = None
     # Regeneration mode only: the OpenAI model used to re-run ThesisBuilder
     # analysis. Ignored in replay mode. Defaults to the production model.
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gpt-6-luna"
     llm_max_tokens_per_run: int = 500000
     # Regeneration mode only. None selects and records the latest committed
     # event taxonomy revision; an integer enables exact historical replay.

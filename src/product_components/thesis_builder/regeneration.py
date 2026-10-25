@@ -56,11 +56,11 @@ class RegenerationThresholds:
     listicle_prefilter_enabled: bool = False
     listicle_prefilter_tag_threshold: int = 6
     synthesis_enabled: bool = False
-    synthesis_model: str = "gpt-4o-mini"
+    synthesis_model: str = "gpt-6-luna"
     synthesis_max_output_tokens: int = 1200
     synthesis_fallback_to_mechanical: bool = False
     story_scoping_enabled: bool = False
-    story_assignment_model: str = "gpt-4o-mini"
+    story_assignment_model: str = "gpt-6-luna"
     story_assignment_max_output_tokens: int = 120
     already_priced_event_driven_atr_multiple: float = 1.5
     already_priced_event_driven_return_threshold: float = 0.04

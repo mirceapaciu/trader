@@ -188,7 +188,7 @@ Discipline:
 
 ## 5. Stage 4 — Ex-ante judging
 
-The agent judges card and analysis quality independently of the generation model (gpt-4o-mini).
+The agent judges card and analysis quality independently of the generation model (gpt-6-luna).
 
 **Sampling:** from closed live-executable trades — 15 worst by net P&L, 10 best, 15 random;
 stratum recorded; headline aggregates computed on the random stratum.

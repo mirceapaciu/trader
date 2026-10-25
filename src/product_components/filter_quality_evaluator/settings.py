@@ -54,7 +54,7 @@ class FilterQualityEvaluatorSettings:
             accepted_audit_enabled=_bool_env("FILTER_QUALITY_ACCEPTED_AUDIT_ENABLED", False),
             accepted_audit_sample_size=_int_env("FILTER_QUALITY_ACCEPTED_AUDIT_SAMPLE_SIZE", 200),
             classification_concurrency=max(1, _int_env("FILTER_QUALITY_CLASSIFICATION_CONCURRENCY", 4)),
-            llm_model=os.getenv("FILTER_QUALITY_LLM_MODEL", "gpt-4o-mini"),
+            llm_model=os.getenv("FILTER_QUALITY_LLM_MODEL", "gpt-6-luna"),
             llm_max_tokens_per_run=_int_env("FILTER_QUALITY_LLM_MAX_TOKENS_PER_RUN", 200000),
             llm_max_tokens_per_item=_int_env("FILTER_QUALITY_LLM_MAX_TOKENS_PER_ITEM", 1500),
             min_confidence_threshold=_float_env("FILTER_QUALITY_MIN_CONFIDENCE_THRESHOLD", 0.60),

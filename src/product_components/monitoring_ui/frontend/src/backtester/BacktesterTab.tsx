@@ -41,8 +41,8 @@ const WINDOW_PRESETS: Array<{ label: string; window: ThroughputPresetWindow }> =
 
 // Regeneration re-runs ThesisBuilder analysis with a chosen OpenAI model so runs
 // can be compared across models. The default matches the production ThesisBuilder.
-const DEFAULT_LLM_MODEL = "gpt-4o-mini";
-const LLM_MODEL_OPTIONS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o4-mini"];
+const DEFAULT_LLM_MODEL = "gpt-6-luna";
+const LLM_MODEL_OPTIONS = ["gpt-6-luna", "gpt-6.1-sol"];
 
 const RUN_TERMINAL_STATES = new Set(["completed", "failed"]);
 

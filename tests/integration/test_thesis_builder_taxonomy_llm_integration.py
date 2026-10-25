@@ -46,7 +46,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _CASES_PATH = _ROOT / "tests" / "product_components" / "thesis_builder" / "fixtures" / "taxonomy_llm_integration_cases.jsonl"
 _RUN_FLAG = "RUN_LLM_INTEGRATION"
 _MODEL_ENV = "THESIS_BUILDER_LLM_INTEGRATION_MODEL"
-_DEFAULT_MODEL = "gpt-4o-mini-2024-07-18"
+_DEFAULT_MODEL = "gpt-6-luna"
 
 
 @pytest.fixture(scope="session")

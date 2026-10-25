@@ -30,13 +30,13 @@ def test_thesis_builder_settings_defaults(monkeypatch) -> None:
     assert settings.max_delivery_attempts == 3
     assert settings.llm_max_output_tokens == 3000
     assert settings.triage_enabled is False
-    assert settings.triage_model == "gpt-4o-mini"
+    assert settings.triage_model == "gpt-6-luna"
     assert settings.triage_max_output_tokens == 200
     assert settings.story_scoping_enabled is False
-    assert settings.story_assignment_model == "gpt-4o-mini"
+    assert settings.story_assignment_model == "gpt-6-luna"
     assert settings.story_assignment_max_output_tokens == 120
     assert settings.synthesis_enabled is False
-    assert settings.synthesis_model == "gpt-4o-mini"
+    assert settings.synthesis_model == "gpt-6-luna"
     assert settings.synthesis_max_output_tokens == 1200
     assert settings.synthesis_fallback_to_mechanical is False
     assert settings.listicle_prefilter_enabled is False
@@ -64,10 +64,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     monkeypatch.setenv("THESIS_BUILDER_MAX_DELIVERY_ATTEMPTS", "7")
     monkeypatch.setenv("THESIS_BUILDER_LLM_MAX_OUTPUT_TOKENS", "900")
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_ENABLED", "true")
-    monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MODEL", "gpt-4o-mini-triage")
+    monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MODEL", "gpt-6-luna-triage")
     monkeypatch.setenv("THESIS_BUILDER_TRIAGE_MAX_OUTPUT_TOKENS", "80")
     monkeypatch.setenv("THESIS_BUILDER_STORY_SCOPING_ENABLED", "true")
-    monkeypatch.setenv("THESIS_BUILDER_STORY_ASSIGNMENT_MODEL", "gpt-4o-mini-story")
+    monkeypatch.setenv("THESIS_BUILDER_STORY_ASSIGNMENT_MODEL", "gpt-6-luna-story")
     monkeypatch.setenv("THESIS_BUILDER_STORY_ASSIGNMENT_MAX_OUTPUT_TOKENS", "90")
     monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_ENABLED", "true")
     monkeypatch.setenv("THESIS_BUILDER_SYNTHESIS_MODEL", "gpt-5.5")
@@ -98,10 +98,10 @@ def test_thesis_builder_settings_env_override(monkeypatch) -> None:
     assert settings.max_delivery_attempts == 7
     assert settings.llm_max_output_tokens == 900
     assert settings.triage_enabled is True
-    assert settings.triage_model == "gpt-4o-mini-triage"
+    assert settings.triage_model == "gpt-6-luna-triage"
     assert settings.triage_max_output_tokens == 80
     assert settings.story_scoping_enabled is True
-    assert settings.story_assignment_model == "gpt-4o-mini-story"
+    assert settings.story_assignment_model == "gpt-6-luna-story"
     assert settings.story_assignment_max_output_tokens == 90
     assert settings.synthesis_enabled is True
     assert settings.synthesis_model == "gpt-5.5"

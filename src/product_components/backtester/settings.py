@@ -119,7 +119,7 @@ class BacktesterSettings:
             ),
             ticker_cooldown_minutes=_int_env("BACKTESTER_TICKER_COOLDOWN_MINUTES", 30),
             regeneration_enabled=_bool_env("BACKTESTER_REGENERATION_ENABLED", False),
-            llm_model=os.getenv("BACKTESTER_LLM_MODEL", "gpt-4o-mini"),
+            llm_model=os.getenv("BACKTESTER_LLM_MODEL", "gpt-6-luna"),
             llm_max_tokens_per_run=_int_env("BACKTESTER_LLM_MAX_TOKENS_PER_RUN", 5000000),
             llm_concurrency=max(1, _int_env("BACKTESTER_LLM_CONCURRENCY", 4)),
             persist_equity_points=_bool_env("BACKTESTER_PERSIST_EQUITY_POINTS", True),

@@ -79,7 +79,7 @@ The news-fetcher startup path applies the shared and news-fetcher schema SQL fil
 
 The taxonomy corpus makes real, cost-bearing OpenAI calls and is excluded from the
 normal unit and integration commands. It loads only `.env.secrets` for
-`OPENAI_API_KEY`, uses the pinned `gpt-4o-mini-2024-07-18` baseline by default, and
+`OPENAI_API_KEY`, uses the pinned `gpt-6-luna` baseline by default, and
 writes a concise result artifact to `temp/taxonomy-llm-integration-results.jsonl`.
 
 ```powershell

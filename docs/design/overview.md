@@ -144,7 +144,7 @@ the edge.
 | Financial news feed          | Finnhub          | Free          | $0          |
 | News enrichment (headlines)  | Marketaux        | Free / Basic  | $0 – $19    |
 | Supplementary news           | RSS feeds        | Free          | $0          |
-| LLM inference                | OpenAI (gpt-4o-mini) | Pay-as-you-go | ~$5 – $15 |
+| LLM inference                | OpenAI (low-tier LLM) | Pay-as-you-go | ~$5 – $15 |
 | IBKR market data             | Interactive Brokers | US Equities | ~$4.50      |
 | IBKR API                     | Interactive Brokers | Included    | $0          |
 | **Total**                    |                  |               | **~$10 – $39** |
@@ -176,12 +176,12 @@ the edge.
 
 | Provider             | Model          | Cost                      | Notes                            |
 |----------------------|----------------|---------------------------|----------------------------------|
-| **OpenAI**           | gpt-4o-mini    | $0.15 / 1M input tokens   | Best quality-to-cost ratio       |
+| **OpenAI**           | gpt-6-luna    | $0.15 / 1M input tokens   | Best quality-to-cost ratio       |
 | **Groq**             | llama-3.1-8b   | Free (rate-limited)        | Fast; good for backup            |
 | **Google**           | Gemini Flash   | Free tier: 15 req/min      | Good free option                 |
 | **Local (Ollama)**   | llama-3.1-8b   | $0 (needs GPU)            | No API costs; needs hardware     |
 
-**Recommended:** OpenAI gpt-4o-mini as primary. At ~200 news items/day with ~500 tokens per analysis, monthly cost ≈ $3–$10.
+**Recommended:** OpenAI gpt-6-luna as primary. At ~200 news items/day with ~500 tokens per analysis, monthly cost ≈ $3–$10.
 
 ---
 
@@ -302,7 +302,7 @@ The system uses the following baseline stack:
 - **Message broker:** Redis Streams
 - **Database:** PostgreSQL 16+
 - **Trading integration:** Interactive Brokers TWS/Gateway via `ib_async`
-- **LLM providers:** OpenAI gpt-4o-mini (primary), Groq/Gemini (fallback)
+- **LLM providers:** OpenAI gpt-6-luna (primary), Groq/Gemini (fallback)
 - **Local infrastructure/runtime:** Docker for broker and database, local process execution for services
 
 ---
@@ -371,7 +371,7 @@ class NewsAnalysis:
 **Cost Control:**
 - Skip articles with relevance < 0.3 (based on keyword pre-filter)
 - Batch 3–5 articles about the same ticker into one LLM call
-- Use gpt-4o-mini (not gpt-4o) for routine analysis
+- Use a low cost LLM for routine analysis
 - Daily token budget: configurable, default 500K tokens/day (~$0.075/day)
 
 ### 4.3 TradeService (`src/services/trade_service.py`)
@@ -511,7 +511,7 @@ The UI (`src/product_components/monitoring_ui/frontend`) provides:
 | Phase | Scope                                           | Milestone                         |
 |-------|-------------------------------------------------|-----------------------------------|
 | 1     | NewsService (Finnhub + RSS), PostgreSQL storage | Fetching and storing news         |
-| 2     | AIService with gpt-4o-mini, decision schema     | Generating trading signals        |
+| 2     | AIService with gpt-6-luna, decision schema     | Generating trading signals        |
 | 3     | TradeService with IBKR paper trading            | Executing paper trades            |
 | 4     | WorkflowOrchestrator, scheduling                | End-to-end pipeline running       |
 | 5     | Risk management, circuit breakers               | Safe automated trading            |
