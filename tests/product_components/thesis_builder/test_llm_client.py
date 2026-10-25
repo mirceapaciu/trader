@@ -4,8 +4,11 @@ import pytest
 from datetime import datetime, timezone
 
 from src.product_components.thesis_builder.llm_client import (
+    DailyTokenBudget,
     ThesisAnalyzer,
+    ThesisCardSynthesizer,
     ThesisStoryAssigner,
+    TokenBudgetExhausted,
     _THESIS_ANALYSIS_RESPONSE_FORMAT,
     _build_prompt,
     _build_triage_prompt,
@@ -25,6 +28,148 @@ from src.product_components.thesis_builder.models import (
 )
 from src.product_components.thesis_builder.event_identity import DEFAULT_TAXONOMY_SNAPSHOT
 from src.product_components.thesis_builder.taxonomy_runtime import TaxonomyValue, build_taxonomy_snapshot
+
+
+def test_daily_budget_resets_at_utc_midnight_and_not_between_calls() -> None:
+    now = datetime(2026, 10, 25, 23, 59, tzinfo=timezone.utc)
+    budget = DailyTokenBudget(100, clock=lambda: now)
+    budget.reserve(100)
+    with pytest.raises(TokenBudgetExhausted):
+        budget.reserve(1)
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    budget.reserve(100)
+    assert budget.tokens_used == 100
+
+
+def test_old_inflight_requests_do_not_change_new_days_budget() -> None:
+    now = datetime(2026, 10, 25, 23, 59, tzinfo=timezone.utc)
+    budget = DailyTokenBudget(100, clock=lambda: now)
+    old_day = budget.reserve(100)
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    budget.reserve(80)
+    budget.adjust(old_day, -100)
+    with pytest.raises(TokenBudgetExhausted):
+        budget.reserve(21)
+    assert budget.tokens_used == 80
+
+
+def test_daily_budget_reservations_are_thread_safe() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    budget = DailyTokenBudget(10)
+
+    def reserve(_):
+        try:
+            budget.reserve(1)
+            return True
+        except TokenBudgetExhausted:
+            return False
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        assert sum(pool.map(reserve, range(100))) == 10
+    assert budget.tokens_used == 10
+
+
+def test_live_llm_stages_share_daily_budget_and_resume_next_day() -> None:
+    now = datetime(2026, 10, 25, tzinfo=timezone.utc)
+    budget = DailyTokenBudget(10000, clock=lambda: now)
+    analyzer = ThesisAnalyzer(
+        client=_TriageClient(), model="analysis-model", max_tokens_per_run=1,
+        max_tokens_per_item=1200, triage_model="triage-model", triage_max_output_tokens=100,
+        daily_budget=budget,
+    )
+    assigner = ThesisStoryAssigner(
+        client=_StoryAssignmentClient(), model="story-model", max_tokens_per_run=1,
+        max_tokens_per_item=90, daily_budget=budget,
+    )
+    analyzer.triage_article(article=_article(), ticker="AAPL", exchange_code="XNAS")
+    assigner.assign_story(article=_article(), analysis=_story_analysis(), candidates=[
+        StoryAssignmentCandidate(target="window:1", narrative="Guidance raise"),
+    ])
+    assert budget.tokens_used == 37 + 29
+    budget.reserve(10000 - budget.tokens_used)
+    with pytest.raises(TokenBudgetExhausted):
+        analyzer.triage_article(article=_article(), ticker="AAPL", exchange_code="XNAS")
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    analyzer.triage_article(article=_article(), ticker="AAPL", exchange_code="XNAS")
+    assert budget.tokens_used == 37
+
+
+@pytest.mark.parametrize("client_type", [ThesisAnalyzer, ThesisCardSynthesizer, ThesisStoryAssigner])
+def test_historical_clients_keep_run_budget(client_type) -> None:
+    client = client_type(client=None, model="test", max_tokens_per_run=100, max_tokens_per_item=10)
+    client._reserve_tokens(100)
+    with pytest.raises(TokenBudgetExhausted):
+        client._reserve_tokens(1)
+
+
+def test_failed_call_releases_shared_budget() -> None:
+    class FailingClient:
+        def analyze_triage(self, **kwargs):
+            raise RuntimeError("network unavailable")
+
+    budget = DailyTokenBudget(10000)
+    analyzer = ThesisAnalyzer(
+        client=FailingClient(), model="test", max_tokens_per_run=10000,
+        max_tokens_per_item=100, daily_budget=budget,
+    )
+    with pytest.raises(RuntimeError, match="network unavailable"):
+        analyzer.triage_article(article=_article(), ticker="AAPL", exchange_code="XNAS")
+    assert budget.tokens_used == 0
+    assert analyzer.tokens_used == 0
+
+
+@pytest.mark.parametrize("stage", ["analysis", "triage", "assignment", "event_check", "synthesis"])
+def test_each_live_llm_stage_resumes_after_daily_rollover(stage) -> None:
+    now = datetime(2026, 10, 25, tzinfo=timezone.utc)
+    budget = DailyTokenBudget(100000, clock=lambda: now)
+
+    class Client:
+        calls = 0
+
+        def analyze(self, **kwargs):
+            self.calls += 1
+            return _analysis_payload(estimated_tokens=17)
+
+        def analyze_triage(self, **kwargs):
+            self.calls += 1
+            return dict(ticker="AAPL", exchange_code="XNAS", instrument_is_subject=True,
+                        content_type="news_catalyst", reasoning="direct", estimated_tokens=17)
+
+        def analyze_story_assignment(self, **kwargs):
+            self.calls += 1
+            return {"target": "new_story", "estimated_tokens": 17}
+
+        def confirm_story_event(self, **kwargs):
+            self.calls += 1
+            return {"same_event": True, "estimated_tokens": 17}
+
+        def analyze_synthesis(self, **kwargs):
+            self.calls += 1
+            return {"verdict": "reject", "confidence": 0.2, "reason_code": "weak_evidence",
+                    "reasoning": "Insufficient catalyst", "evidence_bullets": [], "estimated_tokens": 17}
+
+    client = Client()
+    common = dict(client=client, model="test", max_tokens_per_run=1,
+                  max_tokens_per_item=100, daily_budget=budget)
+    analyzer = ThesisAnalyzer(**common)
+    assigner = ThesisStoryAssigner(**common, event_check_enabled=True)
+    synthesizer = ThesisCardSynthesizer(**common)
+    calls = {
+        "analysis": lambda: analyzer.analyze_article(article=_article(), ticker="AAPL", exchange_code="XNAS"),
+        "triage": lambda: analyzer.triage_article(article=_article(), ticker="AAPL", exchange_code="XNAS"),
+        "assignment": lambda: assigner.assign_story(article=_article(), analysis=_story_analysis(), candidates=[]),
+        "event_check": lambda: assigner.confirm_same_event(article=_article(), analysis=_story_analysis(), narrative="Guidance raise"),
+        "synthesis": lambda: synthesizer.synthesize(dossier={}),
+    }
+    budget.reserve(100000)
+    with pytest.raises(TokenBudgetExhausted):
+        calls[stage]()
+    assert client.calls == 0
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    calls[stage]()
+    assert client.calls == 1
+    assert budget.tokens_used == 17
 
 
 def test_parse_analysis_result_validates_structured_response() -> None:

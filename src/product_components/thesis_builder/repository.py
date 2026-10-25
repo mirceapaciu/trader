@@ -29,6 +29,7 @@ from .models import (
     ValidationStatus,
 )
 from .event_identity import compare_event_identity, taxonomy_gap_values
+from .llm_client import TokenBudgetExhausted
 from .taxonomy_decisions import TaxonomyDecisionRequest, TaxonomyDecisionValidationError
 from .taxonomy_gateway import TaxonomyBackfillStatus, TaxonomyCommand
 from .taxonomy_runtime import TaxonomyValue, family_rules_implied_subtype, family_rules_scope
@@ -664,6 +665,8 @@ class PostgresThesisBuilderRepository:
                         default_time_horizon=default_time_horizon,
                     )
                 )
+            except TokenBudgetExhausted:
+                raise
             except ValueError as exc:
                 if not synthesis_fallback_to_mechanical:
                     self._insert_synthesis_verdict(
@@ -819,6 +822,8 @@ class PostgresThesisBuilderRepository:
                 llm_model = assignment.llm_model or llm_model
                 tokens_used = assignment.estimated_tokens
                 response_json = assignment.raw_response
+            except TokenBudgetExhausted:
+                raise
             except Exception as exc:
                 assignment_source = "fallback"
                 error_code = str(exc) or exc.__class__.__name__

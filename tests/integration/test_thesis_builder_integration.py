@@ -16,7 +16,7 @@ from src.product_components.shared.adapters import (
     PostgresSharedThesisCardReviewWriter,
     SharedWatchlistEntryInput,
 )
-from src.product_components.thesis_builder.llm_client import ThesisAnalyzer
+from src.product_components.thesis_builder.llm_client import DailyTokenBudget, ThesisAnalyzer
 from src.product_components.thesis_builder.models import (
     ContentType,
     LlmAnalysisResult,
@@ -92,6 +92,45 @@ def test_thesis_builder_creates_preapproved_card_and_signal() -> None:
     assert _count(settings, "t_news_analyses") == 3
     assert _count(settings, "t_thesis_cards") == 1
     assert _count_shared_reviews(settings) == 1
+    assert redis_client.xlen(settings.signal_queue) == 1
+
+
+def test_daily_budget_defers_real_stream_messages_then_creates_card(monkeypatch) -> None:
+    from src.product_components.thesis_builder import service
+
+    settings = _settings()
+    redis_client = _redis_client()
+    _wait_for_redis(redis_client)
+    _cleanup(settings, redis_client)
+    _seed_watchlist(settings)
+    _publish_news(redis_client, settings.news_raw_queue, ["article-1", "article-2", "article-3"])
+    now = datetime.now(timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(service, "datetime", Clock)
+    runner = _runner(settings)
+    budget = DailyTokenBudget(100000, clock=lambda: now)
+    budget.reserve(100000)
+    runner._analyzer.daily_budget = budget
+    runner.bootstrap()
+    runner.run_once()
+
+    assert redis_client.xpending(settings.news_raw_queue, settings.consumer_group)["pending"] == 3
+    assert redis_client.xlen(settings.failed_messages_dlq) == 0
+    assert _count(settings, "t_news_analyses") == 0
+    assert runner.status().processing_enabled is False
+
+    now = runner._budget_paused_until
+    runner.run_once()
+
+    assert redis_client.xpending(settings.news_raw_queue, settings.consumer_group)["pending"] == 0
+    assert redis_client.xlen(settings.failed_messages_dlq) == 0
+    assert _count(settings, "t_news_analyses") == 3
+    assert _count(settings, "t_thesis_cards") == 1
     assert redis_client.xlen(settings.signal_queue) == 1
 
 

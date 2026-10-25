@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
 from typing import Any, Protocol
@@ -24,6 +25,62 @@ from .taxonomy_runtime import EventTaxonomySnapshot, EventTaxonomySnapshotProvid
 
 class TokenBudgetExhausted(RuntimeError):
     """Raised when the daily/run token ceiling would be exceeded."""
+
+
+class DailyTokenBudget:
+    """Process-local UTC-day budget shared by the live LLM stages."""
+
+    def __init__(self, limit: int, *, clock: Callable[[], datetime] | None = None) -> None:
+        self.limit = limit
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._day: date | None = None
+        self.tokens_used = 0
+        self._lock = threading.Lock()
+
+    def reserve(self, tokens: int) -> date:
+        with self._lock:
+            today = self._clock().astimezone(timezone.utc).date()
+            if self._day != today:
+                self._day = today
+                self.tokens_used = 0
+            if self.tokens_used + tokens > self.limit:
+                raise TokenBudgetExhausted("token_budget_exhausted")
+            self.tokens_used += tokens
+            return today
+
+    def adjust(self, reservation_day: date, tokens: int) -> None:
+        with self._lock:
+            # A response from yesterday must not alter today's reservations.
+            if reservation_day == self._day:
+                self.tokens_used += tokens
+
+
+class _TokenBudgetedClient:
+    daily_budget: DailyTokenBudget | None
+    tokens_used: int
+    max_tokens_per_run: int
+
+    def _reserve_tokens(self, estimated_tokens: int) -> date | None:
+        reservation_day = None
+        if self.daily_budget is not None:
+            reservation_day = self.daily_budget.reserve(estimated_tokens)
+        with self._budget_lock:
+            if self.daily_budget is None and self.tokens_used + estimated_tokens > self.max_tokens_per_run:
+                raise TokenBudgetExhausted("token_budget_exhausted")
+            self.tokens_used += estimated_tokens
+        return reservation_day
+
+    def _release_reserved_tokens(self, reserved_tokens: int, reservation_day: date | None = None) -> None:
+        with self._budget_lock:
+            self.tokens_used -= reserved_tokens
+        if self.daily_budget is not None and reservation_day is not None:
+            self.daily_budget.adjust(reservation_day, -reserved_tokens)
+
+    def _settle_tokens(self, *, reserved_tokens: int, actual_tokens: int, reservation_day: date | None = None) -> None:
+        with self._budget_lock:
+            self.tokens_used += actual_tokens - reserved_tokens
+        if self.daily_budget is not None and reservation_day is not None:
+            self.daily_budget.adjust(reservation_day, actual_tokens - reserved_tokens)
 
 
 class ThesisLlmClient(Protocol):
@@ -172,7 +229,7 @@ class OpenAIThesisClient:
 
 
 @dataclass
-class ThesisAnalyzer:
+class ThesisAnalyzer(_TokenBudgetedClient):
     client: ThesisLlmClient
     model: str
     max_tokens_per_run: int
@@ -182,6 +239,7 @@ class ThesisAnalyzer:
     taxonomy_snapshot_provider: EventTaxonomySnapshotProvider | None = None
     taxonomy_revision: int | None = None
     tokens_used: int = 0
+    daily_budget: DailyTokenBudget | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         self._budget_lock = threading.Lock()
@@ -225,7 +283,7 @@ class ThesisAnalyzer:
             )
 
         estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
-        self._reserve_tokens(estimated_tokens)
+        reservation_day = self._reserve_tokens(estimated_tokens)
         try:
             raw = _analyze_with_format(
                 self.client,
@@ -235,7 +293,7 @@ class ThesisAnalyzer:
                 response_format=_thesis_analysis_response_format(taxonomy),
             )
         except Exception:
-            self._release_reserved_tokens(estimated_tokens)
+            self._release_reserved_tokens(estimated_tokens, reservation_day)
             raise
         result = parse_analysis_result(
             raw,
@@ -244,7 +302,7 @@ class ThesisAnalyzer:
             taxonomy=taxonomy,
         )
         actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
-        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens, reservation_day=reservation_day)
         return LlmAnalysisResult(
             **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": self.model}
         )
@@ -272,7 +330,7 @@ class ThesisAnalyzer:
         prompt = _build_triage_prompt(article=article, ticker=ticker, exchange_code=exchange_code)
         max_output_tokens = self.triage_max_output_tokens
         estimated_tokens = _estimate_tokens(prompt) + max_output_tokens
-        self._reserve_tokens(estimated_tokens)
+        reservation_day = self._reserve_tokens(estimated_tokens)
         try:
             caller = getattr(self.client, "analyze_triage", None)
             if caller is None:
@@ -284,7 +342,7 @@ class ThesisAnalyzer:
             else:
                 raw = caller(model=model, prompt=prompt, max_output_tokens=max_output_tokens)
         except Exception:
-            self._release_reserved_tokens(estimated_tokens)
+            self._release_reserved_tokens(estimated_tokens, reservation_day)
             raise
         result = parse_triage_result(
             raw,
@@ -292,33 +350,20 @@ class ThesisAnalyzer:
             expected_exchange_code=exchange_code,
         )
         actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
-        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens, reservation_day=reservation_day)
         return LlmTriageResult(
             **{**result.__dict__, "estimated_tokens": actual_tokens, "llm_model": model}
         )
 
-    def _reserve_tokens(self, estimated_tokens: int) -> None:
-        with self._budget_lock:
-            if self.tokens_used + estimated_tokens > self.max_tokens_per_run:
-                raise TokenBudgetExhausted("token_budget_exhausted")
-            self.tokens_used += estimated_tokens
-
-    def _release_reserved_tokens(self, reserved_tokens: int) -> None:
-        with self._budget_lock:
-            self.tokens_used -= reserved_tokens
-
-    def _settle_tokens(self, *, reserved_tokens: int, actual_tokens: int) -> None:
-        with self._budget_lock:
-            self.tokens_used += actual_tokens - reserved_tokens
-
 
 @dataclass
-class ThesisCardSynthesizer:
+class ThesisCardSynthesizer(_TokenBudgetedClient):
     client: ThesisLlmClient
     model: str
     max_tokens_per_run: int
     max_tokens_per_item: int
     tokens_used: int = 0
+    daily_budget: DailyTokenBudget | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         self._budget_lock = threading.Lock()
@@ -326,7 +371,7 @@ class ThesisCardSynthesizer:
     def synthesize(self, *, dossier: dict[str, Any]) -> LlmSynthesisResult:
         prompt = _build_synthesis_prompt(dossier=dossier)
         estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
-        self._reserve_tokens(estimated_tokens)
+        reservation_day = self._reserve_tokens(estimated_tokens)
         try:
             caller = getattr(self.client, "analyze_synthesis", None)
             if caller is None:
@@ -342,11 +387,11 @@ class ThesisCardSynthesizer:
                     max_output_tokens=self.max_tokens_per_item,
                 )
         except Exception:
-            self._release_reserved_tokens(estimated_tokens)
+            self._release_reserved_tokens(estimated_tokens, reservation_day)
             raise
         result = parse_synthesis_result(raw)
         actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
-        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens, reservation_day=reservation_day)
         return LlmSynthesisResult(
             **{
                 **result.__dict__,
@@ -356,29 +401,16 @@ class ThesisCardSynthesizer:
             }
         )
 
-    def _reserve_tokens(self, estimated_tokens: int) -> None:
-        with self._budget_lock:
-            if self.tokens_used + estimated_tokens > self.max_tokens_per_run:
-                raise TokenBudgetExhausted("token_budget_exhausted")
-            self.tokens_used += estimated_tokens
-
-    def _release_reserved_tokens(self, reserved_tokens: int) -> None:
-        with self._budget_lock:
-            self.tokens_used -= reserved_tokens
-
-    def _settle_tokens(self, *, reserved_tokens: int, actual_tokens: int) -> None:
-        with self._budget_lock:
-            self.tokens_used += actual_tokens - reserved_tokens
-
 
 @dataclass
-class ThesisStoryAssigner:
+class ThesisStoryAssigner(_TokenBudgetedClient):
     client: ThesisLlmClient
     model: str
     max_tokens_per_run: int
     max_tokens_per_item: int
     event_check_enabled: bool = False
     tokens_used: int = 0
+    daily_budget: DailyTokenBudget | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         self._budget_lock = threading.Lock()
@@ -390,7 +422,7 @@ class ThesisStoryAssigner:
         260722-01): token overlap alone cannot establish event identity. Returns True/False, or
         None to signal "no decision" (disabled, no client support, budget exhausted, transport
         error, or unparseable) so the caller can apply its safe fallback without crashing the
-        news loop.
+        news loop. Live daily-budget exhaustion propagates to pause consumption.
         """
         if not self.event_check_enabled:
             return None
@@ -400,16 +432,18 @@ class ThesisStoryAssigner:
         prompt = _build_story_event_prompt(article=article, analysis=analysis, narrative=narrative)
         estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
         try:
-            self._reserve_tokens(estimated_tokens)
+            reservation_day = self._reserve_tokens(estimated_tokens)
         except TokenBudgetExhausted:
+            if self.daily_budget is not None:
+                raise
             return None
         try:
             raw = caller(model=self.model, prompt=prompt, max_output_tokens=self.max_tokens_per_item)
         except Exception:
-            self._release_reserved_tokens(estimated_tokens)
+            self._release_reserved_tokens(estimated_tokens, reservation_day)
             return None
         actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
-        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens, reservation_day=reservation_day)
         value = raw.get("same_event")
         return value if isinstance(value, bool) else None
 
@@ -428,7 +462,7 @@ class ThesisStoryAssigner:
             candidates=candidates,
         )
         estimated_tokens = _estimate_tokens(prompt) + self.max_tokens_per_item
-        self._reserve_tokens(estimated_tokens)
+        reservation_day = self._reserve_tokens(estimated_tokens)
         try:
             caller = getattr(self.client, "analyze_story_assignment", None)
             if caller is None:
@@ -444,31 +478,17 @@ class ThesisStoryAssigner:
                     max_output_tokens=self.max_tokens_per_item,
                 )
         except Exception:
-            self._release_reserved_tokens(estimated_tokens)
+            self._release_reserved_tokens(estimated_tokens, reservation_day)
             raise
         result = parse_story_assignment_result(raw, allowed_targets=allowed_targets)
         actual_tokens = _actual_tokens(raw, fallback_tokens=estimated_tokens)
-        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens)
+        self._settle_tokens(reserved_tokens=estimated_tokens, actual_tokens=actual_tokens, reservation_day=reservation_day)
         return LlmStoryAssignmentResult(
             target=result.target,
             estimated_tokens=actual_tokens,
             llm_model=self.model,
             raw_response=dict(raw),
         )
-
-    def _reserve_tokens(self, estimated_tokens: int) -> None:
-        with self._budget_lock:
-            if self.tokens_used + estimated_tokens > self.max_tokens_per_run:
-                raise TokenBudgetExhausted("token_budget_exhausted")
-            self.tokens_used += estimated_tokens
-
-    def _release_reserved_tokens(self, reserved_tokens: int) -> None:
-        with self._budget_lock:
-            self.tokens_used -= reserved_tokens
-
-    def _settle_tokens(self, *, reserved_tokens: int, actual_tokens: int) -> None:
-        with self._budget_lock:
-            self.tokens_used += actual_tokens - reserved_tokens
 
 
 def parse_analysis_result(

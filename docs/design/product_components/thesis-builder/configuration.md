@@ -57,6 +57,28 @@ THESIS_BUILDER_TAXONOMY_BACKFILL_BATCH_SIZE=100
 THESIS_BUILDER_REPROCESS_MAX_ARTICLES=200
 ```
 
+## Live LLM Token Budget
+
+`LLM_DAILY_TOKEN_BUDGET` is one process-local budget shared by live analysis,
+triage, story assignment/event checks, and card synthesis. It resets on the first
+reservation of each UTC calendar day. Reservations and actual-usage settlement
+are synchronized across the live consumer and historical reprocess thread;
+late responses from the previous day do not change the new day's budget.
+Process restarts reset this in-memory budget; it is not a durable or
+cross-replica spending limit.
+
+On budget exhaustion, the live consumer leaves the message pending without
+acknowledging it or sending it to the dead-letter queue, stops processing the
+current batch, and pauses news reads until the next UTC midnight. Heartbeats
+report `processing_enabled=False` during the pause. Normal retry limits still
+apply to other failures. Budget exhaustion during story assignment or synthesis
+propagates to this pause path rather than falling back or rejecting a window.
+After rollover, pending messages are retried using the normal evidence-freshness
+rules. Previously dead-lettered messages require an explicit operator replay.
+
+Offline regeneration/backtests retain their configured per-run token ceilings
+without a daily reset.
+
 ## Historical Reprocess
 
 ThesisBuilder owns the historical reprocess workflow. Operators trigger a run from the Monitoring UI, which enqueues a command on `REPROCESS_COMMAND_QUEUE` and records an `accepted` row in `thesis_builder.t_reprocess_runs`. The ThesisBuilder runtime consumes the command and executes the reprocess in a background thread, so the live news consumer loop is never paused. A partial unique index (`uq_reprocess_runs_active`) enforces at most one `accepted`/`running` run at a time. Run status and result counts are read back through the ThesisBuilder-owned reprocess gateway; the LLM model and reprocess policy come from ThesisBuilder settings, not from the caller.

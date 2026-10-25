@@ -14,6 +14,7 @@ from src.product_components.thesis_builder.models import (
 from src.product_components.thesis_builder.redis_io import NewsStreamMessage
 from src.product_components.thesis_builder.service import ThesisBuilderRunner, _resolve_instruments
 from src.product_components.thesis_builder.settings import ThesisBuilderSettings
+from src.product_components.thesis_builder.llm_client import TokenBudgetExhausted
 
 
 class _FakeIo:
@@ -89,6 +90,74 @@ class _FakeReviewWriter:
         self.calls.append((card_id, reviewed_at))
 
 
+def test_exhausted_budget_keeps_message_pending_and_resumes_next_utc_day(monkeypatch, caplog) -> None:
+    from datetime import timedelta
+    from src.product_components.thesis_builder import service
+
+    now = datetime(2026, 10, 25, 23, 59, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    class Analyzer(_CapturingAnalyzer):
+        def analyze_article(self, **kwargs):
+            if now.day == 25:
+                raise TokenBudgetExhausted("token_budget_exhausted")
+            return super().analyze_article(**kwargs)
+
+    monkeypatch.setattr(service, "datetime", Clock)
+    sleeps = []
+    monkeypatch.setattr(service.time, "sleep", sleeps.append)
+    io = _FakeIo()
+    io.delivery_count = lambda _: 99
+    io.messages = [_message(article_id="article-1")]
+    repo = _PersistingRepository()
+    runner = ThesisBuilderRunner(
+        settings=_settings(), redis_io=io, repository=repo, analyzer=Analyzer(),
+        instrument_registry=_FakeInstrumentRegistry([
+            SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",)),
+        ]), review_writer=_FakeReviewWriter(),
+    )
+    assert runner.run_once() == 1
+    assert io.acked == []
+    assert io.dlq == []
+    assert repo.processing_events == []
+    assert runner.status().processing_enabled is False
+    assert runner.run_once() == 0
+    assert sleeps == [60]
+    assert caplog.text.count("daily token budget exhausted") == 1
+
+    now += timedelta(minutes=1)
+    assert runner.run_once() == 1
+    assert io.acked == ["1-0"]
+    assert io.dlq == []
+    assert repo.processing_events[0]["outcome"] == "analyzed"
+    assert runner.status().processing_enabled is True
+
+
+def test_budget_exhaustion_in_triage_is_not_failed_open() -> None:
+    class Analyzer:
+        def triage_article(self, **kwargs):
+            raise TokenBudgetExhausted("token_budget_exhausted")
+
+        def analyze_article(self, **kwargs):
+            raise AssertionError("budget exhaustion must pause before full analysis")
+
+    io = _FakeIo()
+    runner = ThesisBuilderRunner(
+        settings=_settings(triage_enabled=True), redis_io=io, repository=_FakeRepository(),
+        analyzer=Analyzer(), instrument_registry=_FakeInstrumentRegistry([
+            SharedInstrumentRecord(ticker="AAPL", exchange_code="XNAS", aliases=("apple",)),
+        ]), review_writer=_FakeReviewWriter(),
+    )
+    runner._process_with_retry(_message(article_id="article-1"))
+    assert runner._budget_paused_until is not None
+    assert io.acked == []
+    assert io.dlq == []
+
+
 def test_thesis_builder_runner_bootstraps_io() -> None:
     io = _FakeIo()
     runner = ThesisBuilderRunner(
@@ -103,6 +172,35 @@ def test_thesis_builder_runner_bootstraps_io() -> None:
     runner.bootstrap()
 
     assert io.bootstrapped is True
+
+
+def test_live_runner_shares_one_budget_across_all_llm_stages() -> None:
+    runner = ThesisBuilderRunner(
+        settings=_settings(synthesis_enabled=True, story_scoping_enabled=True),
+        redis_io=_FakeIo(), instrument_registry=_FakeInstrumentRegistry(),
+        review_writer=_FakeReviewWriter(),
+    )
+    budget = runner._analyzer.daily_budget
+    assert budget is not None
+    assert runner._repository._card_synthesizer.daily_budget is budget
+    assert runner._repository._story_assigner.daily_budget is budget
+
+
+def test_non_budget_failure_still_goes_to_dlq_at_retry_limit(monkeypatch) -> None:
+    io = _FakeIo()
+    io.delivery_count = lambda _: 3
+    runner = ThesisBuilderRunner(
+        settings=_settings(), redis_io=io, repository=_FakeRepository(), analyzer=_NoopAnalyzer(),
+        instrument_registry=_FakeInstrumentRegistry(), review_writer=_FakeReviewWriter(),
+    )
+
+    def fail(message):
+        raise RuntimeError("transport failure")
+
+    monkeypatch.setattr(runner, "process_message", fail)
+    runner._process_with_retry(_message(article_id="article-1"))
+    assert io.acked == ["1-0"]
+    assert io.dlq == [("1-0", "RuntimeError")]
 
 
 def test_missing_article_goes_to_dlq_and_acks() -> None:

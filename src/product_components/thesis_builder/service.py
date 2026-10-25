@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from src.product_components.shared.adapters import (
@@ -15,7 +15,7 @@ from src.product_components.shared.adapters import (
 )
 from src.product_components.shared.text_match import contains_term
 
-from .llm_client import OpenAIThesisClient, ThesisAnalyzer, ThesisCardSynthesizer, ThesisStoryAssigner
+from .llm_client import DailyTokenBudget, OpenAIThesisClient, ThesisAnalyzer, ThesisCardSynthesizer, ThesisStoryAssigner, TokenBudgetExhausted
 from .models import ContentType, InstrumentIdentity, LlmTriageResult, NewsArticle
 from .redis_io import NewsStreamMessage, RedisThesisBuilderIo, ReprocessCommandMessage
 from .repository import PostgresThesisBuilderRepository
@@ -85,6 +85,8 @@ class ThesisBuilderRunner:
         taxonomy_backfill_worker: TaxonomyBackfillWorker | None = None,
     ) -> None:
         self._settings = settings
+        daily_budget = DailyTokenBudget(settings.llm_daily_token_budget)
+        self._budget_paused_until: datetime | None = None
         synthesis_client = None
         if settings.synthesis_enabled:
             synthesis_client = ThesisCardSynthesizer(
@@ -96,6 +98,7 @@ class ThesisBuilderRunner:
                 model=settings.synthesis_model,
                 max_tokens_per_run=settings.llm_daily_token_budget,
                 max_tokens_per_item=settings.synthesis_max_output_tokens,
+                daily_budget=daily_budget,
             )
         story_assigner = None
         if settings.story_scoping_enabled:
@@ -108,6 +111,7 @@ class ThesisBuilderRunner:
                 model=settings.story_assignment_model,
                 max_tokens_per_run=settings.llm_daily_token_budget,
                 max_tokens_per_item=settings.story_assignment_max_output_tokens,
+                daily_budget=daily_budget,
                 event_check_enabled=settings.story_event_check_enabled,
             )
         self._repository = repository or PostgresThesisBuilderRepository(
@@ -163,6 +167,7 @@ class ThesisBuilderRunner:
             model=settings.llm_model,
             max_tokens_per_run=settings.llm_daily_token_budget,
             max_tokens_per_item=settings.llm_max_output_tokens,
+            daily_budget=daily_budget,
             triage_model=settings.triage_model,
             triage_max_output_tokens=settings.triage_max_output_tokens,
             taxonomy_snapshot_provider=self._taxonomy_provider,
@@ -203,12 +208,21 @@ class ThesisBuilderRunner:
         self._redis.ensure_streams_and_group()
 
     def run_once(self) -> int:
+        if self._budget_paused_until is not None:
+            remaining = (self._budget_paused_until - datetime.now(timezone.utc)).total_seconds()
+            if remaining > 0:
+                time.sleep(min(60, max(1, self._settings.poll_interval_seconds), remaining))
+                return 0
+            self._budget_paused_until = None
+            LOGGER.info("ThesisBuilder resuming news consumption after UTC daily token-budget reset")
         messages = self._redis.read(
             count=max(1, self._settings.batch_size),
             block_ms=max(1, self._settings.block_ms),
         )
         for message in messages:
             self._process_with_retry(message)
+            if self._budget_paused_until is not None:
+                break
         return len(messages)
 
     def poll_reprocess_commands(self) -> int:
@@ -322,7 +336,10 @@ class ThesisBuilderRunner:
             news_raw_length=news_raw_length,
             pending_count=self._redis.pending_count(),
             signal_length=signal_length,
-            processing_enabled=True,
+            processing_enabled=(
+                self._budget_paused_until is None
+                or datetime.now(timezone.utc) >= self._budget_paused_until
+            ),
         )
 
     def _process_with_retry(self, message: NewsStreamMessage) -> None:
@@ -335,6 +352,14 @@ class ThesisBuilderRunner:
                 result.acked,
                 result.analyses_created,
                 result.signals_published,
+            )
+        except TokenBudgetExhausted:
+            now = datetime.now(timezone.utc)
+            self._budget_paused_until = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), timezone.utc)
+            LOGGER.warning(
+                "ThesisBuilder daily token budget exhausted; news consumption paused until %s; message %s remains pending",
+                self._budget_paused_until.isoformat(),
+                message.message_id,
             )
         except Exception as exc:
             delivery_count = self._redis.delivery_count(message.message_id)
@@ -568,6 +593,8 @@ class ThesisBuilderRunner:
                 ticker=instrument.ticker,
                 exchange_code=instrument.exchange_code,
             )
+        except TokenBudgetExhausted:
+            raise
         except Exception:
             LOGGER.exception(
                 "ThesisBuilder triage failed open article_id=%s ticker=%s",
