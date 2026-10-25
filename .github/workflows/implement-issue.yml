@@ -62,7 +62,7 @@ jobs:
           CODEX_LOG="$RUNNER_TEMP/codex-exec.log"
           ROUTING_FILE="$RUNNER_TEMP/codex-model-routing.json"
           codex exec --sandbox read-only \
-            --model gpt-5.6-terra \
+            --model gpt-6.1-sol \
             --config 'model_reasoning_effort="low"' \
             --output-last-message "$ROUTING_FILE" \
             "$(cat .github/codex/prompts/select-implementation-model.md)" \
@@ -80,7 +80,7 @@ jobs:
 
           if [[ "$CODEX_EXIT" -eq 0 ]]; then
             case "$MODEL:$REASONING_EFFORT" in
-              gpt-5.6-terra:medium|gpt-5.6-sol:medium|gpt-5.6-sol:high|gpt-6-astra:high) ;;
+              gpt-6-luna:medium|gpt-6.1-sol:medium|gpt-6.1-sol:high|gpt-6-astra:high) ;;
               *)
                 echo "Unsupported Codex implementation profile: $MODEL:$REASONING_EFFORT" | tee -a "$CODEX_LOG" >&2
                 CODEX_EXIT=1
