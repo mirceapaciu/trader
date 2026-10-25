@@ -173,6 +173,12 @@ uses ThesisBuilder analysis `analyzed_at` as the time axis and shows three disti
 - news-catalyst articles (`COUNT(DISTINCT article_id)` where `content_type='news_catalyst'`)
 - market-moving articles (`COUNT(DISTINCT article_id)` where `is_market_moving=TRUE`)
 
+The same Throughput panel shows a compact **Cards created** bar chart below article throughput,
+with a shared time axis, window selector, and bucket granularity, and its own count scale.
+Cards are bucketed by `t_thesis_cards.created_at` and counted only when
+`validation_status='valid'`, matching the Created cards KPI. Buckets containing only card
+creations are retained even when no articles were analyzed during that bucket.
+
 Chart bucket granularity follows the same preset rules as the NewsFetcher throughput panel:
 - `15m` and `1h`: raw `analyzed_at` timestamps
 - `1d` and `7d`: `date_trunc('hour', analyzed_at)`
@@ -292,7 +298,7 @@ Required read endpoints:
 - `GET /api/providers` returns provider-level cycle summaries and last error state.
 - `GET /api/metrics/throughput` returns bounded-window throughput and quality metrics for either a preset `window` token or explicit `start_at` and `end_at` bounds.
 - `GET /api/thesis-builder/metrics` returns bounded-window ThesisBuilder KPIs and pending evidence windows for `15m`, `1h`, `1d`, `7d`, or `30d`.
-- `GET /api/thesis-builder/throughput` returns bounded-window ThesisBuilder article throughput buckets for `15m`, `1h`, `1d`, `7d`, or `30d`.
+- `GET /api/thesis-builder/throughput` returns bounded-window ThesisBuilder article throughput and `created_thesis_cards_count` buckets for `15m`, `1h`, `1d`, `7d`, or `30d`.
 - `GET /api/thesis-builder/taxonomy-gaps` returns read-only unresolved and historical taxonomy-gap proposals for operator visibility.
 - `POST /api/thesis-builder/taxonomy-decisions` returns `202 Accepted` after durable command submission; `GET /api/thesis-builder/taxonomy-decisions/{command_id}` exposes command and bounded backfill progress. Mutation is disabled by default. Enabling it requires `UI_TAXONOMY_DECISIONS_ENABLED=true` and `UI_ADMIN_PASSWORD` from `.env.secrets`; the fixed authenticated actor is `admin`. The UI obtains a short-lived, HttpOnly session cookie and a session-bound CSRF token, and does not persist the password or token.
 - `GET /api/backlog` returns pending, retrying, and dead-letter counts.

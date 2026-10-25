@@ -15,7 +15,9 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ComposedChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ComposedChart: ({ children, data }: { children: ReactNode; data?: unknown[] }) => (
+    <div data-testid="throughput-chart" data-rows={JSON.stringify(data)}>{children}</div>
+  ),
   CartesianGrid: () => null,
   XAxis: ({ domain }: { domain?: [number | string, number | string] }) => (
     <div data-testid="thesis-builder-throughput-x-axis" data-domain={JSON.stringify(domain)} />
@@ -180,6 +182,7 @@ describe("ThesisBuilderTab", () => {
         {
           window_start: "2026-06-16T09:00:00Z",
           processed_articles_count: 5,
+          created_thesis_cards_count: 2,
           news_catalyst_articles_count: 2,
           market_moving_articles_count: 3,
         },
@@ -232,16 +235,24 @@ describe("ThesisBuilderTab", () => {
   it("uses a padded bucket domain and explicit bar sizes for visible throughput bars", () => {
     render(<ThesisBuilderTab />);
 
-    const axis = screen.getByTestId("thesis-builder-throughput-x-axis");
+    const axes = screen.getAllByTestId("thesis-builder-throughput-x-axis");
     const bucketStart = new Date("2026-06-16T09:00:00Z").getTime();
     const expectedPaddingMs = 30 * 60 * 1000;
-    expect(axis).toHaveAttribute(
-      "data-domain",
-      JSON.stringify([bucketStart - expectedPaddingMs, bucketStart + expectedPaddingMs])
-    );
+    expect(axes).toHaveLength(2);
+    for (const axis of axes) {
+      expect(axis).toHaveAttribute(
+        "data-domain",
+        JSON.stringify([bucketStart - expectedPaddingMs, bucketStart + expectedPaddingMs])
+      );
+    }
     expect(screen.getByTestId("thesis-builder-throughput-bar-processed")).toHaveAttribute("data-bar-size", "12");
     expect(screen.getByTestId("thesis-builder-throughput-bar-newsCatalyst")).toHaveAttribute("data-bar-size", "12");
     expect(screen.getByTestId("thesis-builder-throughput-bar-marketMoving")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByTestId("thesis-builder-throughput-bar-cardsCreated")).toHaveAttribute("data-bar-size", "12");
+    expect(screen.getByRole("heading", { name: "Cards created" })).toBeInTheDocument();
+    const charts = screen.getAllByTestId("throughput-chart");
+    expect(charts).toHaveLength(2);
+    expect(JSON.parse(charts[1].getAttribute("data-rows")!)[0].cardsCreated).toBe(2);
   });
 
   it("switches the throughput query window when a preset is selected", () => {

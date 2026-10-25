@@ -1361,6 +1361,7 @@ def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
         {
             "window_start": datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc),
             "consumed_messages_count": 7,
+            "created_thesis_cards_count": 2,
             "skipped_messages_count": 2,
             "failed_messages_count": 0,
             "processed_articles_count": 5,
@@ -1370,11 +1371,22 @@ def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
         {
             "window_start": datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc),
             "consumed_messages_count": 4,
+            "created_thesis_cards_count": 0,
             "skipped_messages_count": 0,
             "failed_messages_count": 0,
             "processed_articles_count": 4,
             "news_catalyst_articles_count": 1,
             "market_moving_articles_count": 2,
+        },
+        {
+            "window_start": datetime(2026, 6, 16, 11, 0, tzinfo=timezone.utc),
+            "consumed_messages_count": 0,
+            "skipped_messages_count": 0,
+            "failed_messages_count": 0,
+            "processed_articles_count": 0,
+            "news_catalyst_articles_count": 0,
+            "market_moving_articles_count": 0,
+            "created_thesis_cards_count": 3,
         },
     ]
 
@@ -1388,6 +1400,12 @@ def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
         def execute(self, sql, params):
             self.sql = sql
             self.params = params
+            assert "FROM thesis_builder.t_thesis_cards" in sql
+            assert "validation_status = 'valid'" in sql
+            assert "date_trunc('hour', created_at)" in sql
+            assert "FULL OUTER JOIN cards USING (window_start)" in sql
+            assert len(params) == 6
+            assert params[:2] == params[2:4] == params[4:]
 
         def fetchall(self):
             return rows
@@ -1408,13 +1426,17 @@ def test_repository_maps_thesis_builder_throughput_buckets(monkeypatch) -> None:
 
     assert response.available is True
     assert response.granularity == "hour"
-    assert len(response.buckets) == 2
+    assert len(response.buckets) == 3
     assert response.buckets[0].consumed_messages_count == 7
     assert response.buckets[0].skipped_messages_count == 2
     assert response.buckets[0].processed_articles_count == 5
     assert response.buckets[0].news_catalyst_articles_count == 2
     assert response.buckets[0].market_moving_articles_count == 3
     assert response.buckets[1].processed_articles_count == 4
+    assert response.buckets[0].created_thesis_cards_count == 2
+    assert response.buckets[1].created_thesis_cards_count == 0
+    assert response.buckets[2].created_thesis_cards_count == 3
+    assert response.buckets[2].processed_articles_count == 0
 
 
 def test_repository_thesis_builder_throughput_returns_unavailable_when_tables_are_missing(monkeypatch) -> None:

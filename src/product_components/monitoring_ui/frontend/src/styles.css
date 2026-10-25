@@ -583,6 +583,11 @@ h2 {
   min-height: 290px;
 }
 
+.chart-compact {
+  height: 180px;
+  min-height: 180px;
+}
+
 .chart-tooltip {
   display: grid;
   gap: 4px;

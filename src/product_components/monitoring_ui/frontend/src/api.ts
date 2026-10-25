@@ -317,6 +317,7 @@ export type ThesisBuilderConfigResponse = {
 };
 
 export type ThesisBuilderThroughputBucket = {
+  created_thesis_cards_count: number;
   window_start: string;
   consumed_messages_count: number;
   skipped_messages_count: number;

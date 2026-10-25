@@ -162,7 +162,7 @@ export function ThesisBuilderTab() {
         <div className="chart">
           {chartRows.length > 0 ? (
             <ResponsiveContainer width="100%" height={290} minWidth={0}>
-              <ComposedChart data={chartRows}>
+              <ComposedChart data={chartRows} syncId="thesis-throughput">
                 <CartesianGrid stroke="#dbe3dc" strokeDasharray="3 3" />
                 <XAxis
                   dataKey="timestampMs"
@@ -203,6 +203,36 @@ export function ThesisBuilderTab() {
             <EmptyState
               text={!throughputData?.available ? "ThesisBuilder throughput unavailable" : "No ThesisBuilder throughput yet"}
             />
+          )}
+        </div>
+        <h3>Cards created</h3>
+        <p>Valid thesis cards by creation time</p>
+        <div className="chart chart-compact" aria-label="Cards created over time">
+          {chartRows.length > 0 ? (
+            <ResponsiveContainer width="100%" height={180} minWidth={0}>
+              <ComposedChart data={chartRows} syncId="thesis-throughput">
+                <CartesianGrid stroke="#dbe3dc" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="timestampMs"
+                  type="number"
+                  scale="time"
+                  domain={[throughputAxisStartAtMs ?? "dataMin", throughputAxisEndAtMs ?? "dataMax"]}
+                  tickLine={false}
+                  axisLine={false}
+                  minTickGap={20}
+                  tickCount={throughputTickCount}
+                  ticks={throughputTicks}
+                  tickFormatter={(value) =>
+                    formatThroughputAxisTick(Number(value), throughputData?.granularity, throughputAxisDurationMs)
+                  }
+                />
+                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip content={<ThesisBuilderThroughputTooltip />} />
+                <Bar dataKey="cardsCreated" name="Cards created" fill="#8053b8" radius={[3, 3, 0, 0]} barSize={12} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyState text={!throughputData?.available ? "ThesisBuilder throughput unavailable" : "No cards created in this window"} />
           )}
         </div>
       </section>
@@ -1497,6 +1527,9 @@ function formatThesisThroughputSeriesLabel(value: string) {
   if (value === "marketMoving") {
     return "Market moving";
   }
+  if (value === "cardsCreated") {
+    return "Cards created";
+  }
   return value;
 }
 
@@ -1510,7 +1543,8 @@ function aggregateThesisBuilderThroughputRows(response?: ThesisBuilderThroughput
       timestampMs: new Date(bucket.window_start).getTime(),
       processed: bucket.processed_articles_count,
       newsCatalyst: bucket.news_catalyst_articles_count,
-      marketMoving: bucket.market_moving_articles_count
+      marketMoving: bucket.market_moving_articles_count,
+      cardsCreated: bucket.created_thesis_cards_count ?? 0
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
 }
